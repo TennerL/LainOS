@@ -1189,6 +1189,7 @@ static void cmd_asm(const char *args, const boot_info_t *info) {
     static char source[ASM_SOURCE_SIZE + 1];
     uint32_t source_size = 0;
     uint32_t output_size = 0;
+    uint32_t error_line = 0;
     char *mutable_args = (char *)args;
     char *source_name = 0;
     char *output_name = 0;
@@ -1229,13 +1230,19 @@ static void cmd_asm(const char *args, const boot_info_t *info) {
     source[source_size] = '\0';
     zero_memory(asm_output, EXEC_BUFFER_SIZE);
     zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
-    if (assembler_assemble_source(source,
-                                  source_size,
-                                  asm_output,
-                                  EXEC_BUFFER_SIZE,
-                                  (uint64_t)(uintptr_t)exec_buffer,
-                                  &output_size) != 0) {
-        console_puts("asm failed: unsupported syntax\n");
+    if (assembler_assemble_source_ex(source,
+                                     source_size,
+                                     asm_output,
+                                     EXEC_BUFFER_SIZE,
+                                     (uint64_t)(uintptr_t)exec_buffer,
+                                     &output_size,
+                                     &error_line) != 0) {
+        console_puts("asm failed: unsupported syntax");
+        if (error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(error_line);
+        }
+        console_puts("\n");
         return;
     }
 

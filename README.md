@@ -422,8 +422,8 @@ VirtualBox SATA disks should be the next realistic target to shake out.
 
 The `asm` shell command accepts a small NASM-like subset and emits a flat binary
 that can be run with `exec`. Directives such as `global`, `section .text`,
-`bits 64`, and `default rel` are accepted for source compatibility. Labels and
-`db` data are supported.
+`bits 64`, and `default rel` are accepted for source compatibility. Labels,
+NASM-style data labels, and `db` / `dq` data are supported.
 
 The instruction subset is intentionally small but covers the common flat-binary
 building blocks:
@@ -431,14 +431,18 @@ building blocks:
 - control: `nop`, `hlt`, `ret`, `ret imm16`, `leave`, `int imm8`, `iretq`,
   `syscall`, `cli`, `sti`
 - data movement: `mov r64, imm64`, `mov r32, imm32`, `mov reg, reg`,
+  `mov r64, [label]`, `mov [label], r64`, `mov qword [label], imm32`,
   `push r64`, `pop r64`
-- arithmetic and logic: `add`, `sub`, `cmp`, `and`, `or`, `xor`, `test`,
-  `inc`, `dec`
+- arithmetic and logic: `add`, `sub`, `imul`, `cmp`, `and`, `or`, `xor`,
+  `test`, `inc`, `dec`; `add/sub/cmp/and/or/xor/test` support `r64, [label]`;
+  `imul` supports `imul reg, reg`, `imul reg, imm32`, and `imul reg, reg, imm32`
 - flow: `call label`, `call r64`, `jmp label`, `jmp r64`, and rel32
   conditional jumps such as `je`, `jne`, `jl`, `jle`, `jg`, `jge`, `jb`,
   `jbe`, `ja`, and `jae`
 
-Memory operands such as `[rbp-8]` are not implemented yet.
+Only simple RIP-relative label memory operands such as `[counter]` and
+`qword [counter]` are implemented. Base/index forms such as `[rbp-8]` and
+`[rdi + rax * 8]` are not implemented yet.
 
 Example:
 
