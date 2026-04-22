@@ -1,14 +1,40 @@
 
+#include "version.h"
 #include "kernel.h"
 #include "ahci.h"
+#include "assembler.h"
 #include "editor.h"
 #include "lainfs.h"
 #include "shell.h"
 #include "storage.h"
 
 #define MAX_DRIVES 26
+#define SCRIPT_BUFFER_SIZE LAINFS_FILE_CAPACITY
+#define SCRIPT_LINE_SIZE 128u
+#define SCRIPT_MAX_DEPTH 4
+#define EXEC_BUFFER_SIZE LAINFS_FILE_CAPACITY
+#define EXEC_API_MAGIC 0x4C41494E45584543ull
+#define ASM_SOURCE_SIZE LAINFS_FILE_CAPACITY
+#define SHELL_PATH_SIZE 128u
+
+static int script_depth;
+static char script_buffers[SCRIPT_MAX_DEPTH][SCRIPT_BUFFER_SIZE + 1];
+static unsigned char exec_buffer[EXEC_BUFFER_SIZE] __attribute__((aligned(16)));
+static unsigned char asm_output[EXEC_BUFFER_SIZE];
+
 
 typedef void (*command_handler_t)(const char *args, const boot_info_t *info);
+
+typedef struct {
+    uint64_t magic;
+    uint64_t version;
+    void (*puts)(const char *s);
+    void (*put_hex64)(unsigned long long value);
+    void (*put_dec64)(unsigned long long value);
+    unsigned long long (*ticks)(void);
+} exec_api_t;
+
+typedef void (*exec_program_t)(const exec_api_t *api);
 
 typedef struct {
     const char *name;
@@ -23,6 +49,8 @@ typedef struct {
 
 static drive_t drives[MAX_DRIVES];
 static int current_drive = -1;
+static uint32_t cwd_dirs[MAX_DRIVES];
+static char cwd_paths[MAX_DRIVES][SHELL_PATH_SIZE];
 
 static char *skip_spaces(char *s) {
     while (*s == ' ' || *s == '\t') {
@@ -44,6 +72,56 @@ static int streq(const char *a, const char *b) {
         ++b;
     }
     return *a == '\0' && *b == '\0';
+}
+
+static void zero_memory(void *ptr, uint32_t size) {
+    unsigned char *p = (unsigned char *)ptr;
+    for (uint32_t i = 0; i < size; ++i) {
+        p[i] = 0;
+    }
+}
+
+static int parse_color_arg(const char *args, unsigned int *color) {
+    int base = 10;
+    unsigned int value = 0;
+
+    if (args == 0 || *args == '\0') {
+        return -1;
+    }
+
+    if (args[0] == '0' && (args[1] == 'x' || args[1] == 'X')) {
+        base = 16;
+        args += 2;
+    }
+
+    if (*args == '\0') {
+        return -1;
+    }
+
+    while (*args) {
+        char c = *args;
+        unsigned int digit;
+
+        if (c >= '0' && c <= '9') {
+            digit = (unsigned int)(c - '0');
+        } else if (base == 16 && c >= 'a' && c <= 'f') {
+            digit = 10u + (unsigned int)(c - 'a');
+        } else if (base == 16 && c >= 'A' && c <= 'F') {
+            digit = 10u + (unsigned int)(c - 'A');
+        } else {
+            return -1;
+        }
+
+        if (digit >= (unsigned int)base) {
+            return -1;
+        }
+
+        value = value * (unsigned int)base + digit;
+        ++args;
+    }
+
+    *color = value;
+    return 0;
 }
 
 static char to_upper(char c) {
@@ -116,8 +194,138 @@ static void print_drive_name(int index) {
     console_puts(name);
 }
 
+static int active_drive(void);
+
+static void reset_cwd(int drive) {
+    if (drive < 0 || drive >= MAX_DRIVES) {
+        return;
+    }
+
+    cwd_dirs[drive] = LAINFS_ROOT_DIR;
+    cwd_paths[drive][0] = '\\';
+    cwd_paths[drive][1] = '\0';
+}
+
+static uint32_t active_dir(void) {
+    int drive = active_drive();
+    if (drive < 0) {
+        return LAINFS_ROOT_DIR;
+    }
+
+    return cwd_dirs[drive];
+}
+
+static void append_path_part(int drive, const char *name) {
+    unsigned int len = 0;
+    unsigned int i = 0;
+
+    if (drive < 0 || drive >= MAX_DRIVES) {
+        return;
+    }
+
+    while (cwd_paths[drive][len]) {
+        ++len;
+    }
+
+    if (len > 1 && len + 1 < SHELL_PATH_SIZE) {
+        cwd_paths[drive][len++] = '\\';
+        cwd_paths[drive][len] = '\0';
+    }
+
+    while (name[i] && len + 1 < SHELL_PATH_SIZE) {
+        cwd_paths[drive][len++] = name[i++];
+    }
+
+    cwd_paths[drive][len] = '\0';
+}
+
+static void pop_path_part(int drive) {
+    unsigned int len = 0;
+
+    if (drive < 0 || drive >= MAX_DRIVES) {
+        return;
+    }
+
+    while (cwd_paths[drive][len]) {
+        ++len;
+    }
+
+    if (len <= 1) {
+        cwd_paths[drive][0] = '\\';
+        cwd_paths[drive][1] = '\0';
+        return;
+    }
+
+    while (len > 1 && cwd_paths[drive][len - 1] != '\\') {
+        --len;
+    }
+
+    if (len <= 1) {
+        cwd_paths[drive][1] = '\0';
+    } else {
+        cwd_paths[drive][len - 1] = '\0';
+    }
+}
+
+static int resolve_dir_arg(int drive, const char *arg, uint32_t *out_dir) {
+    arg = skip_const_spaces(arg);
+
+    if (*arg == '\0' || streq(arg, ".")) {
+        *out_dir = cwd_dirs[drive];
+        return 0;
+    }
+
+    if (streq(arg, "\\") || streq(arg, "/")) {
+        *out_dir = LAINFS_ROOT_DIR;
+        return 0;
+    }
+
+    if (streq(arg, "..")) {
+        return lainfs_parent_dir((char)('A' + drive), cwd_dirs[drive], out_dir);
+    }
+
+    return lainfs_find_dir((char)('A' + drive), cwd_dirs[drive], arg, out_dir);
+}
+
+static int is_script_comment_or_blank(const char *line) {
+    line = skip_const_spaces(line);
+    return *line == '\0' || *line == '#';
+}
+
+static void run_script_text(char *script, uint32_t size, const boot_info_t *info) {
+    char line[SCRIPT_LINE_SIZE];
+    uint32_t line_len = 0;
+
+    for (uint32_t i = 0; i <= size; ++i) {
+        char ch = i < size ? script[i] : '\n';
+
+        if (ch == '\r') {
+            continue;
+        }
+
+        if (ch == '\n') {
+            line[line_len] = '\0';
+
+            if (!is_script_comment_or_blank(line)) {
+                console_puts("> ");
+                console_puts(line);
+                console_puts("\n");
+                shell_run_command(line, info);
+            }
+
+            line_len = 0;
+            continue;
+        }
+
+        if (line_len + 1 < SCRIPT_LINE_SIZE) {
+            line[line_len++] = ch;
+        }
+    }
+}
+
 static void cmd_help(const char *args, const boot_info_t *info);
 static void cmd_bgcolor(const char *args, const boot_info_t *info);
+static void cmd_fgcolor(const char *args, const boot_info_t *info);
 static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
@@ -129,15 +337,24 @@ static void cmd_mount(const char *args, const boot_info_t *info);
 static void cmd_mounts(const char *args, const boot_info_t *info);
 static void cmd_format(const char *args, const boot_info_t *info);
 static void cmd_ls(const char *args, const boot_info_t *info);
+static void cmd_cd(const char *args, const boot_info_t *info);
+static void cmd_pwd(const char *args, const boot_info_t *info);
+static void cmd_mkdir(const char *args, const boot_info_t *info);
+static void cmd_rm(const char *args, const boot_info_t *info);
+static void cmd_rename(const char *args, const boot_info_t *info);
 static void cmd_write(const char *args, const boot_info_t *info);
 static void cmd_cat(const char *args, const boot_info_t *info);
 static void cmd_edit(const char *args, const boot_info_t *info);
 static void cmd_ahci(const char *args, const boot_info_t *info);
 static void cmd_ticks(const char *args, const boot_info_t *info);
+static void cmd_run(const char *args, const boot_info_t *info);
+static void cmd_exec(const char *args, const boot_info_t *info);
+static void cmd_asm(const char *args, const boot_info_t *info);
 
 static const command_t commands[] = {
     { "help",    "show commands",             cmd_help },
     { "bgcolor", "set background color",      cmd_bgcolor },
+    { "fgcolor", "set text color",            cmd_fgcolor },
     { "clear",   "clear screen",              cmd_clear },
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
@@ -148,12 +365,22 @@ static const command_t commands[] = {
     { "mount",   "mount partition to drive",  cmd_mount },
     { "mounts",  "list mounted filesystems",  cmd_mounts },
     { "format",  "format drive as lainfs",    cmd_format },
-    { "ls",      "list files",                cmd_ls },
+    { "ls",      "list directory entries",    cmd_ls },
+    { "cd",      "change directory",          cmd_cd },
+    { "pwd",     "show current directory",    cmd_pwd },
+    { "mkdir",   "create a directory",         cmd_mkdir },
+    { "rm",      "delete a file or directory", cmd_rm },
+    { "del",     "delete a file or directory", cmd_rm },
+    { "rename",  "rename a file or directory", cmd_rename },
+    { "mv",      "rename a file or directory", cmd_rename },
     { "write",   "write a text file",         cmd_write },
     { "cat",     "print a text file",         cmd_cat },
     { "edit",    "edit a text file",          cmd_edit },
     { "ahci",    "show AHCI status",          cmd_ahci },
     { "ticks",   "show timer ticks",          cmd_ticks },
+    { "run",     "run a script file",         cmd_run },
+    { "exec",    "run a flat binary file",     cmd_exec },
+    { "asm",     "assemble a tiny asm file",   cmd_asm },
 };
 
 static const unsigned int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -185,6 +412,9 @@ static void cmd_echo(const char *args, const boot_info_t *info) {
 static void cmd_info(const char *args, const boot_info_t *info) {
     (void)args;
 
+    console_puts("Kernel version: ");
+    console_puts(BUILD_VERSION_STRING);
+    console_puts("\n");
     console_kprintf2("Kernel base: 0x%x, framebuffer: 0x%x\n",
                      info->kernel_base,
                      info->framebuffer_base);
@@ -211,6 +441,7 @@ static void cmd_mkdrive(const char *args, const boot_info_t *info) {
     drives[drive].present = 1;
     copy_label(drives[drive].label, "VIRTUAL");
     current_drive = drive;
+    reset_cwd(drive);
 
     console_puts("created ");
     print_drive_name(drive);
@@ -358,6 +589,7 @@ static void cmd_mount(const char *args, const boot_info_t *info) {
     drives[drive].present = 1;
     copy_label(drives[drive].label, "MOUNTED");
     current_drive = drive;
+    reset_cwd(drive);
 
     console_puts("mounted ");
     console_puts(part_arg);
@@ -415,6 +647,43 @@ static int drive_from_args_or_current(const char *args) {
     return active_drive();
 }
 
+static int set_mounted_drive(char drive_letter, const char *label) {
+    int drive = to_upper(drive_letter) - 'A';
+
+    if (drive < 0 || drive >= MAX_DRIVES) {
+        return -1;
+    }
+
+    drives[drive].present = 1;
+    copy_label(drives[drive].label, label);
+    current_drive = drive;
+    reset_cwd(drive);
+    return 0;
+}
+
+int shell_mount_first_lainfs(char drive_letter) {
+    drive_letter = to_upper(drive_letter);
+
+    for (uint32_t i = 0; i < storage_partition_count(); ++i) {
+        const partition_t *part = storage_get_partition(i);
+        if (!part || !streq(part->fs_hint, "lainfs")) {
+            continue;
+        }
+
+        if (storage_mount(drive_letter, part->name) == 0) {
+            set_mounted_drive(drive_letter, "SYSTEM");
+            console_puts("mounted ");
+            console_puts(part->name);
+            console_puts(" at ");
+            print_drive_name((int)(drive_letter - 'A'));
+            console_puts("\n");
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 static void cmd_format(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -448,24 +717,225 @@ static void cmd_format(const char *args, const boot_info_t *info) {
     console_puts("formatted ");
     print_drive_name(drive);
     console_puts(" as lainfs\n");
+    reset_cwd(drive);
 }
 
 static void cmd_ls(const char *args, const boot_info_t *info) {
     (void)info;
 
-    int drive = drive_from_args_or_current(args);
+    uint32_t dir_id = LAINFS_ROOT_DIR;
+    const char *target = skip_const_spaces(args);
+    int drive = active_drive();
+
+    if (parse_drive_arg(target) >= 0) {
+        drive = parse_drive_arg(target);
+        dir_id = LAINFS_ROOT_DIR;
+    } else if (drive >= 0) {
+        int status = resolve_dir_arg(drive, target, &dir_id);
+        if (status != 0) {
+            console_puts("ls failed: directory not found\n");
+            return;
+        }
+    }
+
     if (drive < 0 || drive >= MAX_DRIVES) {
-        console_puts("usage: ls [C:]\n");
+        console_puts("usage: ls [directory|C:]\n");
         return;
     }
 
-    int status = lainfs_list((char)('A' + drive));
+    int status = lainfs_list_dir((char)('A' + drive), dir_id);
     if (status == -1) {
         console_puts("drive is not mounted\n");
     } else if (status == -2) {
         console_puts("drive is not formatted as lainfs\n");
+    } else if (status == -5) {
+        console_puts("ls failed: directory not found\n");
     } else if (status != 0) {
         console_puts("ls failed\n");
+    }
+}
+
+static void cmd_cd(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    int drive = active_drive();
+    const char *target = skip_const_spaces(args);
+    uint32_t dir_id = LAINFS_ROOT_DIR;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example C:\n");
+        return;
+    }
+
+    if (*target == '\0') {
+        reset_cwd(drive);
+        return;
+    }
+
+    if (streq(target, "\\") || streq(target, "/")) {
+        reset_cwd(drive);
+        return;
+    }
+
+    if (streq(target, ".")) {
+        return;
+    }
+
+    if (streq(target, "..")) {
+        int status = lainfs_parent_dir((char)('A' + drive), cwd_dirs[drive], &dir_id);
+        if (status != 0) {
+            console_puts("cd failed\n");
+            return;
+        }
+
+        cwd_dirs[drive] = dir_id;
+        pop_path_part(drive);
+        return;
+    }
+
+    int status = lainfs_find_dir((char)('A' + drive), cwd_dirs[drive], target, &dir_id);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+    } else if (status == -5) {
+        console_puts("cd failed: directory not found\n");
+    } else if (status != 0) {
+        console_puts("cd failed\n");
+    } else {
+        cwd_dirs[drive] = dir_id;
+        append_path_part(drive, target);
+    }
+}
+
+static void cmd_pwd(const char *args, const boot_info_t *info) {
+    (void)args;
+    (void)info;
+
+    int drive = active_drive();
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example C:\n");
+        return;
+    }
+
+    print_drive_name(drive);
+    console_puts(cwd_paths[drive]);
+    console_puts("\n");
+}
+
+static void cmd_mkdir(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    int drive = active_drive();
+    const char *name = skip_const_spaces(args);
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example C:\n");
+        return;
+    }
+
+    if (*name == '\0') {
+        console_puts("usage: mkdir name\n");
+        return;
+    }
+
+    int status = lainfs_make_dir_in_dir((char)('A' + drive), cwd_dirs[drive], name);
+    if (status == -2) {
+        console_puts("mkdir failed: invalid name\n");
+    } else if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+    } else if (status == -5) {
+        console_puts("directory is full\n");
+    } else if (status == -6) {
+        console_puts("mkdir failed: name already exists\n");
+    } else if (status != 0) {
+        console_puts("mkdir failed\n");
+    }
+}
+
+static void cmd_rm(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    int drive = active_drive();
+    const char *name = skip_const_spaces(args);
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example C:\n");
+        return;
+    }
+
+    if (*name == '\0') {
+        console_puts("usage: rm name\n");
+        return;
+    }
+
+    int status = lainfs_delete_in_dir((char)('A' + drive), cwd_dirs[drive], name);
+    if (status == -2) {
+        console_puts("delete failed: invalid name\n");
+    } else if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+    } else if (status == -5) {
+        console_puts("delete failed: not found\n");
+    } else if (status == -9) {
+        console_puts("delete failed: directory is not empty\n");
+    } else if (status != 0) {
+        console_puts("delete failed\n");
+    }
+}
+
+static void cmd_rename(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    int drive = active_drive();
+    char *old_name = 0;
+    char *new_name = 0;
+    uint32_t target_parent = LAINFS_ROOT_DIR;
+    const char *target_name = 0;
+    int status = 0;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example C:\n");
+        return;
+    }
+
+    split_first_arg((char *)args, &old_name, &new_name);
+    if (*old_name == '\0' || *new_name == '\0') {
+        console_puts("usage: rename old new\n");
+        return;
+    }
+
+    if (streq(new_name, ".")) {
+        target_parent = cwd_dirs[drive];
+        target_name = old_name;
+    } else if (streq(new_name, "..")) {
+        status = lainfs_parent_dir((char)('A' + drive), cwd_dirs[drive], &target_parent);
+        if (status != 0) {
+            console_puts("rename failed\n");
+            return;
+        }
+        target_name = old_name;
+    } else if (lainfs_find_dir((char)('A' + drive), cwd_dirs[drive], new_name, &target_parent) == 0) {
+        target_name = old_name;
+    } else {
+        target_parent = cwd_dirs[drive];
+        target_name = new_name;
+    }
+
+    status = lainfs_rename_in_dir((char)('A' + drive),
+                                  cwd_dirs[drive],
+                                  old_name,
+                                  target_parent,
+                                  target_name);
+    if (status == -2) {
+        console_puts("rename failed: invalid name\n");
+    } else if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+    } else if (status == -5) {
+        console_puts("rename failed: not found\n");
+    } else if (status == -6) {
+        console_puts("rename failed: target exists\n");
+    } else if (status == -8) {
+        console_puts("rename failed: cannot move a directory into itself\n");
+    } else if (status != 0) {
+        console_puts("rename failed\n");
     }
 }
 
@@ -487,11 +957,17 @@ static void cmd_write(const char *args, const boot_info_t *info) {
         return;
     }
 
-    int status = lainfs_write_file((char)('A' + drive), name, text);
-    if (status == -3) {
+    int status = lainfs_write_file_in_dir((char)('A' + drive), cwd_dirs[drive], name, text);
+    if (status == -2) {
+        console_puts("write failed: invalid filename\n");
+    } else if (status == -3) {
         console_puts("drive is not formatted as lainfs\n");
     } else if (status == -5) {
         console_puts("directory is full\n");
+    } else if (status == -8) {
+        console_puts("write failed: name is a directory\n");
+    } else if (status == -9) {
+        console_puts("write failed: disk is full\n");
     } else if (status != 0) {
         console_puts("write failed\n");
     }
@@ -513,7 +989,7 @@ static void cmd_cat(const char *args, const boot_info_t *info) {
         return;
     }
 
-    int status = lainfs_read_file((char)('A' + drive), name);
+    int status = lainfs_read_file_in_dir((char)('A' + drive), cwd_dirs[drive], name);
     if (status == -2) {
         console_puts("drive is not formatted as lainfs\n");
     } else if (status == -5) {
@@ -539,7 +1015,7 @@ static void cmd_edit(const char *args, const boot_info_t *info) {
         return;
     }
 
-    int status = editor_run((char)('A' + drive), name);
+    int status = editor_run_in_dir((char)('A' + drive), cwd_dirs[drive], name);
     if (status == -1) {
         console_puts("edit failed: invalid filename\n");
     } else if (status == -3) {
@@ -573,77 +1049,270 @@ static void cmd_ticks(const char *args, const boot_info_t *info) {
     console_puts("\n");
 }
 
-void cmd_bgcolor(const char *args, const boot_info_t *info) {
+static int run_script_file(const char *name, const boot_info_t *info, int quiet_missing) {
+    char *script = 0;
+    uint32_t size = 0;
+    int drive = active_drive();
+
+    if (drive < 0) {
+        return -1;
+    }
+
+    if (script_depth >= SCRIPT_MAX_DEPTH) {
+        console_puts("run failed: script nesting too deep\n");
+        return -2;
+    }
+
+    script = script_buffers[script_depth];
+
+    int status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         active_dir(),
+                                         name,
+                                         script,
+                                         SCRIPT_BUFFER_SIZE,
+                                         &size);
+    if (status == -3) {
+        if (!quiet_missing) {
+            console_puts("drive is not formatted as lainfs\n");
+        }
+
+        return status;
+    }
+
+    if (status == -5) {
+        if (!quiet_missing) {
+            console_puts("script not found\n");
+        }
+
+        return status;
+    }
+
+    if (status != 0) {
+        console_puts("run failed\n");
+        return status;
+    }
+
+    script[size] = '\0';
+
+    ++script_depth;
+    run_script_text(script, size, info);
+    --script_depth;
+
+    return 0;
+}
+
+static void cmd_run(const char *args, const boot_info_t *info) {
+    const char *name = skip_const_spaces(args);
+
+    if (active_drive() < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    if (*name == '\0') {
+        console_puts("usage: run scriptname\n");
+        return;
+    }
+
+    run_script_file(name, info, 0);
+}
+
+static void cmd_exec(const char *args, const boot_info_t *info) {
     (void)info;
 
-    if (args == 0 || *args == '\0') {
-        console_puts("Invalid color, use 6 digit hex code! \n");
+    const char *name = skip_const_spaces(args);
+    uint32_t size = 0;
+    int drive = active_drive();
+
+    static const exec_api_t api = {
+        EXEC_API_MAGIC,
+        1,
+        console_puts,
+        console_put_hex64,
+        console_put_dec64,
+        timer_ticks,
+    };
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
         return;
     }
 
-    int32_t color = 0;
-    int base = 10;
-
-    if(args[0] == '0' && (args[1] == 'x' || args[1] == 'X')) {
-        base = 16;
-        args += 2;
-    }
-
-    if (*args == '\0') {
+    if (*name == '\0') {
+        console_puts("usage: exec file.bin\n");
         return;
     }
 
-    while (*args) {
-        char c = *args;
-        int digit;
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
 
-        if (c >= '0' && c <= '9') {
-            digit = c - '0';
-        } else if (base == 16 && c >= 'a' && c <= 'f') {
-            digit = 10 + (c - 'a');
-        } else if (base == 16 && c >= 'A' && c <= 'F') {
-            digit = 10 + (c - 'A');
-        }
-        else {
-            return;
-        }
-
-        color = color * base + digit;
-        args++;
+    int status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         cwd_dirs[drive],
+                                         name,
+                                         (char *)exec_buffer,
+                                         EXEC_BUFFER_SIZE,
+                                         &size);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
     }
 
-    fill_screen_color(color);
+    if (status == -5) {
+        console_puts("binary not found\n");
+        return;
+    }
+
+    if (status != 0) {
+        console_puts("exec failed\n");
+        return;
+    }
+
+    if (size == 0) {
+        console_puts("exec failed: empty binary\n");
+        return;
+    }
+
+    console_puts("running ");
+    console_puts(name);
+    console_puts("\n");
+
+    exec_program_t program = (exec_program_t)(uintptr_t)exec_buffer;
+    program(&api);
+
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+
+    console_puts("\nprogram returned\n");
+}
+
+static void cmd_asm(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char source[ASM_SOURCE_SIZE + 1];
+    uint32_t source_size = 0;
+    uint32_t output_size = 0;
+    char *mutable_args = (char *)args;
+    char *source_name = 0;
+    char *output_name = 0;
+    int drive = active_drive();
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    split_first_arg(mutable_args, &source_name, &output_name);
+    if (*source_name == '\0' || *output_name == '\0') {
+        console_puts("usage: asm source.asm output.bin\n");
+        return;
+    }
+
+    int status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         cwd_dirs[drive],
+                                         source_name,
+                                         source,
+                                         ASM_SOURCE_SIZE,
+                                         &source_size);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+
+    if (status == -5) {
+        console_puts("source not found\n");
+        return;
+    }
+
+    if (status != 0) {
+        console_puts("asm failed: could not load source\n");
+        return;
+    }
+
+    source[source_size] = '\0';
+    zero_memory(asm_output, EXEC_BUFFER_SIZE);
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    if (assembler_assemble_source(source,
+                                  source_size,
+                                  asm_output,
+                                  EXEC_BUFFER_SIZE,
+                                  (uint64_t)(uintptr_t)exec_buffer,
+                                  &output_size) != 0) {
+        console_puts("asm failed: unsupported syntax\n");
+        return;
+    }
+
+    status = lainfs_save_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     output_name,
+                                     (const char *)asm_output,
+                                     output_size);
+    if (status == -9) {
+        console_puts("asm failed: disk is full\n");
+        return;
+    }
+
+    if (status != 0) {
+        console_puts("asm failed: could not save output\n");
+        return;
+    }
+
+    console_puts("assembled ");
+    console_puts(output_name);
+    console_puts(" bytes=");
+    console_put_dec64(output_size);
+    console_puts("\n");
+}
+
+static void cmd_bgcolor(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    unsigned int color = 0;
+
+    if (parse_color_arg(args, &color) != 0) {
+        console_puts("Invalid color, use 6 digit hex code!\n");
+        return;
+    }
+
+    console_set_bg_color(color);
+}
+
+static void cmd_fgcolor(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    unsigned int color = 0;
+
+    if (parse_color_arg(args, &color) != 0) {
+        console_puts("Invalid color, use 6 digit hex code!\n");
+        return;
+    }
+
+    console_set_fg_color(color);
 }
 
 void shell_init(void) {
     for (int i = 0; i < MAX_DRIVES; ++i) {
         drives[i].present = 0;
         drives[i].label[0] = '\0';
+        reset_cwd(i);
     }
 
     current_drive = -1;
 }
 
-// static void cmd_run(const char *args, const boot_info_t *info) {
-//     char script[512];
-//     uint32_t size = 0;
+void shell_run_autoexec(const char *name, const boot_info_t *info) {
+    int previous_drive = current_drive;
 
-//     status = lainfs_load_file(current_drive, args, script, sizeof(script), &size);
-//     if (status != 0) {
-//         console_puts("run failed\n");
-//         return;
-//     }
+    if (active_drive() < 0) {
+        return;
+    }
 
-//     split script into lines;
-//     for each line:
-//         shell_run_command(line, info);
-// }
-
+    run_script_file(name, info, 1);
+    current_drive = previous_drive;
+}
 
 void shell_print_prompt(void) {
     if (current_drive >= 0 && drives[current_drive].present) {
         print_drive_name(current_drive);
-        console_puts("\\> ");
+        console_puts(cwd_paths[current_drive]);
+        console_puts("> ");
         return;
     }
 

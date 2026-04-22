@@ -1,0 +1,1 @@
+qemu-system-x86_64.exe -accel whpx -m 256M -vga std -drive if=pflash,format=raw,readonly=on,file="OVMF_CODE.fd" -drive if=pflash,format=raw,file="OVMF_VARS.fd" -drive format=raw,file="build\esp.img",if=ide,index=0 -drive format=raw,file="build\data.img",if=ide,index=1

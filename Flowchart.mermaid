@@ -1,0 +1,129 @@
+flowchart TD
+    A[UEFI firmware starts BOOTX64.EFI] --> B[efi_main in bootloader/main.c]
+
+    B --> C[Initialize GNU-EFI library]
+    C --> D[Try optional NTFS driver]
+    D --> E[Find and open kernel.elf on available filesystems]
+
+    E -->|open failed| EFail[Print error and return EFI status]
+    E -->|ok| F[Read kernel.elf into memory]
+
+    F -->|read failed| FFail[Print error and return EFI status]
+    F -->|ok| G[Validate ELF64 x86_64 image]
+
+    G -->|invalid| GFail[Print ELF load error and return]
+    G -->|ok| H[Allocate physical pages for kernel LOAD segments]
+
+    H --> I[Copy ELF segments and zero BSS]
+    I --> J[Allocate boot_info at 0x90000]
+
+    J -->|failed| JFail[Print error and return]
+    J -->|ok| K[Fill boot_info magic, kernel range, RSDP]
+
+    K --> L[Locate GOP framebuffer]
+    L --> M[Store framebuffer info in boot_info]
+
+    M --> N[Get UEFI memory map]
+    N --> O[ExitBootServices retry loop]
+
+    O -->|failed after retries| OFail[Print error and return]
+    O -->|success| P[jump_to_kernel entry, boot_info in RDI]
+
+    P --> Q[_start in kernel/entry.asm]
+    Q --> R{boot_info pointer valid?}
+
+    R -->|no| RPanic[console_panic: boot_info pointer was null]
+    R -->|yes| S{boot_info magic matches?}
+
+    S -->|no| SPanic[console_panic: boot_info magic mismatch]
+    S -->|yes| T[Call kernel_main boot_info]
+
+    T --> U{boot_info is null?}
+    U -->|yes| UPanic[console_panic: kernel_main got null boot_info]
+    U -->|no| V{framebuffer exists?}
+
+    V -->|no| VHalt[cli; hlt forever]
+    V -->|yes| W[console_init with framebuffer]
+
+    W --> X[console_clear]
+    X --> Y[cpu_init_tables]
+    Y --> Z[interrupts_init]
+    Z --> AA[timer_init]
+    AA --> AB[keyboard_init]
+    AB --> AC[storage_init]
+
+    AC --> AC1[Clear storage tables]
+    AC1 --> AC2[Create demo RAM disk MBR]
+    AC2 --> AC3[Register rd0 block device]
+    AC3 --> AC4[ATA soft reset and probe hd1]
+    AC4 --> AC5[Register hd1 if found]
+    AC5 --> AC6[ahci_init]
+    AC6 --> AC7[Discover MBR partitions]
+
+    AC7 --> AD[Print kernel banner and hardware info]
+    AD --> AE[shell_init]
+    AE --> AF[Mount first lainfs drive as S]
+    AF --> AG[Run autoexec script if active drive exists]
+
+    AG --> AH[Main shell loop]
+
+    AH --> AI[shell_print_prompt]
+    AI --> AJ[console_read_line into input_buffer]
+    AJ --> AK{input empty?}
+
+    AK -->|yes| AL[Print newline]
+    AL --> AH
+
+    AK -->|no| AM[shell_run_command]
+    AM --> AN[Split command name and args]
+    AN --> AO{command is drive spec?}
+
+    AO -->|yes, mounted/present| AP[Switch current drive]
+    AP --> AH
+
+    AO -->|yes, missing| AQ[Print drive does not exist]
+    AQ --> AH
+
+    AO -->|no| AR{matches command table?}
+
+    AR -->|no| AS[Print unknown command]
+    AS --> AH
+
+    AR -->|yes| AT[Call command handler]
+    AT --> AU{handler type}
+
+    AU -->|help/info/ticks/clear/echo/bgcolor/fgcolor| AV[Console/info command]
+    AU -->|blk/part/drives/mount/mounts| AW[Storage listing or mount command]
+    AU -->|mkdrive/format/ls/write/cat| AX[lainfs file command]
+    AU -->|edit| AY[editor_run]
+    AU -->|ahci| AZ[Print AHCI status]
+    AU -->|run| BA[Run script file]
+
+    AV --> AH
+    AW --> AH
+    AX --> AH
+    AZ --> AH
+    BA --> AH
+
+    AY --> BB[Load file into editor buffer]
+    BB --> BC[Clear screen]
+    BC --> BD[Editor loop]
+    BD --> BE[draw_editor]
+    BE --> BF[keyboard_read_key]
+
+    BF --> BG{key type}
+    BG -->|Ctrl+S| BH[Save file and set status]
+    BG -->|Esc or Ctrl+Q| BI[Disable cursor, clear screen, return]
+    BG -->|Arrows| BJ[Move cursor]
+    BG -->|Backspace| BK[Delete before cursor]
+    BG -->|Enter| BL[Insert newline]
+    BG -->|Tab| BM[Insert four spaces]
+    BG -->|Char| BN[Insert character]
+
+    BH --> BD
+    BJ --> BD
+    BK --> BD
+    BL --> BD
+    BM --> BD
+    BN --> BD
+    BI --> AH

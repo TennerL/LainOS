@@ -12,6 +12,7 @@ BOOTDISK_IMG := bootdisk.img
 DATA_IMG := data.img
 ISO_DIR := build/image
 EFI_DIR := $(ISO_DIR)/EFI/BOOT
+BUILD_VERSION_H := build/version.h
 EFI_ARCH ?= x86_64
 EFI_INC ?= /usr/include/efi
 EFI_LIBDIR ?= /usr/lib
@@ -26,7 +27,7 @@ BOOTDISK_SIZE_KB ?= 131072
 DATA_SIZE_KB ?= 65536
 NTFS_DRIVER ?=
 
-PROJECT_CFLAGS := -Iboot/shared
+PROJECT_CFLAGS := -Iboot/shared -Ibuild
 NASMFLAGS := -Iboot/shared/
 CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER
 KERNEL_CFLAGS := $(PROJECT_CFLAGS) -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
@@ -38,6 +39,22 @@ all: build/$(BOOTLOADER) build/$(KERNEL_BIN) build/$(KERNEL_ELF) image build/$(E
 
 build:
 	$(MKDIR_P) build
+
+FORCE:
+
+$(BUILD_VERSION_H): FORCE | build
+	@old=0; \
+	if [ -f build/build_number.txt ]; then old=$$(cat build/build_number.txt); fi; \
+	new=$$((old + 1)); \
+	printf '%s\n' $$new > build/build_number.txt; \
+	git_rev=$$(git rev-parse --short HEAD 2>/dev/null || printf unknown); \
+	build_time=$$(date -u '+%Y-%m-%dT%H:%M:%SZ'); \
+	printf '#ifndef BUILD_VERSION_H\n#define BUILD_VERSION_H\n\n' > $@; \
+	printf '#define BUILD_NUMBER %s\n' "$$new" >> $@; \
+	printf '#define BUILD_GIT_REV "%s"\n' "$$git_rev" >> $@; \
+	printf '#define BUILD_TIMESTAMP "%s"\n' "$$build_time" >> $@; \
+	printf '#define BUILD_VERSION_STRING "build %s (%s, %s)"\n\n' "$$new" "$$build_time" "$$git_rev" >> $@; \
+	printf '#endif\n' >> $@
 
 build/bootloader/main.o: bootloader/main.c | build
 	$(MKDIR_P) build/bootloader
@@ -53,11 +70,15 @@ build/kernel/entry.o: kernel/entry.asm | build
 	$(MKDIR_P) build/kernel
 	$(NASM) $(NASMFLAGS) -f elf64 $< -o $@
 
-build/kernel/main.o: kernel/main.c kernel/kernel.h kernel/shell.h kernel/storage.h kernel/ahci.h boot/shared/bootinfo.h | build
+build/kernel/main.o: kernel/main.c kernel/kernel.h kernel/shell.h kernel/storage.h kernel/ahci.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/storage.h kernel/lainfs.h kernel/editor.h kernel/ahci.h boot/shared/bootinfo.h | build
+build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/storage.h kernel/lainfs.h kernel/editor.h kernel/ahci.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
+	$(MKDIR_P) build/kernel
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+build/kernel/assembler.o: kernel/assembler.c kernel/assembler.h kernel/kernel.h boot/shared/bootinfo.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -105,8 +126,8 @@ build/kernel/interrupts.o: kernel/interrupts.asm | build
 	$(MKDIR_P) build/kernel
 	$(NASM) $(NASMFLAGS) -f elf64 $< -o $@
 
-build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o kernel/linker.ld
-	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o
+build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o kernel/linker.ld
+	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o
 
 build/$(KERNEL_BIN): build/$(KERNEL_ELF)
 	$(OBJCOPY) -O binary build/$(KERNEL_ELF) $@
@@ -181,4 +202,4 @@ print-efi-config:
 	@echo EFI_LDS=$(EFI_LDS)
 	@echo EFI_ARCH=$(EFI_ARCH)
 
-.PHONY: all build image run run-ahci run-bootdisk clean inspect-efi print-efi-config
+.PHONY: all build image run run-ahci run-bootdisk clean inspect-efi print-efi-config FORCE

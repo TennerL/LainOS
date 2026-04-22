@@ -11,6 +11,8 @@ void console_init(unsigned long long framebuffer_base,
                   unsigned int framebuffer_pixels_per_scanline);
 void console_clear(void);
 void fill_screen_color(unsigned int);
+void console_set_bg_color(unsigned int color);
+void console_set_fg_color(unsigned int color);
 void console_set_cursor(unsigned int col, unsigned int row);
 void console_put_char_at(unsigned int col, unsigned int row, char ch);
 unsigned int console_rows(void);

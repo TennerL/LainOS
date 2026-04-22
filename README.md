@@ -15,6 +15,7 @@ Minimal starter project for:
 - `kernel/entry.asm` - tiny assembly kernel entry stub
 - `kernel/main.c` - main kernel logic in C
 - `kernel/kernel.h` - shared kernel-side API declarations
+- `kernel/assembler.c` - tiny in-kernel assembler used by the `asm` shell command
 - `kernel/console.c` - framebuffer console, formatting, and panic screen in C
 - `kernel/cpu.c` - GDT/IDT table construction in C
 - `kernel/cpu_low.asm` - tiny low-level CPU table load helpers
@@ -94,7 +95,7 @@ The kernel now includes a very small software text renderer:
 - contiguous ASCII font table for readable output
 - direct pixel writes into the GOP framebuffer
 - restored darker blue-toned background
-- white foreground text
+- configurable foreground text
 - line wrapping
 - scrolling
 - simple 32 bit and 64 bit hex output support
@@ -321,6 +322,8 @@ It now includes basic Shift and Caps Lock handling plus a simple visible text cu
 
 The kernel console has a tiny command shell:
 - `help` - show commands
+- `bgcolor 0xRRGGBB` - set the background color
+- `fgcolor 0xRRGGBB` - set the text color
 - `clear` - clear the screen
 - `echo text` - print text
 - `info` - show boot/kernel info
@@ -334,9 +337,16 @@ The kernel console has a tiny command shell:
 - `ahci` - show detected AHCI controllers and disks
 - `ticks` - show PIT timer ticks
 - `format C:` - format a mounted drive as `lainfs`
-- `ls [C:]` - list files on a `lainfs` drive
-- `write name text` - write a small text file to the current drive
-- `cat name` - print a small text file from the current drive
+- `ls [C:]` - list `lainfs` entries in a table
+- `cd name` / `cd ..` / `cd \` - change directory
+- `pwd` - show the current drive and directory
+- `mkdir name` - create a directory entry
+- `rm name` / `del name` - delete a file or directory entry
+- `rename old new` / `mv old new` - rename or move a file or directory entry
+- `write name text` - write a text file to the current drive
+- `cat name` - print a text file from the current drive
+- `asm source.asm output.bin` - assemble a tiny x86_64 source file
+- `exec file.bin` - run a flat binary from the current drive
 
 The storage stack currently registers a small RAM-backed demo block device
 named `rd0`. Its first sector contains a simple MBR with one NTFS-like partition
@@ -400,10 +410,46 @@ ls
 cat hello
 ```
 
-`lainfs` is deliberately tiny right now: one flat directory, up to 32 files, and
-one 512-byte block per file. The AHCI driver is intentionally early but follows
-the block-device API, so VirtualBox SATA disks should be the next realistic
-target to shake out.
+`lainfs` is deliberately tiny right now: up to 32 entries total and up to
+64 KiB per file, stored as contiguous 512-byte blocks. Directory entries have
+parent links, so `cd`, `pwd`, scoped `ls`, and moving entries into directories
+work. Full path operands such as `programs/demo.asm` are not implemented yet;
+change into the directory first or use `mv file dirname` / `mv file ..`. The
+AHCI driver is intentionally early but follows the block-device API, so
+VirtualBox SATA disks should be the next realistic target to shake out.
+
+## Tiny assembler
+
+The `asm` shell command accepts a small NASM-like subset and emits a flat binary
+that can be run with `exec`. Directives such as `global`, `section .text`,
+`bits 64`, and `default rel` are accepted for source compatibility. Labels and
+`db` data are supported.
+
+The instruction subset is intentionally small but covers the common flat-binary
+building blocks:
+- registers: `rax`..`r15` and `eax`..`r15d`
+- control: `nop`, `hlt`, `ret`, `ret imm16`, `leave`, `int imm8`, `iretq`,
+  `syscall`, `cli`, `sti`
+- data movement: `mov r64, imm64`, `mov r32, imm32`, `mov reg, reg`,
+  `push r64`, `pop r64`
+- arithmetic and logic: `add`, `sub`, `cmp`, `and`, `or`, `xor`, `test`,
+  `inc`, `dec`
+- flow: `call label`, `call r64`, `jmp label`, `jmp r64`, and rel32
+  conditional jumps such as `je`, `jne`, `jl`, `jle`, `jg`, `jge`, `jb`,
+  `jbe`, `ja`, and `jae`
+
+Memory operands such as `[rbp-8]` are not implemented yet.
+
+Example:
+
+```nasm
+global main
+
+section .text
+main:
+    mov eax, 42
+    ret
+```
 
 ## Timer
 
@@ -432,7 +478,7 @@ It still does **not yet**:
 - map virtual addresses distinct from physical addresses
 - support dynamic linking
 - read directories or files from NTFS inside the kernel
-- support nested directories or large files in `lainfs`
+- support full path operands or non-contiguous file extents in `lainfs`
 - discover real disk sizes through IDENTIFY data
 - use APIC/HPET or per-core timers instead of the legacy PIT/PIC path
 - handle every GOP pixel format correctly

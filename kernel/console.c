@@ -6,8 +6,8 @@
 #define CONSOLE_MARGIN_X 16u
 #define CONSOLE_MARGIN_Y 16u
 #define CONSOLE_ROW_ADVANCE (FONT_H + 2u)
-#define FG_COLOR 0x00F725FCu
-#define BG_COLOR 0x0035063Eu
+#define DEFAULT_FG_COLOR 0x00F725FCu
+#define DEFAULT_BG_COLOR 0x0035063Eu
 #define PANIC_BG_COLOR 0x00000080u
 #define ASCII_FIRST 32u
 #define ASCII_COUNT 95u
@@ -22,6 +22,8 @@ static uint64_t fb_base;
 static uint32_t fb_width;
 static uint32_t fb_height;
 static uint32_t fb_pitch;
+static uint32_t current_fg_color = DEFAULT_FG_COLOR;
+static uint32_t current_bg_color = DEFAULT_BG_COLOR;
 static char dec_buffer[32];
 
 static const uint8_t font_data[ASCII_COUNT][8] = {
@@ -86,7 +88,7 @@ static void draw_cursor(void) {
     if (cursor_x + FONT_W > fb_width || cursor_y + FONT_H > fb_height) return;
     for (uint32_t row = 0; row < FONT_H; ++row) {
         for (uint32_t col = 0; col < FONT_W; ++col) {
-            put_pixel(cursor_x + col, cursor_y + row, FG_COLOR);
+            put_pixel(cursor_x + col, cursor_y + row, current_fg_color);
         }
     }
     cursor_visible = 1;
@@ -97,12 +99,11 @@ static void erase_cursor(void) {
     if (cursor_x + FONT_W > fb_width || cursor_y + FONT_H > fb_height) return;
     for (uint32_t row = 0; row < FONT_H; ++row) {
         for (uint32_t col = 0; col < FONT_W; ++col) {
-            put_pixel(cursor_x + col, cursor_y + row, BG_COLOR);
+            put_pixel(cursor_x + col, cursor_y + row, current_bg_color);
         }
     }
     cursor_visible = 0;
 }
-
 
 void console_cursor_tick(void){
     if(!cursor_enabled){
@@ -130,21 +131,29 @@ void fill_screen_color(uint32_t color) {
 
 static void scroll_screen(void) {
     uint32_t *fb = (uint32_t *)(uintptr_t)fb_base;
-    uint64_t copy_rows = fb_height > CONSOLE_ROW_ADVANCE ? (fb_height - CONSOLE_ROW_ADVANCE) : 0;
+    uint32_t text_top = CONSOLE_MARGIN_Y;
+    uint32_t text_bottom = fb_height > CONSOLE_MARGIN_Y ? fb_height - CONSOLE_MARGIN_Y : fb_height;
+    uint32_t clear_start;
 
-    for (uint64_t y = 0; y < copy_rows; ++y) {
-        for (uint64_t x = 0; x < fb_pitch; ++x) {
+    if (text_bottom <= text_top + CONSOLE_ROW_ADVANCE) {
+        cursor_y = text_top;
+        return;
+    }
+
+    for (uint32_t y = text_top; y + CONSOLE_ROW_ADVANCE < text_bottom; ++y) {
+        for (uint32_t x = CONSOLE_MARGIN_X; x < fb_width; ++x) {
             fb[y * fb_pitch + x] = fb[(y + CONSOLE_ROW_ADVANCE) * fb_pitch + x];
         }
     }
 
-    for (uint64_t y = copy_rows; y < fb_height; ++y) {
-        for (uint64_t x = 0; x < fb_pitch; ++x) {
-            fb[y * fb_pitch + x] = BG_COLOR;
+    clear_start = text_bottom - CONSOLE_ROW_ADVANCE;
+    for (uint32_t y = clear_start; y < text_bottom; ++y) {
+        for (uint32_t x = CONSOLE_MARGIN_X; x < fb_width; ++x) {
+            fb[y * fb_pitch + x] = current_bg_color;
         }
     }
 
-    cursor_y = fb_height - CONSOLE_ROW_ADVANCE - CONSOLE_MARGIN_Y;
+    cursor_y = clear_start;
 }
 
 static void putc_raw(char ch) {
@@ -157,7 +166,7 @@ static void putc_raw(char ch) {
     for (uint32_t row = 0; row < FONT_H; ++row) {
         uint8_t bits = font_data[glyph][row];
         for (uint32_t col = 0; col < FONT_W; ++col) {
-            uint32_t color = (bits & (1u << (7u - col))) ? FG_COLOR : BG_COLOR;
+            uint32_t color = (bits & (1u << (7u - col))) ? current_fg_color : current_bg_color;
             put_pixel(cursor_x + col, cursor_y + row, color);
         }
     }
@@ -174,7 +183,7 @@ static void backspace(void) {
     cursor_x -= FONT_W;
     for (uint32_t row = 0; row < FONT_H; ++row) {
         for (uint32_t col = 0; col < FONT_W; ++col) {
-            put_pixel(cursor_x + col, cursor_y + row, BG_COLOR);
+            put_pixel(cursor_x + col, cursor_y + row, current_bg_color);
         }
     }
     draw_cursor();
@@ -192,10 +201,39 @@ void console_init(unsigned long long framebuffer_base,
 }
 
 void console_clear(void) {
-    fill_screen_color(BG_COLOR);
+    fill_screen_color(current_bg_color);
     cursor_x = CONSOLE_MARGIN_X;
     cursor_y = CONSOLE_MARGIN_Y;
     draw_cursor();
+}
+
+void console_set_bg_color(uint32_t color) {
+    int redraw_cursor = cursor_enabled && cursor_visible;
+
+    if (redraw_cursor) {
+        erase_cursor();
+    }
+
+    current_bg_color = color;
+    fill_screen_color(current_bg_color);
+
+    if (redraw_cursor) {
+        draw_cursor();
+    }
+}
+
+void console_set_fg_color(uint32_t color) {
+    int redraw_cursor = cursor_enabled && cursor_visible;
+
+    if (redraw_cursor) {
+        erase_cursor();
+    }
+
+    current_fg_color = color;
+
+    if (redraw_cursor) {
+        draw_cursor();
+    }
 }
 
 void console_newline(void) {
@@ -204,7 +242,7 @@ void console_newline(void) {
     }
     cursor_x = CONSOLE_MARGIN_X;
     cursor_y += CONSOLE_ROW_ADVANCE;
-    if (cursor_y + FONT_H >= fb_height) scroll_screen();
+    if (cursor_y + FONT_H > fb_height - CONSOLE_MARGIN_Y) scroll_screen();
     draw_cursor();
 }
 
@@ -258,8 +296,8 @@ void console_put_char_at(unsigned int col, unsigned int row, char ch){
         uint8_t bits = font_data[glyph][glyph_row];
 
         for (uint32_t glyph_col = 0; glyph_col < FONT_W; ++glyph_col) {
-            uint32_t color = 
-                (bits & (1u << (7u - glyph_col))) ? FG_COLOR : BG_COLOR;
+            uint32_t color =
+                (bits & (1u << (7u - glyph_col))) ? current_fg_color : current_bg_color;
             put_pixel(x + glyph_col, y + glyph_row, color);
         }
     } 
@@ -283,7 +321,7 @@ void console_clear_line(unsigned int row) {
         }
 
         for (uint32_t x = CONSOLE_MARGIN_X; x < fb_width; ++x) {
-            put_pixel(x, y + py, BG_COLOR);
+            put_pixel(x, y + py, current_bg_color);
         }
     }
 
@@ -301,10 +339,10 @@ unsigned int console_columns(void) {
 }
 
 unsigned int console_rows(void) {
-    if (fb_height <= CONSOLE_MARGIN_Y + FONT_H) {
+    if (fb_height <= (CONSOLE_MARGIN_Y * 2u) + FONT_H) {
         return 0;
     }
-    return (fb_height - CONSOLE_MARGIN_Y) / CONSOLE_ROW_ADVANCE;
+    return (fb_height - (CONSOLE_MARGIN_Y * 2u)) / CONSOLE_ROW_ADVANCE;
 }
 
 void console_cursor_enable(int enabled) {

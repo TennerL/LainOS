@@ -41,6 +41,8 @@ void kernel_main(boot_info_t *info) {
     console_puts("\nHave fun hacking on it.\n");
 
     shell_init();
+    shell_mount_first_lainfs('S');
+    shell_run_autoexec("autoexec", info);
 
     for (;;) {
         shell_print_prompt();

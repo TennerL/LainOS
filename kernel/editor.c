@@ -4,7 +4,7 @@
 #include "keyboard.h"
 #include "lainfs.h"
 
-#define EDITOR_BUFFER_SIZE 512u
+#define EDITOR_BUFFER_SIZE LAINFS_FILE_CAPACITY
 
 static char buffer[EDITOR_BUFFER_SIZE];
 static uint32_t buffer_size;
@@ -12,6 +12,7 @@ static uint32_t cursor_index;
 static uint32_t top_line;
 static int modified;
 static char current_drive;
+static uint32_t current_parent_id;
 static const char *current_name;
 static const char *status_message;
 
@@ -240,6 +241,10 @@ static void draw_text(void) {
     unsigned int text_rows = rows > 1 ? rows - 1 : rows;
     uint32_t index = line_start_index(top_line);
 
+    for (unsigned int row = 0; row < text_rows; ++row) {
+        console_clear_line(row);
+    }
+
     for (unsigned int row = 0; row < text_rows && index < buffer_size; ++row) {
         unsigned int col = 0;
 
@@ -285,12 +290,18 @@ static void set_save_status(int status) {
         status_message = "save failed: drive is not lainfs";
     } else if (status == -5) {
         status_message = "save failed: directory is full";
+    } else if (status == -9) {
+        status_message = "save failed: disk is full";
     } else {
         status_message = "save failed";
     }
 }
 
 int editor_run(char drive_letter, const char *name) {
+    return editor_run_in_dir(drive_letter, LAINFS_ROOT_DIR, name);
+}
+
+int editor_run_in_dir(char drive_letter, uint32_t parent_id, const char *name) {
     int status;
 
     if (!name || name[0] == '\0') {
@@ -298,6 +309,7 @@ int editor_run(char drive_letter, const char *name) {
     }
 
     current_drive = drive_letter;
+    current_parent_id = parent_id;
     current_name = name;
     buffer_size = 0;
     cursor_index = 0;
@@ -305,7 +317,7 @@ int editor_run(char drive_letter, const char *name) {
     modified = 0;
     status_message = 0;
 
-    status = lainfs_load_file(drive_letter, name, buffer, EDITOR_BUFFER_SIZE, &buffer_size);
+    status = lainfs_load_file_in_dir(drive_letter, parent_id, name, buffer, EDITOR_BUFFER_SIZE, &buffer_size);
     if (status == -5) {
         buffer_size = 0;
     } else if (status != 0) {
@@ -327,7 +339,7 @@ int editor_run(char drive_letter, const char *name) {
         key = keyboard_read_key();
 
         if (key.type == KEY_CTRL_S) {
-            status = lainfs_save_file(current_drive, current_name, buffer, buffer_size);
+            status = lainfs_save_file_in_dir(current_drive, current_parent_id, current_name, buffer, buffer_size);
             if (status == 0) {
                 modified = 0;
             }
