@@ -363,6 +363,7 @@ static int asm_emit_modrm_rip_relative(const assembler_context_t *ctx,
     return 0;
 }
 
+<<<<<<< HEAD
 static int asm_emit_modrm_base_disp32(const assembler_context_t *ctx,
                                       uint32_t *offset,
                                       int emit,
@@ -384,6 +385,8 @@ static int asm_emit_modrm_base_disp32(const assembler_context_t *ctx,
     return asm_emit_u32(ctx, offset, emit, (uint32_t)displacement);
 }
 
+=======
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
 static int asm_emit_reg_reg_op(const assembler_context_t *ctx,
                                uint32_t *offset,
                                int emit,
@@ -538,6 +541,7 @@ static int asm_parse_label_memory(const char *text, char *label, unsigned int la
     return 0;
 }
 
+<<<<<<< HEAD
 static int asm_parse_signed_i32(const char *text, int32_t *out) {
     uint64_t value = 0;
     int negative = 0;
@@ -636,6 +640,8 @@ static int asm_parse_memory_operand(const char *text, asm_mem_t *out) {
     return -1;
 }
 
+=======
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
 static int asm_rip_relative_disp32(const assembler_context_t *ctx,
                                    uint32_t next_offset,
                                    const asm_label_t *labels,
@@ -686,6 +692,7 @@ static int asm_emit_mov_reg_mem_label(const assembler_context_t *ctx,
     return 0;
 }
 
+<<<<<<< HEAD
 static int asm_emit_mov_reg_mem_base(const assembler_context_t *ctx,
                                      uint32_t *offset,
                                      int emit,
@@ -704,6 +711,8 @@ static int asm_emit_mov_reg_mem_base(const assembler_context_t *ctx,
     return 0;
 }
 
+=======
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
 static int asm_emit_mov_mem_label_reg(const assembler_context_t *ctx,
                                       uint32_t *offset,
                                       int emit,
@@ -731,6 +740,7 @@ static int asm_emit_mov_mem_label_reg(const assembler_context_t *ctx,
     return 0;
 }
 
+<<<<<<< HEAD
 static int asm_emit_mov_mem_base_reg(const assembler_context_t *ctx,
                                      uint32_t *offset,
                                      int emit,
@@ -749,6 +759,8 @@ static int asm_emit_mov_mem_base_reg(const assembler_context_t *ctx,
     return 0;
 }
 
+=======
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
 static int asm_emit_mov_mem_label_imm(const assembler_context_t *ctx,
                                       uint32_t *offset,
                                       int emit,
@@ -777,6 +789,7 @@ static int asm_emit_mov_mem_label_imm(const assembler_context_t *ctx,
     return 0;
 }
 
+<<<<<<< HEAD
 static int asm_emit_mov_mem_base_imm(const assembler_context_t *ctx,
                                      uint32_t *offset,
                                      int emit,
@@ -796,6 +809,8 @@ static int asm_emit_mov_mem_base_imm(const assembler_context_t *ctx,
     return 0;
 }
 
+=======
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
 static int asm_emit_reg_mem_label_op(const assembler_context_t *ctx,
                                      uint32_t *offset,
                                      int emit,
@@ -1145,8 +1160,13 @@ static int asm_assemble_instruction(char *line,
     if (streq(line, "mov")) {
         char *dst_text;
         char *src_text;
+<<<<<<< HEAD
         asm_mem_t dst_mem;
         asm_mem_t src_mem;
+=======
+        char dst_label[ASM_LABEL_NAME_SIZE];
+        char src_label[ASM_LABEL_NAME_SIZE];
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
         asm_reg_t dst;
         asm_reg_t src;
         uint64_t value = 0;
@@ -1155,22 +1175,32 @@ static int asm_assemble_instruction(char *line,
             return -1;
         }
 
+<<<<<<< HEAD
         if (asm_parse_memory_operand(dst_text, &dst_mem) == 0) {
             if (asm_register(src_text, &src) == 0) {
                 if (dst_mem.is_label) {
                     return asm_emit_mov_mem_label_reg(ctx, offset, emit, labels, label_count, dst_mem.label, src);
                 }
                 return asm_emit_mov_mem_base_reg(ctx, offset, emit, dst_mem, src);
+=======
+        if (asm_parse_label_memory(dst_text, dst_label, sizeof(dst_label)) == 0) {
+            if (asm_register(src_text, &src) == 0) {
+                return asm_emit_mov_mem_label_reg(ctx, offset, emit, labels, label_count, dst_label, src);
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
             }
 
             if (emit && asm_value(ctx, src_text, labels, label_count, &value) != 0) {
                 return -1;
             }
 
+<<<<<<< HEAD
             if (dst_mem.is_label) {
                 return asm_emit_mov_mem_label_imm(ctx, offset, emit, labels, label_count, dst_mem.label, value);
             }
             return asm_emit_mov_mem_base_imm(ctx, offset, emit, dst_mem, value);
+=======
+            return asm_emit_mov_mem_label_imm(ctx, offset, emit, labels, label_count, dst_label, value);
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
         }
 
         if (asm_register(dst_text, &dst) != 0) {
@@ -1181,11 +1211,16 @@ static int asm_assemble_instruction(char *line,
             return asm_emit_reg_reg_op(ctx, offset, emit, 0x89, dst.bits == 64, dst, src);
         }
 
+<<<<<<< HEAD
         if (asm_parse_memory_operand(src_text, &src_mem) == 0) {
             if (src_mem.is_label) {
                 return asm_emit_mov_reg_mem_label(ctx, offset, emit, labels, label_count, dst, src_mem.label);
             }
             return asm_emit_mov_reg_mem_base(ctx, offset, emit, dst, src_mem);
+=======
+        if (asm_parse_label_memory(src_text, src_label, sizeof(src_label)) == 0) {
+            return asm_emit_mov_reg_mem_label(ctx, offset, emit, labels, label_count, dst, src_label);
+>>>>>>> 6b7166f2a799aa2aa2b73c6165991b398123f159
         }
 
         if (emit && asm_value(ctx, src_text, labels, label_count, &value) != 0) {
