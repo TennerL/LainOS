@@ -24,13 +24,14 @@ static int shift_down;
 static int caps_lock_on;
 static int ctrl_down;
 static int extended_scancode; 
+static keyboard_layout_t current_layout;
 
 static char apply_alpha_case(char ch) {
     if (ch < 'a' || ch > 'z') return ch;
     return ((shift_down ? 1 : 0) ^ (caps_lock_on ? 1 : 0)) ? (char)(ch - 'a' + 'A') : ch;
 }
 
-static char scancode_to_ascii(uint8_t sc) {
+static char scancode_to_ascii_us(uint8_t sc) {
     switch (sc) {
         case 0x02: return shift_down ? '!' : '1';
         case 0x03: return shift_down ? '@' : '2';
@@ -75,9 +76,81 @@ static char scancode_to_ascii(uint8_t sc) {
     }
 }
 
+static char scancode_to_ascii_de(uint8_t sc) {
+    switch (sc) {
+        case 0x02: return shift_down ? '!' : '1';
+        case 0x03: return shift_down ? '"' : '2';
+        case 0x04: return shift_down ? '#' : '3';
+        case 0x05: return shift_down ? '$' : '4';
+        case 0x06: return shift_down ? '%' : '5';
+        case 0x07: return shift_down ? '&' : '6';
+        case 0x08: return shift_down ? '/' : '7';
+        case 0x09: return shift_down ? '(' : '8';
+        case 0x0A: return shift_down ? ')' : '9';
+        case 0x0B: return shift_down ? '=' : '0';
+        case 0x10: return apply_alpha_case('q'); case 0x11: return apply_alpha_case('w');
+        case 0x12: return apply_alpha_case('e'); case 0x13: return apply_alpha_case('r');
+        case 0x14: return apply_alpha_case('t'); case 0x15: return apply_alpha_case('z');
+        case 0x16: return apply_alpha_case('u'); case 0x17: return apply_alpha_case('i');
+        case 0x18: return apply_alpha_case('o'); case 0x19: return apply_alpha_case('p');
+        case 0x1E: return apply_alpha_case('a'); case 0x1F: return apply_alpha_case('s');
+        case 0x20: return apply_alpha_case('d'); case 0x21: return apply_alpha_case('f');
+        case 0x22: return apply_alpha_case('g'); case 0x23: return apply_alpha_case('h');
+        case 0x24: return apply_alpha_case('j'); case 0x25: return apply_alpha_case('k');
+        case 0x26: return apply_alpha_case('l');
+        case 0x2C: return apply_alpha_case('y'); case 0x2D: return apply_alpha_case('x');
+        case 0x2E: return apply_alpha_case('c'); case 0x2F: return apply_alpha_case('v');
+        case 0x30: return apply_alpha_case('b'); case 0x31: return apply_alpha_case('n');
+        case 0x32: return apply_alpha_case('m');
+        case 0x39: return ' ';
+        case 0x0C: return shift_down ? '?' : '-';
+        case 0x0D: return shift_down ? '`' : '\'';
+        case 0x1A: return shift_down ? '{' : '[';
+        case 0x1B: return shift_down ? '*' : '+';
+        case 0x27: return shift_down ? ':' : ';';
+        case 0x28: return shift_down ? '"' : '\'';
+        case 0x29: return shift_down ? '^' : '^';
+        case 0x2B: return shift_down ? '\'' : '#';
+        case 0x33: return shift_down ? ';' : ',';
+        case 0x34: return shift_down ? ':' : '.';
+        case 0x35: return shift_down ? '_' : '-';
+        case 0x1C: return '\n';
+        case 0x0E: return '\b';
+        case 0x0F: return '\t';
+        default: return 0;
+    }
+}
+
+static char scancode_to_ascii(uint8_t sc) {
+    if (current_layout == KEYBOARD_LAYOUT_DE) {
+        return scancode_to_ascii_de(sc);
+    }
+
+    return scancode_to_ascii_us(sc);
+}
+
+void keyboard_set_layout(keyboard_layout_t layout) {
+    current_layout = layout;
+}
+
+keyboard_layout_t keyboard_get_layout(void) {
+    return current_layout;
+}
+
+const char *keyboard_layout_name(keyboard_layout_t layout) {
+    if (layout == KEYBOARD_LAYOUT_DE) {
+        return "de";
+    }
+
+    return "us";
+}
+
 void keyboard_init(void) {
     shift_down = 0;
     caps_lock_on = 0;
+    ctrl_down = 0;
+    extended_scancode = 0;
+    current_layout = KEYBOARD_LAYOUT_US;
     while (ps2_has_data()) {
         (void)inb(PS2_DATA_PORT);
     }

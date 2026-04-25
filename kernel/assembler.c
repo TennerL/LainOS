@@ -254,6 +254,11 @@ static int asm_symbol_value(const char *name, uint64_t *out) {
         return 0;
     }
 
+    if (streq(name, "put_char_at")) {
+        *out = (uint64_t)(uintptr_t)console_put_char_at;
+        return 0;
+    }
+
     return -1;
 }
 
@@ -1109,6 +1114,11 @@ static int asm_assemble_instruction(char *line,
         return asm_emit_byte(ctx, offset, emit, 0xC9);
     }
 
+    if (streq(line, "cqo")) {
+        return asm_emit_byte(ctx, offset, emit, 0x48) ||
+               asm_emit_byte(ctx, offset, emit, 0x99);
+    }
+
     if (streq(line, "syscall")) {
         return asm_emit_byte(ctx, offset, emit, 0x0F) ||
                asm_emit_byte(ctx, offset, emit, 0x05);
@@ -1342,6 +1352,22 @@ static int asm_assemble_instruction(char *line,
         if (asm_emit_rex(ctx, offset, emit, reg.bits == 64, 0, reg.code) != 0 ||
             asm_emit_byte(ctx, offset, emit, 0xFF) != 0 ||
             asm_emit_modrm_reg(ctx, offset, emit, group, reg.code) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if (streq(line, "idiv")) {
+        asm_reg_t reg;
+
+        if (asm_register(args, &reg) != 0 || reg.bits != 64) {
+            return -1;
+        }
+
+        if (asm_emit_rex(ctx, offset, emit, 1, 0, reg.code) != 0 ||
+            asm_emit_byte(ctx, offset, emit, 0xF7) != 0 ||
+            asm_emit_modrm_reg(ctx, offset, emit, 7, reg.code) != 0) {
             return -1;
         }
 

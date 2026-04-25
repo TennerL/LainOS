@@ -11,7 +11,7 @@
 #define PANIC_BG_COLOR 0x00000080u
 #define ASCII_FIRST 32u
 #define ASCII_COUNT 95u
-#define CURSOR_BLINK_TICKS 50u
+#define CURSOR_BLINK_TICKS 30u
 
 static uint32_t cursor_x;
 static uint32_t cursor_y;

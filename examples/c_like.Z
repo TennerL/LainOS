@@ -1,0 +1,28 @@
+int value = 17;
+int div = value / 5;
+int rem = value % 5;
+int i = 0;
+
+/* block comments work now */
+do {
+    i++;
+    if (i == 2) {
+        continue;
+    }
+
+    value += i;
+    if (i > 3) {
+        break;
+    }
+} while (i < 8);
+
+value -= rem;
+value *= div;
+value /= 2;
+value %= 9;
+
+print("c-like result=");
+print(value);
+print("\n");
+
+return value;

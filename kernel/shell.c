@@ -4,6 +4,7 @@
 #include "ahci.h"
 #include "assembler.h"
 #include "editor.h"
+#include "keyboard.h"
 #include "lainfs.h"
 #include "shell.h"
 #include "storage.h"
@@ -355,6 +356,7 @@ static void cmd_asm(const char *args, const boot_info_t *info);
 static void cmd_zc(const char *args, const boot_info_t *info);
 static void cmd_zrun(const char *args, const boot_info_t *info);
 static void cmd_zasm(const char *args, const boot_info_t *info);
+static void cmd_keymap(const char *args, const boot_info_t *info);
 
 static const command_t commands[] = {
     { "help",    "show commands",             cmd_help },
@@ -381,6 +383,7 @@ static const command_t commands[] = {
     { "write",   "write a text file",         cmd_write },
     { "cat",     "print a text file",         cmd_cat },
     { "edit",    "edit a text file",          cmd_edit },
+    { "keymap",  "set keyboard layout",       cmd_keymap },
     { "ahci",    "show AHCI status",          cmd_ahci },
     { "ticks",   "show timer ticks",          cmd_ticks },
     { "run",     "run a script file",         cmd_run },
@@ -1033,6 +1036,32 @@ static void cmd_edit(const char *args, const boot_info_t *info) {
     } else if (status != 0) {
         console_puts("edit failed\n");
     }
+}
+
+static void cmd_keymap(const char *args, const boot_info_t *info) {
+    const char *layout = skip_const_spaces(args);
+
+    (void)info;
+
+    if (*layout == '\0') {
+        console_puts("keyboard layout: ");
+        console_puts(keyboard_layout_name(keyboard_get_layout()));
+        console_puts("\n");
+        return;
+    }
+
+    if (streq(layout, "us")) {
+        keyboard_set_layout(KEYBOARD_LAYOUT_US);
+    } else if (streq(layout, "de")) {
+        keyboard_set_layout(KEYBOARD_LAYOUT_DE);
+    } else {
+        console_puts("usage: keymap us|de\n");
+        return;
+    }
+
+    console_puts("keyboard layout set to ");
+    console_puts(keyboard_layout_name(keyboard_get_layout()));
+    console_puts("\n");
 }
 
 static void cmd_ahci(const char *args, const boot_info_t *info) {

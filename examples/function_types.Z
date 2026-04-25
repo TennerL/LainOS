@@ -1,0 +1,19 @@
+void line(void) {
+    print("----\n");
+    return;
+}
+
+void show_value(int value) {
+    print("value=");
+    print(value);
+    print("\n");
+}
+
+int add_twice(int value) {
+    show_value(value);
+    return value + value;
+}
+
+line();
+show_value(add_twice(21));
+return 0;

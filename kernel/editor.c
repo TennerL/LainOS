@@ -5,6 +5,8 @@
 #include "lainfs.h"
 
 #define EDITOR_BUFFER_SIZE LAINFS_FILE_CAPACITY
+#define EDITOR_RENDER_MAX_ROWS 128u
+#define EDITOR_RENDER_MAX_COLS 256u
 
 static char buffer[EDITOR_BUFFER_SIZE];
 static uint32_t buffer_size;
@@ -15,6 +17,14 @@ static char current_drive;
 static uint32_t current_parent_id;
 static const char *current_name;
 static const char *status_message;
+static char rendered_text[EDITOR_RENDER_MAX_ROWS][EDITOR_RENDER_MAX_COLS];
+static char rendered_status[EDITOR_RENDER_MAX_COLS];
+static unsigned int rendered_cols;
+static unsigned int rendered_text_rows;
+static int text_row_valid[EDITOR_RENDER_MAX_ROWS];
+static int status_valid;
+static unsigned int rendered_cursor_row;
+static int rendered_cursor_valid;
 
 static uint32_t min_u32(uint32_t a, uint32_t b) {
     return a < b ? a : b;
@@ -171,24 +181,52 @@ static void ensure_cursor_visible(void) {
     }
 }
 
-static void put_string_at(unsigned int col, unsigned int row, const char *s) {
-    unsigned int cols = console_columns();
+static void invalidate_render_cache(void) {
+    for (unsigned int row = 0; row < EDITOR_RENDER_MAX_ROWS; ++row) {
+        text_row_valid[row] = 0;
+    }
+    status_valid = 0;
+    rendered_cursor_valid = 0;
+}
 
-    while (*s && col < cols) {
-        console_put_char_at(col, row, *s);
-        ++col;
+static void render_put_char(char *line, unsigned int cols, unsigned int *col, char ch) {
+    if (*col < cols) {
+        line[*col] = ch;
+        ++(*col);
+    }
+}
+
+static void render_put_string(char *line, unsigned int cols, unsigned int *col, const char *s) {
+    while (*s && *col < cols) {
+        line[*col] = *s;
+        ++(*col);
         ++s;
     }
 }
 
-static void put_hex_at(unsigned int col, unsigned int row, uint64_t value) {
+static void render_put_hex64(char *line, unsigned int cols, unsigned int *col, uint64_t value) {
     static const char digits[] = "0123456789ABCDEF";
 
-    for (unsigned int i = 0; i < 16; ++i) {
+    for (unsigned int i = 0; i < 16 && *col < cols; ++i) {
         unsigned int shift = (15u - i) * 4u;
-        char ch = digits[(value >> shift) & 0xFu];
-        console_put_char_at(col + i, row, ch);
+        line[*col] = digits[(value >> shift) & 0xFu];
+        ++(*col);
     }
+}
+
+static void draw_cached_row(unsigned int row,
+                            char *cached,
+                            int *valid,
+                            const char *next,
+                            unsigned int cols) {
+    for (unsigned int col = 0; col < cols; ++col) {
+        if (!*valid || cached[col] != next[col]) {
+            console_put_char_at(col, row, next[col]);
+            cached[col] = next[col];
+        }
+    }
+
+    *valid = 1;
 }
 
 static void draw_status(void) {
@@ -196,69 +234,105 @@ static void draw_status(void) {
     unsigned int cols = console_columns();
     unsigned int status_row = rows > 0 ? rows - 1 : 0;
     unsigned int col = 0;
+    char next[EDITOR_RENDER_MAX_COLS];
 
     if (rows == 0) {
         return;
     }
 
-    console_clear_line(status_row);
+    if (cols > EDITOR_RENDER_MAX_COLS) {
+        cols = EDITOR_RENDER_MAX_COLS;
+    }
+
+    for (unsigned int i = 0; i < cols; ++i) {
+        next[i] = ' ';
+    }
 
     if (status_message) {
-        put_string_at(0, status_row, status_message);
+        render_put_string(next, cols, &col, status_message);
     } else {
-        if (col < cols) {
-            console_put_char_at(col++, status_row, current_drive);
-        }
-        if (col < cols) {
-            console_put_char_at(col++, status_row, ':');
-        }
-        if (col < cols) {
-            console_put_char_at(col++, status_row, '\\');
-        }
+        render_put_char(next, cols, &col, current_drive);
+        render_put_char(next, cols, &col, ':');
+        render_put_char(next, cols, &col, '\\');
 
-        for (uint32_t i = 0; current_name[i] && col < cols; ++i) {
-            console_put_char_at(col++, status_row, current_name[i]);
-        }
+        render_put_string(next, cols, &col, current_name);
 
-        if (modified && col < cols) {
-            console_put_char_at(col++, status_row, '*');
+        if (modified) {
+            render_put_char(next, cols, &col, '*');
         }
     }
 
     if (cols > 55) {
-        put_string_at(cols - 55, status_row, "buf=0x");
-        put_hex_at(cols - 49, status_row, (uint64_t)(uintptr_t)buffer);
+        col = cols - 55;
+        render_put_string(next, cols, &col, "buf=0x");
+        render_put_hex64(next, cols, &col, (uint64_t)(uintptr_t)buffer);
     }
 
     if (cols > 25) {
-        put_string_at(cols - 25, status_row, "Ctrl+S Save  Esc Exit");
+        col = cols - 25;
+        render_put_string(next, cols, &col, "Ctrl+S Save  Esc Exit");
     }
+
+    draw_cached_row(status_row, rendered_status, &status_valid, next, cols);
 }
 
 static void draw_text(void) {
     unsigned int cols = console_columns();
     unsigned int rows = console_rows();
     unsigned int text_rows = rows > 1 ? rows - 1 : rows;
-    uint32_t index = line_start_index(top_line);
 
-    for (unsigned int row = 0; row < text_rows; ++row) {
-        console_clear_line(row);
+    if (cols > EDITOR_RENDER_MAX_COLS) {
+        cols = EDITOR_RENDER_MAX_COLS;
     }
 
-    for (unsigned int row = 0; row < text_rows && index < buffer_size; ++row) {
+    if (text_rows > EDITOR_RENDER_MAX_ROWS) {
+        text_rows = EDITOR_RENDER_MAX_ROWS;
+    }
+
+    for (unsigned int row = 0; row < text_rows; ++row) {
         unsigned int col = 0;
+        char next[EDITOR_RENDER_MAX_COLS];
+        uint32_t index = line_start_index(top_line + row);
 
-        while (index < buffer_size && buffer[index] != '\n') {
-            if (col < cols) {
-                console_put_char_at(col, row, buffer[index]);
-            }
-            ++col;
-            ++index;
+        for (unsigned int i = 0; i < cols; ++i) {
+            next[i] = ' ';
         }
 
-        if (index < buffer_size && buffer[index] == '\n') {
-            ++index;
+        while (index < buffer_size && buffer[index] != '\n' && col < cols) {
+            next[col++] = buffer[index++];
         }
+
+        draw_cached_row(row, rendered_text[row], &text_row_valid[row], next, cols);
+    }
+
+    for (unsigned int row = text_rows; row < rendered_text_rows && row < EDITOR_RENDER_MAX_ROWS; ++row) {
+        char next[EDITOR_RENDER_MAX_COLS];
+
+        for (unsigned int col = 0; col < cols; ++col) {
+            next[col] = ' ';
+        }
+
+        draw_cached_row(row, rendered_text[row], &text_row_valid[row], next, cols);
+    }
+}
+
+static void note_editor_geometry(void) {
+    unsigned int cols = console_columns();
+    unsigned int rows = console_rows();
+    unsigned int text_rows = rows > 1 ? rows - 1 : rows;
+
+    if (cols > EDITOR_RENDER_MAX_COLS) {
+        cols = EDITOR_RENDER_MAX_COLS;
+    }
+
+    if (text_rows > EDITOR_RENDER_MAX_ROWS) {
+        text_rows = EDITOR_RENDER_MAX_ROWS;
+    }
+
+    if (cols != rendered_cols || text_rows != rendered_text_rows) {
+        rendered_cols = cols;
+        rendered_text_rows = text_rows;
+        invalidate_render_cache();
     }
 }
 
@@ -269,6 +343,11 @@ static void draw_editor(void) {
     unsigned int text_rows = rows > 1 ? rows - 1 : rows;
 
     ensure_cursor_visible();
+    note_editor_geometry();
+
+    if (rendered_cursor_valid && rendered_cursor_row < EDITOR_RENDER_MAX_ROWS) {
+        text_row_valid[rendered_cursor_row] = 0;
+    }
 
     console_cursor_enable(0);
     draw_text();
@@ -276,7 +355,12 @@ static void draw_editor(void) {
 
     index_to_line_col(cursor_index, &cursor_line, &cursor_col);
     if (cursor_line >= top_line && cursor_line < top_line + text_rows) {
-        console_set_cursor(cursor_col, cursor_line - top_line);
+        unsigned int screen_row = cursor_line - top_line;
+        console_set_cursor(cursor_col, screen_row);
+        rendered_cursor_row = screen_row;
+        rendered_cursor_valid = 1;
+    } else {
+        rendered_cursor_valid = 0;
     }
     console_cursor_enable(1);
 }
@@ -316,6 +400,10 @@ int editor_run_in_dir(char drive_letter, uint32_t parent_id, const char *name) {
     top_line = 0;
     modified = 0;
     status_message = 0;
+    rendered_cols = 0;
+    rendered_text_rows = 0;
+    rendered_cursor_valid = 0;
+    invalidate_render_cache();
 
     status = lainfs_load_file_in_dir(drive_letter, parent_id, name, buffer, EDITOR_BUFFER_SIZE, &buffer_size);
     if (status == -5) {

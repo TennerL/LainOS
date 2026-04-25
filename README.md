@@ -1,8 +1,8 @@
-# UEFI x86_64 Starter Project
+# UEFI x86_64 LainOS
 
 Minimal starter project for:
 - a **UEFI bootloader** in C
-- a **dummy 64 bit kernel** in NASM
+- a **64 bit kernel** in NASM
 - loading an **ELF64 kernel** from the EFI filesystem
 - collecting boot information
 - calling `ExitBootServices`
@@ -318,6 +318,7 @@ This is now a clean milestone-1 starter: UEFI boot, ELF64 loading, boot info han
 
 Current input path assumes classic QEMU PS/2 keyboard behavior and simple set-1 scancodes.
 It now includes basic Shift and Caps Lock handling plus a simple visible text cursor during line input.
+Keyboard layouts can be switched with `keymap us` or `keymap de`.
 
 ## Shell commands
 
@@ -325,6 +326,7 @@ The kernel console has a tiny command shell:
 - `help` - show commands
 - `bgcolor 0xRRGGBB` - set the background color
 - `fgcolor 0xRRGGBB` - set the text color
+- `keymap us|de` - set the keyboard layout; put `keymap de` in `autoexec` to apply it at boot
 - `clear` - clear the screen
 - `echo text` - print text
 - `info` - show boot/kernel info
