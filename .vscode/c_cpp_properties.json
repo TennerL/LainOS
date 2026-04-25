@@ -4,8 +4,8 @@
             "name": "uefi-starter",
             "includePath": [
                 "${workspaceFolder}",
-                "${workspaceFolder}/kernel",
-                "${workspaceFolder}/boot/shared",
+                "${workspaceFolder}\\kernel",
+                "${workspaceFolder}\\boot\\shared",
                 "/usr/include/efi",
                 "/usr/include/efi/x86_64"
             ],
