@@ -1,0 +1,13 @@
+int value = 12;
+
+if (value > 10) {
+    print("value is bigger than ten\n");
+} else {
+    print("value is ten or smaller\n");
+}
+
+if (value == 12) {
+    print("value matched exactly\n");
+}
+
+return 0;

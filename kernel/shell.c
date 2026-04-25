@@ -7,6 +7,7 @@
 #include "lainfs.h"
 #include "shell.h"
 #include "storage.h"
+#include "zscript.h"
 
 #define MAX_DRIVES 26
 #define SCRIPT_BUFFER_SIZE LAINFS_FILE_CAPACITY
@@ -21,6 +22,7 @@ static int script_depth;
 static char script_buffers[SCRIPT_MAX_DEPTH][SCRIPT_BUFFER_SIZE + 1];
 static unsigned char exec_buffer[EXEC_BUFFER_SIZE] __attribute__((aligned(16)));
 static unsigned char asm_output[EXEC_BUFFER_SIZE];
+static char zscript_output[ASM_SOURCE_SIZE + 1];
 
 
 typedef void (*command_handler_t)(const char *args, const boot_info_t *info);
@@ -350,6 +352,9 @@ static void cmd_ticks(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
 static void cmd_exec(const char *args, const boot_info_t *info);
 static void cmd_asm(const char *args, const boot_info_t *info);
+static void cmd_zc(const char *args, const boot_info_t *info);
+static void cmd_zrun(const char *args, const boot_info_t *info);
+static void cmd_zasm(const char *args, const boot_info_t *info);
 
 static const command_t commands[] = {
     { "help",    "show commands",             cmd_help },
@@ -381,6 +386,9 @@ static const command_t commands[] = {
     { "run",     "run a script file",         cmd_run },
     { "exec",    "run a flat binary file",     cmd_exec },
     { "asm",     "assemble a tiny asm file",   cmd_asm },
+    { "zc",      "compile a tiny .Z file",     cmd_zc },
+    { "zrun",    "compile and run a .Z file",  cmd_zrun },
+    { "zasm",    "dump generated asm for a .Z file", cmd_zasm },
 };
 
 static const unsigned int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -1189,6 +1197,7 @@ static void cmd_asm(const char *args, const boot_info_t *info) {
     static char source[ASM_SOURCE_SIZE + 1];
     uint32_t source_size = 0;
     uint32_t output_size = 0;
+    uint32_t error_line = 0;
     char *mutable_args = (char *)args;
     char *source_name = 0;
     char *output_name = 0;
@@ -1229,13 +1238,19 @@ static void cmd_asm(const char *args, const boot_info_t *info) {
     source[source_size] = '\0';
     zero_memory(asm_output, EXEC_BUFFER_SIZE);
     zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
-    if (assembler_assemble_source(source,
-                                  source_size,
-                                  asm_output,
-                                  EXEC_BUFFER_SIZE,
-                                  (uint64_t)(uintptr_t)exec_buffer,
-                                  &output_size) != 0) {
-        console_puts("asm failed: unsupported syntax\n");
+    if (assembler_assemble_source_ex(source,
+                                     source_size,
+                                     asm_output,
+                                     EXEC_BUFFER_SIZE,
+                                     (uint64_t)(uintptr_t)exec_buffer,
+                                     &output_size,
+                                     &error_line) != 0) {
+        console_puts("asm failed: unsupported syntax");
+        if (error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(error_line);
+        }
+        console_puts("\n");
         return;
     }
 
@@ -1259,6 +1274,315 @@ static void cmd_asm(const char *args, const boot_info_t *info) {
     console_puts(" bytes=");
     console_put_dec64(output_size);
     console_puts("\n");
+}
+
+static int compile_z_source_file(const char *name,
+                                 char *source,
+                                 uint32_t *source_size,
+                                 uint32_t *compile_error_line,
+                                 uint32_t *asm_size,
+                                 int *drive_out) {
+    int drive = active_drive();
+    int status;
+
+    if (drive_out) {
+        *drive_out = drive;
+    }
+
+    if (drive < 0) {
+        return -10;
+    }
+
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     name,
+                                     source,
+                                     ASM_SOURCE_SIZE,
+                                     source_size);
+    if (status != 0) {
+        return status;
+    }
+
+    source[*source_size] = '\0';
+    zero_memory(zscript_output, sizeof(zscript_output));
+
+    if (zscript_compile_source(source,
+                               *source_size,
+                               zscript_output,
+                               ASM_SOURCE_SIZE,
+                               asm_size,
+                               compile_error_line) != 0) {
+        return -20;
+    }
+
+    zscript_output[*asm_size] = '\0';
+    return 0;
+}
+
+static void cmd_zc(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char source[ASM_SOURCE_SIZE + 1];
+    uint32_t source_size = 0;
+    uint32_t asm_size = 0;
+    uint32_t output_size = 0;
+    uint32_t compile_error_line = 0;
+    uint32_t assemble_error_line = 0;
+    char *mutable_args = (char *)args;
+    char *source_name = 0;
+    char *output_name = 0;
+    int drive = active_drive();
+    int status = 0;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    split_first_arg(mutable_args, &source_name, &output_name);
+    if (*source_name == '\0' || *output_name == '\0') {
+        console_puts("usage: zc source.Z output.bin\n");
+        return;
+    }
+
+    status = compile_z_source_file(source_name,
+                                   source,
+                                   &source_size,
+                                   &compile_error_line,
+                                   &asm_size,
+                                   &drive);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts(".Z source not found\n");
+        return;
+    }
+    if (status == -20) {
+        console_puts("zc failed: unsupported .Z syntax");
+        if (compile_error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(compile_error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zc failed: could not load source\n");
+        return;
+    }
+
+    zero_memory(asm_output, EXEC_BUFFER_SIZE);
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    if (assembler_assemble_source_ex(zscript_output,
+                                     asm_size,
+                                     asm_output,
+                                     EXEC_BUFFER_SIZE,
+                                     (uint64_t)(uintptr_t)exec_buffer,
+                                     &output_size,
+                                     &assemble_error_line) != 0) {
+        console_puts("zc failed: compiler emitted unsupported asm");
+        if (assemble_error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(assemble_error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+
+    status = lainfs_save_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     output_name,
+                                     (const char *)asm_output,
+                                     output_size);
+    if (status == -9) {
+        console_puts("zc failed: disk is full\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zc failed: could not save output\n");
+        return;
+    }
+
+    console_puts("compiled ");
+    console_puts(source_name);
+    console_puts(" to ");
+    console_puts(output_name);
+    console_puts(" bytes=");
+    console_put_dec64(output_size);
+    console_puts("\n");
+}
+
+static void cmd_zrun(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char source[ASM_SOURCE_SIZE + 1];
+    const char *name = skip_const_spaces(args);
+    uint32_t source_size = 0;
+    uint32_t asm_size = 0;
+    uint32_t output_size = 0;
+    uint32_t compile_error_line = 0;
+    uint32_t assemble_error_line = 0;
+    int drive = active_drive();
+    int status = 0;
+
+    static const exec_api_t api = {
+        EXEC_API_MAGIC,
+        1,
+        console_puts,
+        console_put_hex64,
+        console_put_dec64,
+        timer_ticks,
+    };
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    if (*name == '\0') {
+        console_puts("usage: zrun source.Z\n");
+        return;
+    }
+
+    status = compile_z_source_file(name,
+                                   source,
+                                   &source_size,
+                                   &compile_error_line,
+                                   &asm_size,
+                                   &drive);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts(".Z source not found\n");
+        return;
+    }
+    if (status == -20) {
+        console_puts("zrun failed: unsupported .Z syntax");
+        if (compile_error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(compile_error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zrun failed: could not load source\n");
+        return;
+    }
+
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    if (assembler_assemble_source_ex(zscript_output,
+                                     asm_size,
+                                     exec_buffer,
+                                     EXEC_BUFFER_SIZE,
+                                     (uint64_t)(uintptr_t)exec_buffer,
+                                     &output_size,
+                                     &assemble_error_line) != 0) {
+        console_puts("zrun failed: compiler emitted unsupported asm");
+        if (assemble_error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(assemble_error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+
+    console_puts("running ");
+    console_puts(name);
+    console_puts(" at 0x");
+    console_put_hex64((uint64_t)(uintptr_t)exec_buffer);
+    console_puts("\n");
+
+    ((exec_program_t)(uintptr_t)exec_buffer)(&api);
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+
+    console_puts("\nprogram returned\n");
+}
+
+static void cmd_zasm(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char source[ASM_SOURCE_SIZE + 1];
+    uint32_t source_size = 0;
+    uint32_t asm_size = 0;
+    uint32_t compile_error_line = 0;
+    char *mutable_args = (char *)args;
+    char *source_name = 0;
+    char *output_name = 0;
+    int drive = active_drive();
+    int status = 0;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    split_first_arg(mutable_args, &source_name, &output_name);
+    if (*source_name == '\0') {
+        console_puts("usage: zasm source.Z [output.asm]\n");
+        return;
+    }
+
+    status = compile_z_source_file(source_name,
+                                   source,
+                                   &source_size,
+                                   &compile_error_line,
+                                   &asm_size,
+                                   &drive);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts(".Z source not found\n");
+        return;
+    }
+    if (status == -20) {
+        console_puts("zasm failed: unsupported .Z syntax");
+        if (compile_error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(compile_error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zasm failed: could not load source\n");
+        return;
+    }
+
+    if (*output_name != '\0') {
+        status = lainfs_save_file_in_dir((char)('A' + drive),
+                                         cwd_dirs[drive],
+                                         output_name,
+                                         zscript_output,
+                                         asm_size);
+        if (status == -9) {
+            console_puts("zasm failed: disk is full\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("zasm failed: could not save output\n");
+            return;
+        }
+
+        console_puts("wrote generated asm to ");
+        console_puts(output_name);
+        console_puts("\n");
+        return;
+    }
+
+    console_puts("generated asm for ");
+    console_puts(source_name);
+    console_puts(":\n");
+    console_puts(zscript_output);
+    if (asm_size == 0 || zscript_output[asm_size - 1] != '\n') {
+        console_puts("\n");
+    }
 }
 
 static void cmd_bgcolor(const char *args, const boot_info_t *info) {

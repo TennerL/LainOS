@@ -77,7 +77,7 @@ static const uint8_t font_data[ASCII_COUNT][8] = {
     {0x31,0x6B,0x46,0x00,0x00,0x00,0x00,0x00}
 };
 
-static void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
+void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     if (x >= fb_width || y >= fb_height) return;
     uint32_t *fb = (uint32_t *)(uintptr_t)fb_base;
     fb[(uint64_t)y * fb_pitch + x] = color;

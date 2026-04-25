@@ -1,0 +1,18 @@
+int grid[2][3];
+int row = 0;
+int col = 0;
+
+while (row < 2) {
+    col = 0;
+    while (col < 3) {
+        grid[row][col] = row * 100 + col;
+        col = col + 1;
+    }
+    row = row + 1;
+}
+
+print("grid[1][2]=");
+print(grid[1][2]);
+print("\n");
+
+return grid[0][1] + grid[1][2];

@@ -1,0 +1,19 @@
+struct Point {
+    int x;
+    int y;
+};
+
+struct Point p;
+
+p.x = 10;
+p.y = 32;
+
+print("x=");
+print(p.x);
+print("\n");
+
+print("y=");
+print(p.y);
+print("\n");
+
+return p.x + p.y;

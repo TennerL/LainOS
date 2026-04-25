@@ -1,0 +1,19 @@
+int add(int a, int b) {
+    int total = a + b;
+    return total;
+}
+
+int mul_add(int x, int y, int extra) {
+    int product = x * y;
+    return product + extra;
+}
+
+print("add=");
+print(add(7, 5));
+print("\n");
+
+print("mul_add=");
+print(mul_add(3, 4, 2));
+print("\n");
+
+return 0;

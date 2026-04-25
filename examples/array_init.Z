@@ -1,0 +1,11 @@
+int values[4] = {3, 6, 9, 12};
+
+print("values[0]=");
+print(values[0]);
+print("\n");
+
+print("values[3]=");
+print(values[3]);
+print("\n");
+
+return values[1] + values[2];

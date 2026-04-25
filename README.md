@@ -16,6 +16,7 @@ Minimal starter project for:
 - `kernel/main.c` - main kernel logic in C
 - `kernel/kernel.h` - shared kernel-side API declarations
 - `kernel/assembler.c` - tiny in-kernel assembler used by the `asm` shell command
+- `kernel/zscript.c` - tiny `.Z` compiler that lowers a C-like subset into that assembler
 - `kernel/console.c` - framebuffer console, formatting, and panic screen in C
 - `kernel/cpu.c` - GDT/IDT table construction in C
 - `kernel/cpu_low.asm` - tiny low-level CPU table load helpers
@@ -346,6 +347,9 @@ The kernel console has a tiny command shell:
 - `write name text` - write a text file to the current drive
 - `cat name` - print a text file from the current drive
 - `asm source.asm output.bin` - assemble a tiny x86_64 source file
+- `zc source.Z output.bin` - compile a tiny `.Z` source file into a flat binary
+- `zrun source.Z` - compile and run a tiny `.Z` source file directly
+- `zasm source.Z [output.asm]` - print or save the generated asm for a `.Z` source file
 - `exec file.bin` - run a flat binary from the current drive
 
 The storage stack currently registers a small RAM-backed demo block device
@@ -422,8 +426,8 @@ VirtualBox SATA disks should be the next realistic target to shake out.
 
 The `asm` shell command accepts a small NASM-like subset and emits a flat binary
 that can be run with `exec`. Directives such as `global`, `section .text`,
-`bits 64`, and `default rel` are accepted for source compatibility. Labels and
-`db` data are supported.
+`bits 64`, and `default rel` are accepted for source compatibility. Labels,
+NASM-style data labels, and `db` / `dq` data are supported.
 
 The instruction subset is intentionally small but covers the common flat-binary
 building blocks:
@@ -431,14 +435,18 @@ building blocks:
 - control: `nop`, `hlt`, `ret`, `ret imm16`, `leave`, `int imm8`, `iretq`,
   `syscall`, `cli`, `sti`
 - data movement: `mov r64, imm64`, `mov r32, imm32`, `mov reg, reg`,
+  `mov r64, [label]`, `mov [label], r64`, `mov qword [label], imm32`,
   `push r64`, `pop r64`
-- arithmetic and logic: `add`, `sub`, `cmp`, `and`, `or`, `xor`, `test`,
-  `inc`, `dec`
+- arithmetic and logic: `add`, `sub`, `imul`, `cmp`, `and`, `or`, `xor`,
+  `test`, `inc`, `dec`; `add/sub/cmp/and/or/xor/test` support `r64, [label]`;
+  `imul` supports `imul reg, reg`, `imul reg, imm32`, and `imul reg, reg, imm32`
 - flow: `call label`, `call r64`, `jmp label`, `jmp r64`, and rel32
   conditional jumps such as `je`, `jne`, `jl`, `jle`, `jg`, `jge`, `jb`,
   `jbe`, `ja`, and `jae`
 
-Memory operands such as `[rbp-8]` are not implemented yet.
+Only simple RIP-relative label memory operands such as `[counter]` and
+`qword [counter]` are implemented. Base/index forms such as `[rbp-8]` and
+`[rdi + rax * 8]` are not implemented yet.
 
 Example:
 
@@ -450,6 +458,83 @@ main:
     mov eax, 42
     ret
 ```
+
+## Tiny `.Z` compiler
+
+The kernel now also includes a deliberately tiny C-like compiler for script-sized
+programs. `.Z` source is compiled into the assembler subset above, then assembled
+into the same flat binary format used by `exec`.
+
+Current workflow:
+- `zc demo.Z demo.bin`
+- `exec demo.bin`
+- or `zrun demo.Z`
+- use `zasm demo.Z` to print the generated asm
+- or `zasm demo.Z demo.asm` to save it as a text file
+
+Supported `.Z` subset:
+- integer variables: `int counter;`, `int total = 3;`
+- integer functions with up to 6 parameters:
+  `int add(int a, int b) { return a + b; }`
+- local variables inside functions
+- pointer variables and parameters such as `int *p`
+- fixed-size local arrays such as `int values[4];`
+- brace initialization for fixed-size local arrays such as `int values[4] = {1, 2, 3, 4};`
+- multidimensional local arrays such as `int grid[2][3];`
+- top-level struct definitions with integer fields
+- assignment: `counter = counter + 1;`
+- arithmetic expressions: `+`, `-`, `*`, parentheses, decimal and `0x` literals
+- control flow: `if`, `else`, `while`
+- returns: `return expr;`
+- function calls inside expressions: `print(add(2, 3));`
+- pointer operations:
+  - address-of locals/parameters: `p = &value;`
+  - dereference in expressions: `print(*p);`
+  - dereference store: `*p = *p + 1;`
+- array operations:
+  - indexed read: `print(values[2]);`
+  - indexed write: `values[i] = 42;`
+  - array-to-pointer decay in expressions and function calls: `sum4(values);`
+  - chained indexing for multidimensional arrays: `grid[i][j]`
+- struct operations:
+  - declare a local struct variable: `struct Point p;`
+  - read a field: `print(p.x);`
+  - write a field: `p.y = 42;`
+- builtin calls:
+  - `print("text");`
+  - `print(expr);` for decimal output
+  - `print_hex(expr);`
+  - `put_pixel(x, y, color);`
+  - `ticks()` inside expressions
+
+Example:
+
+```c
+int add(int a, int b) {
+    int total = a + b;
+    return total;
+}
+
+int value = 9;
+int *ptr = &value;
+
+*ptr = add(*ptr, 3);
+print(*ptr);
+print("\n");
+
+return value;
+```
+
+This is still not full C. Preprocessing and type checking are not
+implemented yet. Current pointer support is intentionally narrow:
+address-of only works on stack-backed locals/parameters, dereference is scalar-only,
+and there is no pointer arithmetic beyond treating pointers as raw integers in
+normal expressions. Current array support is also narrow: arrays are fixed-size
+stack-backed `int` arrays, brace initialization is limited to flat element lists,
+multidimensional arrays currently use chained local-array indexing only, and
+current struct support is also narrow: structs must be declared at top level,
+their fields are `int`-only, struct variables are local stack-backed values, and
+there is no `->`, struct return, or struct-parameter support yet.
 
 ## Timer
 

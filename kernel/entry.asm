@@ -7,9 +7,13 @@ GLOBAL _start
 EXTERN kernel_main
 EXTERN console_panic
 
+%define KERNEL_STACK_SIZE (256 * 1024)
+
 SECTION .text
 _start:
     cli
+    lea rsp, [rel kernel_stack_top]
+    xor rbp, rbp
 
     mov rbx, rdi
     test rbx, rbx
@@ -37,6 +41,12 @@ _start:
 
 .panic:
     call console_panic
+
+SECTION .bss
+align 16
+kernel_stack_bottom:
+    resb KERNEL_STACK_SIZE
+kernel_stack_top:
 
 SECTION .rodata
 panic_no_bootinfo db 'boot_info pointer was null', 0

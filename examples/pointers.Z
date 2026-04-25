@@ -1,0 +1,18 @@
+int read_ptr(int *p) {
+    return *p;
+}
+
+int value = 41;
+int *ptr = &value;
+
+print("value=");
+print(value);
+print("\n");
+
+*ptr = *ptr + 1;
+
+print("through ptr=");
+print(read_ptr(ptr));
+print("\n");
+
+return value;

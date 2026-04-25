@@ -1,0 +1,21 @@
+int sum4(int *data) {
+    return data[0] + data[1] + data[2] + data[3];
+}
+
+int values[4];
+int i = 0;
+
+while (i < 4) {
+    values[i] = i * 10;
+    i = i + 1;
+}
+
+print("values[2]=");
+print(values[2]);
+print("\n");
+
+print("sum=");
+print(sum4(values));
+print("\n");
+
+return 0;

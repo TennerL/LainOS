@@ -1,0 +1,11 @@
+int x = 20;
+
+while (x < 120) {
+    put_pixel(x, 30, 0x00ff00);
+    put_pixel(x, 31, 0x00ff00);
+    put_pixel(x, 32, 0x00ff00);
+    x = x + 1;
+}
+
+print("drew a green line\n");
+return 0;

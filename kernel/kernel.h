@@ -29,6 +29,7 @@ void console_kprintf1(const char *fmt, unsigned long long a1);
 void console_kprintf2(const char *fmt, unsigned long long a1, unsigned long long a2);
 void console_panic(const char *msg);
 void console_read_line(char *buffer, unsigned int max_len);
+void put_pixel(unsigned int x, unsigned int y, unsigned int color);
 
 void cpu_init_tables(void);
 void interrupts_init(void);

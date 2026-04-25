@@ -1,0 +1,21 @@
+int a = 7;
+int b = 3;
+int total = a * b + 5;
+
+print("a=");
+print(a);
+print("\n");
+
+print("b=");
+print(b);
+print("\n");
+
+print("total=");
+print(total);
+print("\n");
+
+print("total hex=");
+print_hex(total);
+print("\n");
+
+return total;
