@@ -81,6 +81,7 @@ void timer_init(void) {
 
 void timer_irq_handler(void) {
     ++ticks;
+    status_cpu_timer_tick();
     outb(PIC1_COMMAND, PIC_EOI);
 }
 

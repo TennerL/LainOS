@@ -249,6 +249,51 @@ static int asm_symbol_value(const char *name, uint64_t *out) {
         return 0;
     }
 
+    if (streq(name, "status_memory_total_kb")) {
+        *out = (uint64_t)(uintptr_t)status_memory_total_kb;
+        return 0;
+    }
+
+    if (streq(name, "mem_total_kb")) {
+        *out = (uint64_t)(uintptr_t)status_memory_total_kb;
+        return 0;
+    }
+
+    if (streq(name, "status_memory_free_kb")) {
+        *out = (uint64_t)(uintptr_t)status_memory_free_kb;
+        return 0;
+    }
+
+    if (streq(name, "mem_free_kb")) {
+        *out = (uint64_t)(uintptr_t)status_memory_free_kb;
+        return 0;
+    }
+
+    if (streq(name, "status_memory_used_kb")) {
+        *out = (uint64_t)(uintptr_t)status_memory_used_kb;
+        return 0;
+    }
+
+    if (streq(name, "mem_used_kb")) {
+        *out = (uint64_t)(uintptr_t)status_memory_used_kb;
+        return 0;
+    }
+
+    if (streq(name, "status_cpu_core_count")) {
+        *out = (uint64_t)(uintptr_t)status_cpu_core_count;
+        return 0;
+    }
+
+    if (streq(name, "cpu_count")) {
+        *out = (uint64_t)(uintptr_t)status_cpu_core_count;
+        return 0;
+    }
+
+    if (streq(name, "cpu_usage")) {
+        *out = (uint64_t)(uintptr_t)status_cpu_usage_percent;
+        return 0;
+    }
+
     if (streq(name, "put_pixel")) {
         *out = (uint64_t)(uintptr_t)put_pixel;
         return 0;
@@ -256,6 +301,21 @@ static int asm_symbol_value(const char *name, uint64_t *out) {
 
     if (streq(name, "put_char_at")) {
         *out = (uint64_t)(uintptr_t)console_put_char_at;
+        return 0;
+    }
+
+    if (streq(name, "put_dec_at")) {
+        *out = (uint64_t)(uintptr_t)console_put_dec_at;
+        return 0;
+    }
+
+    if(streq(name, "set_margin")) {
+        *out = (uint64_t)(uintptr_t)console_set_margin;
+        return 0;
+    }
+
+    if (streq(name, "statusbar_enable")) {
+        *out = (uint64_t)(uintptr_t)statusbar_enable;
         return 0;
     }
 

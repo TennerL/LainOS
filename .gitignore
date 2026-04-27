@@ -1,1 +1,4 @@
 build/
+boot/.DS_Store
+.vscode/
+

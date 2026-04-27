@@ -1023,10 +1023,30 @@ static int z_parse_call_expression(z_compiler_t *c, const char *name) {
     uint32_t arg_count = 0;
     char function_label[20];
 
-    if (z_streq(name, "ticks")) {
+    if (z_streq(name, "ticks") ||
+        z_streq(name, "status_memory_total_kb") ||
+        z_streq(name, "status_memory_free_kb") ||
+        z_streq(name, "status_memory_used_kb") ||
+        z_streq(name, "status_cpu_core_count") ||
+        z_streq(name, "mem_total_kb") ||
+        z_streq(name, "mem_free_kb") ||
+        z_streq(name, "mem_used_kb") ||
+        z_streq(name, "cpu_count")) {
         if (z_expect(c, Z_TOKEN_LPAREN) != 0 ||
             z_expect(c, Z_TOKEN_RPAREN) != 0 ||
-            z_emit_instr0(c, "call ticks") != 0) {
+            z_emit_instr1_text(c, "call", name) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if (z_streq(name, "cpu_usage")) {
+        if (z_expect(c, Z_TOKEN_LPAREN) != 0 ||
+            z_parse_expr(c) != 0 ||
+            z_expect(c, Z_TOKEN_RPAREN) != 0 ||
+            z_emit_instr2_text(c, "mov", "rdi", "rax") != 0 ||
+            z_emit_instr0(c, "call cpu_usage") != 0) {
             return -1;
         }
 
@@ -1779,6 +1799,55 @@ static int z_parse_call_stmt(z_compiler_t *c, const char *name) {
             z_emit_pop_reg(c, "rsi") != 0 ||
             z_emit_pop_reg(c, "rdi") != 0 ||
             z_emit_instr0(c, "call put_char_at") != 0 ||
+            z_expect(c, Z_TOKEN_SEMI) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if (z_streq(name, "put_dec_at")) {
+        if (z_expect(c, Z_TOKEN_LPAREN) != 0 ||
+            z_parse_expr(c) != 0 ||
+            z_emit_push_rax(c) != 0 ||
+            z_expect(c, Z_TOKEN_COMMA) != 0 ||
+            z_parse_expr(c) != 0 ||
+            z_emit_push_rax(c) != 0 ||
+            z_expect(c, Z_TOKEN_COMMA) != 0 ||
+            z_parse_expr(c) != 0 ||
+            z_expect(c, Z_TOKEN_RPAREN) != 0 ||
+            z_emit_instr2_text(c, "mov", "rdx", "rax") != 0 ||
+            z_emit_pop_reg(c, "rsi") != 0 ||
+            z_emit_pop_reg(c, "rdi") != 0 ||
+            z_emit_instr0(c, "call put_dec_at") != 0 ||
+            z_expect(c, Z_TOKEN_SEMI) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if (z_streq(name, "set_margin")) {
+        if (z_expect(c, Z_TOKEN_LPAREN) != 0 ||
+            z_parse_expr(c) != 0 ||
+            z_emit_push_rax(c) != 0 ||
+            z_expect(c, Z_TOKEN_COMMA) != 0 ||
+            z_parse_expr(c) != 0 ||
+            z_expect(c, Z_TOKEN_RPAREN) != 0 ||
+            z_emit_instr2_text(c, "mov", "rsi", "rax") != 0 ||
+            z_emit_pop_reg(c, "rdi") != 0 ||
+            z_emit_instr0(c, "call set_margin") != 0 ||
+            z_expect(c, Z_TOKEN_SEMI) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if (z_streq(name, "statusbar_enable")) {
+        if (z_expect(c, Z_TOKEN_LPAREN) != 0 ||
+            z_expect(c, Z_TOKEN_RPAREN) != 0 ||
+            z_emit_instr0(c, "call statusbar_enable") != 0 ||
             z_expect(c, Z_TOKEN_SEMI) != 0) {
             return -1;
         }

@@ -435,9 +435,10 @@ The instruction subset is intentionally small but covers the common flat-binary
 building blocks:
 - registers: `rax`..`r15` and `eax`..`r15d`
 - control: `nop`, `hlt`, `ret`, `ret imm16`, `leave`, `int imm8`, `iretq`,
-  `syscall`, `cli`, `sti`
+  `syscall`, `cli`, `sti`, `cqo`, `idiv`
 - data movement: `mov r64, imm64`, `mov r32, imm32`, `mov reg, reg`,
-  `mov r64, [label]`, `mov [label], r64`, `mov qword [label], imm32`,
+  `mov r64, [label]`, `mov r64, [rbp-8]`, `mov [label], r64`,
+  `mov [rbp-8], r64`, `mov qword [label], imm32`, `mov qword [rbp-8], imm32`,
   `push r64`, `pop r64`
 - arithmetic and logic: `add`, `sub`, `imul`, `cmp`, `and`, `or`, `xor`,
   `test`, `inc`, `dec`; `add/sub/cmp/and/or/xor/test` support `r64, [label]`;
@@ -445,10 +446,19 @@ building blocks:
 - flow: `call label`, `call r64`, `jmp label`, `jmp r64`, and rel32
   conditional jumps such as `je`, `jne`, `jl`, `jle`, `jg`, `jge`, `jb`,
   `jbe`, `ja`, and `jae`
+- data directives: `db` accepts decimal/hex bytes and quoted strings with
+  escapes such as `\n`, `\r`, `\t`, `\0`, `\"`, `\\`; `dq` accepts numbers,
+  labels, and exposed kernel symbols
+- exposed kernel symbols callable from asm include `puts`, `put_hex64`,
+  `put_dec64`, `ticks`, `mem_total_kb`, `mem_free_kb`, `mem_used_kb`,
+  `cpu_count`, `cpu_usage`, `put_pixel`, `put_char_at`, `put_dec_at`,
+  `set_margin`, and `statusbar_enable`
 
-Only simple RIP-relative label memory operands such as `[counter]` and
-`qword [counter]` are implemented. Base/index forms such as `[rbp-8]` and
-`[rdi + rax * 8]` are not implemented yet.
+Memory operands currently support:
+- RIP-relative label forms such as `[counter]` and `qword [counter]`
+- simple base-plus-displacement forms such as `[rbp-8]`, `[rsp+16]`, and `[rax]`
+
+Scaled index forms such as `[rdi + rax * 8]` are not implemented yet.
 
 Example:
 
@@ -476,8 +486,11 @@ Current workflow:
 
 Supported `.Z` subset:
 - integer variables: `int counter;`, `int total = 3;`
-- integer functions with up to 6 parameters:
+- integer and void functions with up to 6 parameters:
   `int add(int a, int b) { return a + b; }`
+  `void line(void) { print("\n"); return; }`
+- top-level statements and declarations outside explicit functions; these are
+  lowered into the implicit entry routine that `zrun`/`exec` starts from
 - local variables inside functions
 - pointer variables and parameters such as `int *p`
 - fixed-size local arrays such as `int values[4];`
@@ -485,9 +498,14 @@ Supported `.Z` subset:
 - multidimensional local arrays such as `int grid[2][3];`
 - top-level struct definitions with integer fields
 - assignment: `counter = counter + 1;`
-- arithmetic expressions: `+`, `-`, `*`, parentheses, decimal and `0x` literals
-- control flow: `if`, `else`, `while`
-- returns: `return expr;`
+- compound assignment and increment/decrement: `+=`, `-=`, `*=`, `/=`, `%=`,
+  `++`, `--`
+- arithmetic expressions: `+`, `-`, `*`, `/`, `%`, unary `-`, parentheses,
+  decimal and `0x` literals
+- comparisons and boolean expressions: `==`, `!=`, `<`, `<=`, `>`, `>=`,
+  `&&`, `||`, `!`
+- control flow: `if`, `else`, `while`, `for`, `do ... while`, `break`, `continue`
+- returns: `return expr;` and `return;`
 - function calls inside expressions: `print(add(2, 3));`
 - pointer operations:
   - address-of locals/parameters: `p = &value;`
@@ -507,7 +525,14 @@ Supported `.Z` subset:
   - `print(expr);` for decimal output
   - `print_hex(expr);`
   - `put_pixel(x, y, color);`
+  - `put_char_at(col, row, ch);`
+  - `put_dec_at(col, row, expr);`
+  - `set_margin(x, y);` to reserve screen space, for example below a custom status bar
+  - `statusbar_enable();`
   - `ticks()` inside expressions
+  - `mem_total_kb()`, `mem_free_kb()`, `mem_used_kb()`
+  - `cpu_count()` and `cpu_usage(core)`
+- comments: `// line comment` and `/* block comment */`
 
 Example:
 

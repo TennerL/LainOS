@@ -1,3 +1,4 @@
+clear
 qemu-system-x86_64 \
   -m 256M \
   -drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \

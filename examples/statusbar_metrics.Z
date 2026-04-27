@@ -1,0 +1,5 @@
+int bar_height = 20;
+
+statusbar_enable();
+set_margin(16, bar_height);
+return 0;

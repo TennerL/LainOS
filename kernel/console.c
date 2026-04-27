@@ -3,8 +3,8 @@
 
 #define FONT_W 8u
 #define FONT_H 8u
-#define CONSOLE_MARGIN_X 16u
-#define CONSOLE_MARGIN_Y 16u
+#define DEFAULT_CONSOLE_MARGIN_X 16u
+#define DEFAULT_CONSOLE_MARGIN_Y 16u
 #define CONSOLE_ROW_ADVANCE (FONT_H + 2u)
 #define DEFAULT_FG_COLOR 0x00F725FCu
 #define DEFAULT_BG_COLOR 0x0035063Eu
@@ -24,7 +24,17 @@ static uint32_t fb_height;
 static uint32_t fb_pitch;
 static uint32_t current_fg_color = DEFAULT_FG_COLOR;
 static uint32_t current_bg_color = DEFAULT_BG_COLOR;
+static uint32_t current_console_margin_x = DEFAULT_CONSOLE_MARGIN_X;
+static uint32_t current_console_margin_y = DEFAULT_CONSOLE_MARGIN_Y;
 static char dec_buffer[32];
+
+static uint32_t console_text_right(void) {
+    return fb_width > current_console_margin_x ? fb_width - current_console_margin_x : 0;
+}
+
+static uint32_t console_text_bottom(void) {
+    return fb_height > current_console_margin_y ? fb_height - current_console_margin_y : 0;
+}
 
 static const uint8_t font_data[ASCII_COUNT][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00},
@@ -131,8 +141,9 @@ void fill_screen_color(uint32_t color) {
 
 static void scroll_screen(void) {
     uint32_t *fb = (uint32_t *)(uintptr_t)fb_base;
-    uint32_t text_top = CONSOLE_MARGIN_Y;
-    uint32_t text_bottom = fb_height > CONSOLE_MARGIN_Y ? fb_height - CONSOLE_MARGIN_Y : fb_height;
+    uint32_t text_top = current_console_margin_y;
+    uint32_t text_right = console_text_right();
+    uint32_t text_bottom = console_text_bottom();
     uint32_t clear_start;
 
     if (text_bottom <= text_top + CONSOLE_ROW_ADVANCE) {
@@ -141,14 +152,14 @@ static void scroll_screen(void) {
     }
 
     for (uint32_t y = text_top; y + CONSOLE_ROW_ADVANCE < text_bottom; ++y) {
-        for (uint32_t x = CONSOLE_MARGIN_X; x < fb_width; ++x) {
+        for (uint32_t x = current_console_margin_x; x < text_right; ++x) {
             fb[y * fb_pitch + x] = fb[(y + CONSOLE_ROW_ADVANCE) * fb_pitch + x];
         }
     }
 
     clear_start = text_bottom - CONSOLE_ROW_ADVANCE;
     for (uint32_t y = clear_start; y < text_bottom; ++y) {
-        for (uint32_t x = CONSOLE_MARGIN_X; x < fb_width; ++x) {
+        for (uint32_t x = current_console_margin_x; x < text_right; ++x) {
             fb[y * fb_pitch + x] = current_bg_color;
         }
     }
@@ -161,7 +172,7 @@ static void putc_raw(char ch) {
     if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT) return;
     uint32_t glyph = (uint8_t)ch - ASCII_FIRST;
 
-    if (cursor_x + FONT_W > fb_width) console_newline();
+    if (cursor_x + FONT_W > console_text_right()) console_newline();
 
     for (uint32_t row = 0; row < FONT_H; ++row) {
         uint8_t bits = font_data[glyph][row];
@@ -176,7 +187,7 @@ static void putc_raw(char ch) {
 
 static void backspace(void) {
     erase_cursor();
-    if (cursor_x <= CONSOLE_MARGIN_X) {
+    if (cursor_x <= current_console_margin_x) {
         draw_cursor();
         return;
     }
@@ -198,12 +209,21 @@ void console_init(unsigned long long framebuffer_base,
     fb_height = framebuffer_height;
     fb_pitch = framebuffer_pixels_per_scanline;
     cursor_enabled = 1;
+    fill_screen_color(current_bg_color);
 }
 
 void console_clear(void) {
-    fill_screen_color(current_bg_color);
-    cursor_x = CONSOLE_MARGIN_X;
-    cursor_y = CONSOLE_MARGIN_Y;
+    uint32_t text_right = console_text_right();
+    uint32_t text_bottom = console_text_bottom();
+
+    for (uint32_t y = current_console_margin_y; y < text_bottom; ++y) {
+        for (uint32_t x = current_console_margin_x; x < text_right; ++x) {
+            put_pixel(x, y, current_bg_color);
+        }
+    }
+
+    cursor_x = current_console_margin_x;
+    cursor_y = current_console_margin_y;
     draw_cursor();
 }
 
@@ -240,9 +260,9 @@ void console_newline(void) {
     if (cursor_visible) {
         erase_cursor();
     }
-    cursor_x = CONSOLE_MARGIN_X;
+    cursor_x = current_console_margin_x;
     cursor_y += CONSOLE_ROW_ADVANCE;
-    if (cursor_y + FONT_H > fb_height - CONSOLE_MARGIN_Y) scroll_screen();
+    if (cursor_y + FONT_H > console_text_bottom()) scroll_screen();
     draw_cursor();
 }
 
@@ -254,12 +274,12 @@ void console_set_cursor(unsigned int col, unsigned int row) {
         erase_cursor();
     }
 
-    if (fb_width > CONSOLE_MARGIN_X + FONT_W) {
-        max_col = (fb_width - CONSOLE_MARGIN_X - FONT_W) / FONT_W;
+    if (console_text_right() > current_console_margin_x + FONT_W) {
+        max_col = (console_text_right() - current_console_margin_x - FONT_W) / FONT_W;
     }
 
-    if (fb_height > CONSOLE_MARGIN_Y + FONT_H) {
-        max_row = (fb_height - CONSOLE_MARGIN_Y - FONT_H) / CONSOLE_ROW_ADVANCE;
+    if (console_text_bottom() > current_console_margin_y + FONT_H) {
+        max_row = (console_text_bottom() - current_console_margin_y - FONT_H) / CONSOLE_ROW_ADVANCE;
     }
 
     if (col > max_col) {
@@ -270,22 +290,15 @@ void console_set_cursor(unsigned int col, unsigned int row) {
         row = max_row;
     }
 
-    cursor_x = CONSOLE_MARGIN_X + col * FONT_W;
-    cursor_y = CONSOLE_MARGIN_Y + row * CONSOLE_ROW_ADVANCE;
+    cursor_x = current_console_margin_x + col * FONT_W;
+    cursor_y = current_console_margin_y + row * CONSOLE_ROW_ADVANCE;
     cursor_visible = 1;
     last_cursor_blink_tick = timer_ticks();
 
     draw_cursor();
 }
 
-void console_put_char_at(unsigned int col, unsigned int row, char ch){
-    uint32_t x = CONSOLE_MARGIN_X + col * FONT_W;
-    uint32_t y = CONSOLE_MARGIN_Y + row * CONSOLE_ROW_ADVANCE;
-
-    if (x + FONT_W > fb_width || y + FONT_H > fb_height) {
-        return;
-    }
-
+static void console_put_char_at_pixel(uint32_t x, uint32_t y, char ch) {
     if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT){
         ch = ' ';
     }
@@ -300,14 +313,66 @@ void console_put_char_at(unsigned int col, unsigned int row, char ch){
                 (bits & (1u << (7u - glyph_col))) ? current_fg_color : current_bg_color;
             put_pixel(x + glyph_col, y + glyph_row, color);
         }
-    } 
+    }
+}
+
+void console_put_char_at(unsigned int col, unsigned int row, char ch){
+    uint32_t x = current_console_margin_x + col * FONT_W;
+    uint32_t y = current_console_margin_y + row * CONSOLE_ROW_ADVANCE;
+
+    console_put_char_at_pixel(x, y, ch);
+}
+
+void console_put_char_at_screen(unsigned int col, unsigned int row, char ch) {
+    uint32_t x = col * FONT_W;
+    uint32_t y = row * CONSOLE_ROW_ADVANCE;
+
+    console_put_char_at_pixel(x, y, ch);
+}
+
+void console_put_dec_at(unsigned int col, unsigned int row, unsigned long long value) {
+    char digits[32];
+    unsigned int count = 0;
+
+    if (value == 0) {
+        console_put_char_at(col, row, '0');
+        return;
+    }
+
+    while (value != 0 && count < sizeof(digits)) {
+        digits[count++] = (char)('0' + (value % 10ull));
+        value /= 10ull;
+    }
+
+    while (count > 0) {
+        console_put_char_at(col++, row, digits[--count]);
+    }
+}
+
+void console_put_dec_at_screen(unsigned int col, unsigned int row, unsigned long long value) {
+    char digits[32];
+    unsigned int count = 0;
+
+    if (value == 0) {
+        console_put_char_at_screen(col, row, '0');
+        return;
+    }
+
+    while (value != 0 && count < sizeof(digits)) {
+        digits[count++] = (char)('0' + (value % 10ull));
+        value /= 10ull;
+    }
+
+    while (count > 0) {
+        console_put_char_at_screen(col++, row, digits[--count]);
+    }
 }
 
 void console_clear_line(unsigned int row) {
-    uint32_t y = CONSOLE_MARGIN_Y + row * CONSOLE_ROW_ADVANCE;
+    uint32_t y = current_console_margin_y + row * CONSOLE_ROW_ADVANCE;
     int redraw_cursor = cursor_enabled && cursor_visible;
 
-    if (y + FONT_H > fb_height) {
+    if (y + FONT_H > console_text_bottom()) {
         return;
     }
 
@@ -320,7 +385,7 @@ void console_clear_line(unsigned int row) {
             break;
         }
 
-        for (uint32_t x = CONSOLE_MARGIN_X; x < fb_width; ++x) {
+        for (uint32_t x = current_console_margin_x; x < console_text_right(); ++x) {
             put_pixel(x, y + py, current_bg_color);
         }
     }
@@ -331,18 +396,18 @@ void console_clear_line(unsigned int row) {
 }
 
 unsigned int console_columns(void) {
-    if (fb_width <= CONSOLE_MARGIN_X + FONT_W) {
+    if (console_text_right() <= current_console_margin_x + FONT_W) {
         return 0;
     }
 
-    return (fb_width - CONSOLE_MARGIN_X) / FONT_W;
+    return (console_text_right() - current_console_margin_x) / FONT_W;
 }
 
 unsigned int console_rows(void) {
-    if (fb_height <= (CONSOLE_MARGIN_Y * 2u) + FONT_H) {
+    if (console_text_bottom() <= current_console_margin_y + FONT_H) {
         return 0;
     }
-    return (fb_height - (CONSOLE_MARGIN_Y * 2u)) / CONSOLE_ROW_ADVANCE;
+    return (console_text_bottom() - current_console_margin_y) / CONSOLE_ROW_ADVANCE;
 }
 
 void console_cursor_enable(int enabled) {
@@ -367,6 +432,25 @@ void console_puts(const char *s) {
         } else {
             putc_raw(ch);
         }
+    }
+}
+
+void console_set_margin(uint32_t x, uint32_t y) {
+    int redraw_cursor = cursor_enabled && cursor_visible;
+
+    if(redraw_cursor) {
+        erase_cursor();
+    }
+
+    current_console_margin_x = x;
+    current_console_margin_y = y;
+    cursor_x = current_console_margin_x;
+    cursor_y = current_console_margin_y;
+    cursor_visible = 1;
+    last_cursor_blink_tick = timer_ticks();
+
+    if(redraw_cursor){
+        draw_cursor();
     }
 }
 
