@@ -156,20 +156,53 @@ void keyboard_init(void) {
     }
 }
 
-void console_read_line(char *buffer, unsigned int max_len) {
+int console_read_line(char *buffer, unsigned int max_len) {
     unsigned int len = 0;
-    if (max_len == 0) return;
+    if (max_len == 0) return 0;
+
+    while (len + 1 < max_len && buffer[len] != '\0') {
+        ++len;
+    }
+
+    if (len + 1 >= max_len) {
+        buffer[max_len - 1] = '\0';
+        len = max_len - 1;
+    }
 
     console_cursor_enable(1);
 
     for(;;) {
         key_event_t key = keyboard_read_key();
 
+        if (key.type == KEY_CTRL_W) {
+            if (!console_split_enabled()) {
+                if (console_split_enable() != 0) {
+                    continue;
+                }
+                console_split_focus_next();
+                console_cursor_enable(0);
+                return 3;
+            } else {
+                console_split_focus_next();
+            }
+            console_cursor_enable(0);
+            return 1;
+        }
+
+        if (key.type == KEY_CTRL_E) {
+            if (console_split_enabled() && console_active_pane() != 0u) {
+                console_split_disable();
+                console_cursor_enable(0);
+                return 2;
+            }
+            continue;
+        }
+
         if(key.type == KEY_ENTER) {
             buffer[len] = '\0';
             console_puts("\n");
             console_cursor_enable(0);
-            return;
+            return 0;
         }
 
         if (key.type == KEY_BACKSPACE) {
@@ -266,8 +299,10 @@ key_event_t keyboard_read_key(void) {
 
         if (ctrl_down) {
             switch(code) {
+                case 0x12: return (key_event_t) {KEY_CTRL_E, 0}; /* E */
                 case 0x1F: return (key_event_t) {KEY_CTRL_S, 0}; /* S */
                 case 0x10: return (key_event_t) {KEY_CTRL_Q, 0}; /* Q */
+                case 0x11: return (key_event_t) {KEY_CTRL_W, 0}; /* W */
                 default: break;
             }
         }

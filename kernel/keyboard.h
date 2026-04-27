@@ -12,8 +12,10 @@ typedef enum {
     KEY_RIGHT,
     KEY_UP,
     KEY_DOWN,
+    KEY_CTRL_E,
     KEY_CTRL_S,
-    KEY_CTRL_Q
+    KEY_CTRL_Q,
+    KEY_CTRL_W
 } key_type_t;
 
 typedef struct {

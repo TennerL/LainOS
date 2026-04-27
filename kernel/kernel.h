@@ -31,9 +31,14 @@ void console_put_dec64(unsigned long long value);
 void console_kprintf1(const char *fmt, unsigned long long a1);
 void console_kprintf2(const char *fmt, unsigned long long a1, unsigned long long a2);
 void console_panic(const char *msg);
-void console_read_line(char *buffer, unsigned int max_len);
+int console_read_line(char *buffer, unsigned int max_len);
 void put_pixel(unsigned int x, unsigned int y, unsigned int color);
 void console_set_margin(unsigned int x, unsigned int y);
+int console_split_enable(void);
+void console_split_disable(void);
+void console_split_focus_next(void);
+int console_split_enabled(void);
+unsigned int console_active_pane(void);
 
 void cpu_init_tables(void);
 void interrupts_init(void);

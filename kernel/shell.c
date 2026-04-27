@@ -18,6 +18,7 @@
 #define EXEC_API_MAGIC 0x4C41494E45584543ull
 #define ASM_SOURCE_SIZE LAINFS_FILE_CAPACITY
 #define SHELL_PATH_SIZE 128u
+#define SHELL_MAX_SESSIONS 2u
 
 static int script_depth;
 static char script_buffers[SCRIPT_MAX_DEPTH][SCRIPT_BUFFER_SIZE + 1];
@@ -50,10 +51,24 @@ typedef struct {
     char label[12];
 } drive_t;
 
+typedef struct {
+    int initialized;
+    int drive;
+    uint32_t dir_ids[MAX_DRIVES];
+    char paths[MAX_DRIVES][SHELL_PATH_SIZE];
+} shell_session_t;
+
 static drive_t drives[MAX_DRIVES];
-static int current_drive = -1;
-static uint32_t cwd_dirs[MAX_DRIVES];
-static char cwd_paths[MAX_DRIVES][SHELL_PATH_SIZE];
+static shell_session_t shell_sessions[SHELL_MAX_SESSIONS];
+static unsigned int active_session_index;
+
+static shell_session_t *active_session(void) {
+    return &shell_sessions[active_session_index];
+}
+
+#define current_drive (active_session()->drive)
+#define cwd_dirs (active_session()->dir_ids)
+#define cwd_paths (active_session()->paths)
 
 static char *skip_spaces(char *s) {
     while (*s == ' ' || *s == '\t') {
@@ -199,14 +214,40 @@ static void print_drive_name(int index) {
 
 static int active_drive(void);
 
-static void reset_cwd(int drive) {
+static void reset_cwd_in_session(shell_session_t *session, int drive) {
     if (drive < 0 || drive >= MAX_DRIVES) {
         return;
     }
 
-    cwd_dirs[drive] = LAINFS_ROOT_DIR;
-    cwd_paths[drive][0] = '\\';
-    cwd_paths[drive][1] = '\0';
+    session->dir_ids[drive] = LAINFS_ROOT_DIR;
+    session->paths[drive][0] = '\\';
+    session->paths[drive][1] = '\0';
+}
+
+static void init_session_blank(shell_session_t *session) {
+    session->initialized = 1;
+    session->drive = -1;
+
+    for (int i = 0; i < MAX_DRIVES; ++i) {
+        reset_cwd_in_session(session, i);
+    }
+}
+
+static void ensure_session_initialized(unsigned int index) {
+    if (index >= SHELL_MAX_SESSIONS || shell_sessions[index].initialized) {
+        return;
+    }
+
+    if (shell_sessions[active_session_index].initialized) {
+        shell_sessions[index] = shell_sessions[active_session_index];
+        shell_sessions[index].initialized = 1;
+    } else {
+        init_session_blank(&shell_sessions[index]);
+    }
+}
+
+static void reset_cwd(int drive) {
+    reset_cwd_in_session(active_session(), drive);
 }
 
 static uint32_t active_dir(void) {
@@ -1640,14 +1681,25 @@ static void cmd_fgcolor(const char *args, const boot_info_t *info) {
     console_set_fg_color(color);
 }
 
+void shell_set_session(unsigned int session) {
+    if (session >= SHELL_MAX_SESSIONS) {
+        return;
+    }
+
+    ensure_session_initialized(session);
+    active_session_index = session;
+}
+
 void shell_init(void) {
+    zero_memory(shell_sessions, sizeof(shell_sessions));
+
     for (int i = 0; i < MAX_DRIVES; ++i) {
         drives[i].present = 0;
         drives[i].label[0] = '\0';
-        reset_cwd(i);
     }
 
-    current_drive = -1;
+    active_session_index = 0;
+    init_session_blank(&shell_sessions[0]);
 }
 
 void shell_run_autoexec(const char *name, const boot_info_t *info) {

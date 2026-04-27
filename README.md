@@ -319,6 +319,11 @@ This is now a clean milestone-1 starter: UEFI boot, ELF64 loading, boot info han
 Current input path assumes classic QEMU PS/2 keyboard behavior and simple set-1 scancodes.
 It now includes basic Shift and Caps Lock handling plus a simple visible text cursor during line input.
 Keyboard layouts can be switched with `keymap us` or `keymap de`.
+While typing at the shell prompt, `Ctrl+W` enables a two-pane split console and
+then switches focus between the left and right pane. Each pane keeps its own
+shell session state, including the selected drive and current working directory.
+While focused in the right pane, `Ctrl+E` closes that pane and returns to the
+main shell prompt on the left.
 
 ## Shell commands
 

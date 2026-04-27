@@ -3,6 +3,7 @@
 #include "storage.h"
 
 #define INPUT_BUFFER_SIZE 128
+#define SHELL_SESSION_COUNT 2u
 #define EFI_CONVENTIONAL_MEMORY 7u
 #define STATUSBAR_HEIGHT 20u
 #define STATUSBAR_COLOR 0x0035063Eu
@@ -15,7 +16,8 @@
 #define STATUSBAR_CPU_VALUE_COLS 4u
 #define STATUSBAR_SECTION_GAP_COLS 2u
 
-static char input_buffer[INPUT_BUFFER_SIZE];
+static char input_buffers[SHELL_SESSION_COUNT][INPUT_BUFFER_SIZE];
+static int input_prompt_active[SHELL_SESSION_COUNT];
 static boot_info_t *kernel_boot_info;
 static volatile unsigned int status_cpu_idle_depth;
 static volatile unsigned long long status_cpu_idle_ticks;
@@ -290,16 +292,50 @@ void kernel_main(boot_info_t *info) {
     shell_run_autoexec("autoexec", info);
 
     for (;;) {
-        statusbar_update_if_due();
-        shell_print_prompt();
-        console_read_line(input_buffer, INPUT_BUFFER_SIZE);
+        unsigned int session = console_active_pane();
 
-        if (input_buffer[0] == '\0') {
+        statusbar_update_if_due();
+        if (session >= SHELL_SESSION_COUNT) {
+            session = 0;
+        }
+
+        shell_set_session(session);
+        if (!input_prompt_active[session]) {
+            shell_print_prompt();
+            input_prompt_active[session] = 1;
+        }
+
+        {
+            int read_status = console_read_line(input_buffers[session], INPUT_BUFFER_SIZE);
+
+            if (read_status == 3) {
+                input_buffers[0][0] = '\0';
+                input_buffers[1][0] = '\0';
+                input_prompt_active[0] = 0;
+                input_prompt_active[1] = 0;
+                continue;
+            }
+
+            if (read_status == 2) {
+                input_buffers[1][0] = '\0';
+                input_prompt_active[1] = 0;
+                continue;
+            }
+
+            if (read_status != 0) {
+                continue;
+            }
+        }
+
+        input_prompt_active[session] = 0;
+
+        if (input_buffers[session][0] == '\0') {
             console_puts("\n");
             continue;
         }
 
-        shell_run_command(input_buffer, info);
+        shell_run_command(input_buffers[session], info);
+        input_buffers[session][0] = '\0';
         statusbar_update_if_due();
 
     }
