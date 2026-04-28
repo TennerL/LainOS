@@ -7,6 +7,8 @@
 #define LAINFS_FILE_CAPACITY 65536u
 
 int lainfs_format(char drive_letter);
+int lainfs_format_partition(const char *partition_name);
+int lainfs_format_block_device(const char *device_name, char *out_partition_name, uint32_t out_partition_name_size);
 int lainfs_list(char drive_letter);
 int lainfs_list_dir(char drive_letter, uint32_t parent_id);
 int lainfs_make_dir(char drive_letter, const char *name);

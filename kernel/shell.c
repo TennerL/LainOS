@@ -412,7 +412,7 @@ static const command_t commands[] = {
     { "part",    "list partitions",           cmd_part },
     { "mount",   "mount partition to drive",  cmd_mount },
     { "mounts",  "list mounted filesystems",  cmd_mounts },
-    { "format",  "format drive as lainfs",    cmd_format },
+    { "format",  "format drive, partition, or disk as lainfs", cmd_format },
     { "ls",      "list directory entries",    cmd_ls },
     { "cd",      "change directory",          cmd_cd },
     { "pwd",     "show current directory",    cmd_pwd },
@@ -667,7 +667,7 @@ static void cmd_mounts(const char *args, const boot_info_t *info) {
         console_puts("  ");
         print_drive_name((int)(mount->drive_letter - 'A'));
         console_puts(" ");
-        console_puts(part ? part->name : "?");
+        console_puts(mount->partition_name[0] ? mount->partition_name : (part ? part->name : "?"));
         console_puts(" ");
         console_puts(mount->fs_name);
         console_puts("\n");
@@ -713,6 +713,24 @@ static int set_mounted_drive(char drive_letter, const char *label) {
     return 0;
 }
 
+static int has_real_writable_block_device(void) {
+    for (uint32_t i = 0; i < storage_block_device_count(); ++i) {
+        const block_device_t *dev = storage_get_block_device(i);
+
+        if (!dev || !dev->write) {
+            continue;
+        }
+
+        if (streq(dev->name, "rd0")) {
+            continue;
+        }
+
+        return 1;
+    }
+
+    return 0;
+}
+
 int shell_mount_first_lainfs(char drive_letter) {
     drive_letter = to_upper(drive_letter);
 
@@ -733,43 +751,102 @@ int shell_mount_first_lainfs(char drive_letter) {
         }
     }
 
+    if (!has_real_writable_block_device() && storage_find_partition("rd0p1", 0)) {
+        if (lainfs_format_partition("rd0p1") == 0 && storage_mount(drive_letter, "rd0p1") == 0) {
+            set_mounted_drive(drive_letter, "LIVE");
+            console_puts("created live ramdisk rd0p1 at ");
+            print_drive_name((int)(drive_letter - 'A'));
+            console_puts("\n");
+            return 0;
+        }
+    }
+
     return -1;
 }
 
 static void cmd_format(const char *args, const boot_info_t *info) {
     (void)info;
 
+    const char *target = skip_const_spaces(args);
     int drive = drive_from_args_or_current(args);
-    if (drive < 0 || drive >= MAX_DRIVES) {
-        console_puts("usage: format C:\n");
+
+    if (drive >= 0 && drive < MAX_DRIVES) {
+        int status = lainfs_format((char)('A' + drive));
+        if (status == -1) {
+            console_puts("drive is not mounted\n");
+            return;
+        }
+        if (status == -4) {
+            console_puts("format failed: mounted partition is read-only\n");
+            return;
+        }
+        if (status == -5) {
+            console_puts("format failed: disk write failed\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("format failed\n");
+            return;
+        }
+
+        console_puts("formatted ");
+        print_drive_name(drive);
+        console_puts(" as lainfs\n");
+        reset_cwd(drive);
         return;
     }
 
-    int status = lainfs_format((char)('A' + drive));
-    if (status == -1) {
-        console_puts("drive is not mounted\n");
+    if (*target == '\0') {
+        console_puts("usage: format C: | format hd1p1 | format hd1\n");
         return;
     }
 
-    if (status == -4) {
-        console_puts("format failed: mounted partition is read-only\n");
+    if (storage_find_partition(target, 0)) {
+        int status = lainfs_format_partition(target);
+        if (status == -4) {
+            console_puts("format failed: partition is read-only\n");
+            return;
+        }
+        if (status == -5) {
+            console_puts("format failed: disk write failed\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("format failed\n");
+            return;
+        }
+
+        console_puts("formatted ");
+        console_puts(target);
+        console_puts(" as lainfs\n");
         return;
     }
 
-    if (status == -5) {
-        console_puts("format failed: disk write failed\n");
+    if (storage_find_block_device(target, 0)) {
+        char partition_name[12];
+        int status = lainfs_format_block_device(target, partition_name, sizeof(partition_name));
+        if (status == -2) {
+            console_puts("format failed: disk is not writable, mounted, or too small\n");
+            return;
+        }
+        if (status == -3 || status == -5) {
+            console_puts("format failed: disk write failed\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("format failed\n");
+            return;
+        }
+
+        console_puts("formatted ");
+        console_puts(target);
+        console_puts(" as ");
+        console_puts(partition_name);
+        console_puts(" (lainfs)\n");
         return;
     }
 
-    if (status != 0) {
-        console_puts("format failed\n");
-        return;
-    }
-
-    console_puts("formatted ");
-    print_drive_name(drive);
-    console_puts(" as lainfs\n");
-    reset_cwd(drive);
+    console_puts("unknown drive, partition, or block device\n");
 }
 
 static void cmd_ls(const char *args, const boot_info_t *info) {

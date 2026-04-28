@@ -3,9 +3,18 @@
 
 #define SECTOR_SIZE 512u
 #define RAMDISK_BLOCKS 131072ull
+#define RAMDISK_OVERLAY_SECTORS 2048u
+#define GPT_HEADER_LBA 1ull
+#define GPT_HEADER_MIN_SIZE 92u
+#define GPT_ENTRY_TYPE_GUID_OFFSET 0u
+#define GPT_ENTRY_FIRST_LBA_OFFSET 32u
+#define GPT_ENTRY_LAST_LBA_OFFSET 40u
+#define GPT_ENTRY_NAME_OFFSET 56u
+#define GPT_MAX_ENTRY_SIZE 256u
 #define MBR_PARTITION_TABLE_OFFSET 446u
 #define MBR_PARTITION_ENTRY_SIZE 16u
 #define MBR_SIGNATURE_OFFSET 510u
+#define MBR_PARTITION_ALIGNMENT_LBA 2048u
 #define ATA_PRIMARY_IO 0x1F0u
 #define ATA_PRIMARY_CTRL 0x3F6u
 #define ATA_SR_BSY 0x80u
@@ -23,6 +32,12 @@ static uint32_t block_device_count;
 static uint32_t partition_count;
 static uint8_t ramdisk_mbr[SECTOR_SIZE];
 static uint8_t zero_sector[SECTOR_SIZE];
+typedef struct {
+    int used;
+    uint64_t lba;
+    uint8_t data[SECTOR_SIZE];
+} ramdisk_overlay_sector_t;
+static ramdisk_overlay_sector_t ramdisk_overlay[RAMDISK_OVERLAY_SECTORS];
 
 static uint8_t inb(uint16_t port) {
     uint8_t value;
@@ -94,6 +109,17 @@ static uint32_t read_le32(const uint8_t *p) {
            ((uint32_t)p[3] << 24);
 }
 
+static uint64_t read_le64(const uint8_t *p) {
+    return (uint64_t)p[0] |
+           ((uint64_t)p[1] << 8) |
+           ((uint64_t)p[2] << 16) |
+           ((uint64_t)p[3] << 24) |
+           ((uint64_t)p[4] << 32) |
+           ((uint64_t)p[5] << 40) |
+           ((uint64_t)p[6] << 48) |
+           ((uint64_t)p[7] << 56);
+}
+
 static void write_le32(uint8_t *p, uint32_t value) {
     p[0] = (uint8_t)(value & 0xFFu);
     p[1] = (uint8_t)((value >> 8) & 0xFFu);
@@ -123,6 +149,26 @@ static const char *fs_hint_from_mbr_type(uint8_t type) {
     }
 }
 
+static int mem_eq(const uint8_t *a, const uint8_t *b, uint32_t size) {
+    for (uint32_t i = 0; i < size; ++i) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int region_is_zero(const uint8_t *p, uint32_t size) {
+    for (uint32_t i = 0; i < size; ++i) {
+        if (p[i] != 0) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 static void make_partition_name(char *dst, const char *device_name, uint32_t partition_number) {
     uint32_t i = 0;
 
@@ -136,6 +182,43 @@ static void make_partition_name(char *dst, const char *device_name, uint32_t par
     dst[i] = '\0';
 }
 
+static const char *detect_fs_hint(uint32_t device_index,
+                                  uint64_t start_lba,
+                                  uint64_t block_count,
+                                  uint8_t mbr_type) {
+    static const uint8_t gpt_signature[8] = { 'E', 'F', 'I', ' ', 'P', 'A', 'R', 'T' };
+    static const uint8_t ntfs_oem[8] = { 'N', 'T', 'F', 'S', ' ', ' ', ' ', ' ' };
+    static const uint8_t fat32_label[8] = { 'F', 'A', 'T', '3', '2', ' ', ' ', ' ' };
+    static const uint8_t fat16_label[8] = { 'F', 'A', 'T', '1', '6', ' ', ' ', ' ' };
+    static const uint8_t fat12_label[8] = { 'F', 'A', 'T', '1', '2', ' ', ' ', ' ' };
+    uint8_t sector[SECTOR_SIZE];
+    const char *fallback = fs_hint_from_mbr_type(mbr_type);
+
+    if (block_count == 0 || storage_read_block_device(device_index, start_lba, 1, sector) != 0) {
+        return fallback;
+    }
+
+    if (read_le32(&sector[0]) == 0x4E49414Cu && read_le32(&sector[4]) == 0x00315346u) {
+        return "lainfs";
+    }
+
+    if (mem_eq(&sector[3], ntfs_oem, sizeof(ntfs_oem))) {
+        return "ntfs";
+    }
+
+    if (mem_eq(&sector[82], fat32_label, sizeof(fat32_label)) ||
+        mem_eq(&sector[54], fat16_label, sizeof(fat16_label)) ||
+        mem_eq(&sector[54], fat12_label, sizeof(fat12_label))) {
+        return "fat";
+    }
+
+    if (mem_eq(&sector[0], gpt_signature, sizeof(gpt_signature))) {
+        return "gpt";
+    }
+
+    return fallback;
+}
+
 static void create_demo_mbr(void) {
     uint8_t *entry = &ramdisk_mbr[MBR_PARTITION_TABLE_OFFSET];
 
@@ -146,6 +229,29 @@ static void create_demo_mbr(void) {
     write_le32(&entry[12], 32768u);
     ramdisk_mbr[MBR_SIGNATURE_OFFSET] = 0x55;
     ramdisk_mbr[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+}
+
+static ramdisk_overlay_sector_t *find_ramdisk_overlay(uint64_t lba, int create_if_missing) {
+    ramdisk_overlay_sector_t *free_slot = 0;
+
+    for (uint32_t i = 0; i < RAMDISK_OVERLAY_SECTORS; ++i) {
+        if (ramdisk_overlay[i].used && ramdisk_overlay[i].lba == lba) {
+            return &ramdisk_overlay[i];
+        }
+
+        if (!ramdisk_overlay[i].used && !free_slot) {
+            free_slot = &ramdisk_overlay[i];
+        }
+    }
+
+    if (!create_if_missing || !free_slot) {
+        return 0;
+    }
+
+    free_slot->used = 1;
+    free_slot->lba = lba;
+    mem_zero(free_slot->data, sizeof(free_slot->data));
+    return free_slot;
 }
 
 static int ramdisk_read(void *ctx, uint64_t lba, uint32_t count, void *buffer) {
@@ -161,9 +267,47 @@ static int ramdisk_read(void *ctx, uint64_t lba, uint32_t count, void *buffer) {
 
     uint8_t *out = (uint8_t *)buffer;
     for (uint32_t i = 0; i < count; ++i) {
-        const uint8_t *src = (lba + i == 0) ? ramdisk_mbr : zero_sector;
+        uint64_t current_lba = lba + i;
+        ramdisk_overlay_sector_t *overlay = current_lba == 0 ? 0 : find_ramdisk_overlay(current_lba, 0);
+        const uint8_t *src = current_lba == 0 ? ramdisk_mbr : (overlay ? overlay->data : zero_sector);
         for (uint32_t b = 0; b < SECTOR_SIZE; ++b) {
             out[(uint64_t)i * SECTOR_SIZE + b] = src[b];
+        }
+    }
+
+    return 0;
+}
+
+static int ramdisk_write(void *ctx, uint64_t lba, uint32_t count, const void *buffer) {
+    (void)ctx;
+
+    if (count == 0) {
+        return 0;
+    }
+
+    if (lba + count > RAMDISK_BLOCKS) {
+        return -1;
+    }
+
+    const uint8_t *in = (const uint8_t *)buffer;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint64_t current_lba = lba + i;
+        const uint8_t *src = &in[(uint64_t)i * SECTOR_SIZE];
+
+        if (current_lba == 0) {
+            for (uint32_t b = 0; b < SECTOR_SIZE; ++b) {
+                ramdisk_mbr[b] = src[b];
+            }
+            continue;
+        }
+
+        ramdisk_overlay_sector_t *overlay = find_ramdisk_overlay(current_lba, 1);
+        if (!overlay) {
+            return -1;
+        }
+
+        for (uint32_t b = 0; b < SECTOR_SIZE; ++b) {
+            overlay->data[b] = src[b];
         }
     }
 
@@ -362,23 +506,50 @@ static void register_partition(uint32_t device_index, uint32_t partition_number,
     part->start_lba = start_lba;
     part->block_count = block_count;
     part->mbr_type = mbr_type;
-    copy_str(part->fs_hint, fs_hint_from_mbr_type(mbr_type), sizeof(part->fs_hint));
+    copy_str(part->fs_hint,
+             detect_fs_hint(device_index, start_lba, block_count, mbr_type),
+             sizeof(part->fs_hint));
 }
 
-static void discover_mbr_partitions(uint32_t device_index) {
+static void refresh_mounts_after_partition_scan(void) {
+    for (uint32_t i = 0; i < STORAGE_MAX_MOUNTS; ++i) {
+        mount_t *mount = &mounts[i];
+        uint32_t partition_index = 0;
+        const partition_t *part;
+
+        if (!mount->present) {
+            continue;
+        }
+
+        part = storage_find_partition(mount->partition_name, &partition_index);
+        if (!part) {
+            mount->present = 0;
+            mount->partition_index = 0;
+            mount->partition_name[0] = '\0';
+            mount->fs_name[0] = '\0';
+            continue;
+        }
+
+        mount->partition_index = partition_index;
+        copy_str(mount->fs_name, part->fs_hint, sizeof(mount->fs_name));
+    }
+}
+
+static int discover_mbr_partitions(uint32_t device_index) {
     uint8_t sector[SECTOR_SIZE];
     block_device_t *dev = &block_devices[device_index];
+    int has_protective_gpt = 0;
 
     if (!dev->present || dev->block_size != SECTOR_SIZE || dev->read == 0) {
-        return;
+        return 0;
     }
 
     if (dev->read(dev->ctx, 0, 1, sector) != 0) {
-        return;
+        return 0;
     }
 
     if (sector[MBR_SIGNATURE_OFFSET] != 0x55 || sector[MBR_SIGNATURE_OFFSET + 1] != 0xAA) {
-        return;
+        return 0;
     }
 
     for (uint32_t i = 0; i < 4; ++i) {
@@ -391,7 +562,80 @@ static void discover_mbr_partitions(uint32_t device_index) {
             continue;
         }
 
+        if (type == 0xEEu) {
+            has_protective_gpt = 1;
+        }
+
         register_partition(device_index, i + 1, start_lba, blocks, type);
+    }
+
+    return has_protective_gpt;
+}
+
+static void discover_gpt_partitions(uint32_t device_index) {
+    static const uint8_t gpt_signature[8] = { 'E', 'F', 'I', ' ', 'P', 'A', 'R', 'T' };
+    uint8_t header[SECTOR_SIZE];
+    uint8_t entry_sector[SECTOR_SIZE];
+    block_device_t *dev = &block_devices[device_index];
+    uint64_t entry_lba = 0;
+    uint32_t entry_count = 0;
+    uint32_t entry_size = 0;
+
+    if (!dev->present || dev->block_size != SECTOR_SIZE || dev->read == 0 || dev->block_count <= GPT_HEADER_LBA) {
+        return;
+    }
+
+    if (dev->read(dev->ctx, GPT_HEADER_LBA, 1, header) != 0) {
+        return;
+    }
+
+    if (!mem_eq(header, gpt_signature, sizeof(gpt_signature)) || read_le32(&header[12]) < GPT_HEADER_MIN_SIZE) {
+        return;
+    }
+
+    entry_lba = read_le64(&header[72]);
+    entry_count = read_le32(&header[80]);
+    entry_size = read_le32(&header[84]);
+
+    if (entry_lba == 0 || entry_size < 128u || entry_size > GPT_MAX_ENTRY_SIZE) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < entry_count && partition_count < STORAGE_MAX_PARTITIONS; ++i) {
+        uint64_t byte_offset = (uint64_t)i * entry_size;
+        uint64_t sector_lba = entry_lba + (byte_offset / SECTOR_SIZE);
+        uint32_t sector_offset = (uint32_t)(byte_offset % SECTOR_SIZE);
+        uint8_t entry[GPT_MAX_ENTRY_SIZE];
+        uint64_t start_lba;
+        uint64_t end_lba;
+
+        if (sector_lba >= dev->block_count) {
+            break;
+        }
+
+        if (sector_offset + entry_size > SECTOR_SIZE) {
+            break;
+        }
+
+        if (dev->read(dev->ctx, sector_lba, 1, entry_sector) != 0) {
+            break;
+        }
+
+        for (uint32_t b = 0; b < entry_size; ++b) {
+            entry[b] = entry_sector[sector_offset + b];
+        }
+
+        if (region_is_zero(&entry[GPT_ENTRY_TYPE_GUID_OFFSET], 16u)) {
+            continue;
+        }
+
+        start_lba = read_le64(&entry[GPT_ENTRY_FIRST_LBA_OFFSET]);
+        end_lba = read_le64(&entry[GPT_ENTRY_LAST_LBA_OFFSET]);
+        if (start_lba == 0 || end_lba < start_lba) {
+            continue;
+        }
+
+        register_partition(device_index, i + 1, start_lba, end_lba - start_lba + 1, 0xEEu);
     }
 }
 
@@ -399,8 +643,17 @@ void storage_discover_partitions(void) {
     partition_count = 0;
 
     for (uint32_t i = 0; i < block_device_count; ++i) {
-        discover_mbr_partitions(i);
+        uint32_t partition_start = partition_count;
+        if (discover_mbr_partitions(i)) {
+            while (partition_count > partition_start) {
+                --partition_count;
+                partitions[partition_count].present = 0;
+            }
+            discover_gpt_partitions(i);
+        }
     }
+
+    refresh_mounts_after_partition_scan();
 }
 
 void storage_init(void) {
@@ -408,11 +661,12 @@ void storage_init(void) {
     mem_zero(partitions, sizeof(partitions));
     mem_zero(mounts, sizeof(mounts));
     mem_zero(zero_sector, sizeof(zero_sector));
+    mem_zero(ramdisk_overlay, sizeof(ramdisk_overlay));
     block_device_count = 0;
     partition_count = 0;
 
     create_demo_mbr();
-    storage_register_block_device("rd0", SECTOR_SIZE, RAMDISK_BLOCKS, ramdisk_read, 0, 0);
+    storage_register_block_device("rd0", SECTOR_SIZE, RAMDISK_BLOCKS, ramdisk_read, ramdisk_write, 0);
 
     ata_soft_reset();
     ata_devices[0].slave = 0;
@@ -435,6 +689,20 @@ const block_device_t *storage_get_block_device(uint32_t index) {
     }
 
     return &block_devices[index];
+}
+
+const block_device_t *storage_find_block_device(const char *name, uint32_t *out_index) {
+    for (uint32_t i = 0; i < block_device_count; ++i) {
+        if (block_devices[i].present && str_eq(block_devices[i].name, name)) {
+            if (out_index) {
+                *out_index = i;
+            }
+
+            return &block_devices[i];
+        }
+    }
+
+    return 0;
 }
 
 uint32_t storage_partition_count(void) {
@@ -480,6 +748,7 @@ int storage_mount(char drive_letter, const char *partition_name) {
     mounts[mount_index].present = 1;
     mounts[mount_index].drive_letter = drive_letter;
     mounts[mount_index].partition_index = partition_index;
+    copy_str(mounts[mount_index].partition_name, part->name, sizeof(mounts[mount_index].partition_name));
     copy_str(mounts[mount_index].fs_name, part->fs_hint, sizeof(mounts[mount_index].fs_name));
     return 0;
 }
@@ -549,4 +818,115 @@ int storage_partition_is_writable(uint32_t partition_index) {
 
     block_device_t *dev = &block_devices[partitions[partition_index].device_index];
     return dev->present && dev->write != 0;
+}
+
+int storage_read_block_device(uint32_t device_index, uint64_t lba, uint32_t count, void *buffer) {
+    if (device_index >= block_device_count || !block_devices[device_index].present) {
+        return -1;
+    }
+
+    block_device_t *dev = &block_devices[device_index];
+    if (dev->read == 0 || lba + count > dev->block_count) {
+        return -1;
+    }
+
+    return dev->read(dev->ctx, lba, count, buffer);
+}
+
+int storage_write_block_device(uint32_t device_index, uint64_t lba, uint32_t count, const void *buffer) {
+    if (device_index >= block_device_count || !block_devices[device_index].present) {
+        return -1;
+    }
+
+    block_device_t *dev = &block_devices[device_index];
+    if (dev->write == 0 || lba + count > dev->block_count) {
+        return -1;
+    }
+
+    return dev->write(dev->ctx, lba, count, buffer);
+}
+
+int storage_block_device_is_writable(uint32_t device_index) {
+    if (device_index >= block_device_count || !block_devices[device_index].present) {
+        return 0;
+    }
+
+    return block_devices[device_index].write != 0;
+}
+
+int storage_device_has_mounted_partitions(uint32_t device_index) {
+    for (uint32_t i = 0; i < STORAGE_MAX_MOUNTS; ++i) {
+        const mount_t *mount = &mounts[i];
+        const partition_t *part;
+
+        if (!mount->present) {
+            continue;
+        }
+
+        part = storage_get_partition(mount->partition_index);
+        if (part && part->device_index == device_index) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int storage_create_mbr_partition(uint32_t device_index, uint8_t mbr_type, uint32_t *out_partition_index) {
+    uint8_t sector[SECTOR_SIZE];
+    uint64_t usable_blocks;
+    uint32_t partition_index = 0;
+    const block_device_t *dev = storage_get_block_device(device_index);
+    const partition_t *part;
+
+    if (out_partition_index) {
+        *out_partition_index = 0;
+    }
+
+    if (!dev || dev->block_size != SECTOR_SIZE) {
+        return -1;
+    }
+
+    if (!storage_block_device_is_writable(device_index)) {
+        return -2;
+    }
+
+    if (storage_device_has_mounted_partitions(device_index)) {
+        return -3;
+    }
+
+    if (dev->block_count <= MBR_PARTITION_ALIGNMENT_LBA + 64u ||
+        dev->block_count - MBR_PARTITION_ALIGNMENT_LBA > 0xFFFFFFFFull) {
+        return -4;
+    }
+
+    usable_blocks = dev->block_count - MBR_PARTITION_ALIGNMENT_LBA;
+
+    mem_zero(sector, sizeof(sector));
+    sector[MBR_PARTITION_TABLE_OFFSET + 4] = mbr_type;
+    write_le32(&sector[MBR_PARTITION_TABLE_OFFSET + 8], MBR_PARTITION_ALIGNMENT_LBA);
+    write_le32(&sector[MBR_PARTITION_TABLE_OFFSET + 12], (uint32_t)usable_blocks);
+    sector[MBR_SIGNATURE_OFFSET] = 0x55;
+    sector[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
+
+    if (storage_write_block_device(device_index, 0, 1, sector) != 0) {
+        return -5;
+    }
+
+    storage_discover_partitions();
+    {
+        char part_name[12];
+        make_partition_name(part_name, dev->name, 1);
+        part = storage_find_partition(part_name, &partition_index);
+    }
+
+    if (!part) {
+        return -6;
+    }
+
+    if (out_partition_index) {
+        *out_partition_index = partition_index;
+    }
+
+    return 0;
 }

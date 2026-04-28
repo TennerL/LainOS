@@ -49,7 +49,7 @@ This is still GNU-EFI, just using the distro-provided startup object and linker 
 3. The bootloader scans UEFI-visible filesystems and opens `\\kernel.elf`
 4. The loader parses the ELF64 header and program headers
 5. Every `PT_LOAD` segment is copied to its target physical address
-6. A `boot_info` structure is placed at `0x90000`
+6. A `boot_info` structure is allocated by UEFI and passed to the kernel by its real address
 7. The loader collects:
    - memory map
    - framebuffer info via GOP
@@ -66,7 +66,7 @@ Current kernel entry convention:
 void kernel_main(struct boot_info* info);
 ```
 
-On UEFI x86_64, the first argument arrives in `RCX`, which the NASM kernel reads directly.
+After the loader exits boot services, it jumps to the kernel using the SysV x86_64 calling convention and passes `boot_info*` in `RDI`.
 
 Current `boot_info` fields:
 - magic
@@ -122,6 +122,18 @@ On Debian/Ubuntu-like systems you typically need:
 sudo apt install gcc make nasm binutils qemu-system-x86 ovmf gnu-efi dosfstools mtools gdisk
 ```
 
+For a bootable UEFI ISO, install one ISO builder as well:
+
+```bash
+sudo apt install xorriso
+```
+
+On macOS, install `xorriso` with Homebrew:
+
+```bash
+brew install xorriso
+```
+
 If your distro uses different GNU-EFI paths, you can override them:
 
 ```bash
@@ -158,12 +170,17 @@ This creates:
 - `build/image/kernel.elf`
 - `build/esp.img`
 - `build/bootdisk.img`
+- `build/bootdisk-gpt.img`
 - `build/data.img`
+- `build/boot.iso`
 
 `kernel.bin` is still produced as a convenience artifact for inspection, but the UEFI loader now boots from `kernel.elf`.
 `esp.img` is a raw FAT32 ESP image that is convenient for QEMU. `bootdisk.img`
-wraps that ESP in a proper GPT disk with an EFI System Partition, which is more
-friendly to VirtualBox and real UEFI firmware.
+is now a USB-style MBR disk with one FAT32 partition for broader real-firmware
+compatibility when you flash it to removable media. `bootdisk-gpt.img` keeps the
+older GPT-wrapped layout for VMs or firmware that prefers GPT. `boot.iso` is a
+UEFI optical image that embeds the ESP as an El Torito boot image, which is the
+right format for VMs and firmware expecting an ISO instead of a raw disk image.
 
 ## Verify the EFI image
 
@@ -184,12 +201,24 @@ You want to see sane PE fields, especially:
 make run
 ```
 
-This boots from the real FAT32 ESP image.
+This boots from the raw FAT32 ESP image.
 
-To boot the GPT disk image with the persistent data disk attached through AHCI:
+To boot the default USB-style disk image with the persistent data disk attached through AHCI:
 
 ```bash
 make run-bootdisk
+```
+
+To boot the GPT variant instead:
+
+```bash
+make run-bootdisk-gpt
+```
+
+To build and boot the ISO form:
+
+```bash
+make run-iso
 ```
 
 ## Optional UEFI NTFS driver
@@ -241,7 +270,8 @@ make
 ```
 
 This creates:
-- `build/bootdisk.img` - GPT boot disk with a FAT32 EFI System Partition
+- `build/bootdisk.img` - MBR boot disk with one FAT32 EFI partition for flashing to USB media
+- `build/bootdisk-gpt.img` - GPT boot disk with a FAT32 EFI System Partition
 - `build/data.img` - persistent data disk with an MBR partition for `lainfs`
 
 Convert them to VDI for VirtualBox:
@@ -339,12 +369,14 @@ The kernel console has a tiny command shell:
 - `drives` - list virtual drives
 - `C:` - switch to an existing virtual `C:` drive
 - `blk` - list block devices
-- `part` - list discovered partitions
+- `part` - list discovered MBR or GPT partitions, including NTFS volumes when detected
 - `mount C: rd0p1` - mount a partition at a drive letter
 - `mounts` - list mounted filesystems
 - `ahci` - show detected AHCI controllers and disks
 - `ticks` - show PIT timer ticks
 - `format C:` - format a mounted drive as `lainfs`
+- `format hd1p1` - format a discovered partition without mounting it first
+- `format hd1` - create a single `lainfs` partition on a raw disk and format it
 - `ls [C:]` - list `lainfs` entries in a table
 - `cd name` / `cd ..` / `cd \` - change directory
 - `pwd` - show the current drive and directory
@@ -371,6 +403,10 @@ mount C: rd0p1
 mounts
 C:
 ```
+
+If no real writable HDD or AHCI disk is attached, the kernel now auto-formats
+that RAM-backed `rd0p1` partition as `lainfs` and mounts it as a live `S:`
+workspace for the current session.
 
 The kernel also probes storage in two hardware-facing ways:
 - legacy primary-slave ATA/IDE, which appears as `hd1`

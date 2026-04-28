@@ -5,7 +5,6 @@
 
 #define KERNEL_PATH L"\\kernel.elf"
 #define NTFS_DRIVER_PATH L"\\EFI\\BOOT\\drivers\\ntfs_x64.efi"
-#define BOOTINFO_LOAD_ADDRESS 0x90000
 
 typedef void (*kernel_entry_t)(boot_info_t *boot_info);
 
@@ -107,47 +106,59 @@ static EFI_STATUS load_optional_driver_from_boot_volume(EFI_HANDLE image, EFI_SY
     return status;
 }
 
-static EFI_STATUS open_kernel(EFI_SYSTEM_TABLE *SystemTable, kernel_file_t *out) {
+static EFI_STATUS try_open_kernel_on_handle(EFI_BOOT_SERVICES *bs, EFI_HANDLE handle, EFI_GUID *fs_protocol, EFI_SYSTEM_TABLE *SystemTable, kernel_file_t *out) {
+    EFI_STATUS status;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
+    EFI_FILE_PROTOCOL *kernel = NULL;
+    UINTN kernel_size = 0;
+
+    status = uefi_call_wrapper(bs->HandleProtocol, 3, handle, fs_protocol, (void**)&fs);
+    if (EFI_ERROR(status)) return status;
+
+    status = open_file_on_fs(fs, KERNEL_PATH, &kernel);
+    if (EFI_ERROR(status)) return status;
+
+    status = get_file_size(SystemTable, kernel, &kernel_size);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(kernel->Close, 1, kernel);
+        return status;
+    }
+
+    out->handle = kernel;
+    out->size = kernel_size;
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS open_kernel(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable, kernel_file_t *out) {
     EFI_STATUS status;
     EFI_BOOT_SERVICES *bs = SystemTable->BootServices;
     EFI_GUID fs_protocol = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_GUID loaded_image_protocol = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE *loaded_image = NULL;
     EFI_HANDLE *fs_handles = NULL;
     UINTN fs_handle_count = 0;
     EFI_STATUS last_error = EFI_NOT_FOUND;
+
+    status = uefi_call_wrapper(bs->HandleProtocol, 3, image, &loaded_image_protocol, (void**)&loaded_image);
+    if (!EFI_ERROR(status) && loaded_image != NULL) {
+        status = try_open_kernel_on_handle(bs, loaded_image->DeviceHandle, &fs_protocol, SystemTable, out);
+        if (!EFI_ERROR(status)) {
+            return EFI_SUCCESS;
+        }
+        last_error = status;
+    }
 
     status = uefi_call_wrapper(bs->LocateHandleBuffer, 5,
         ByProtocol, &fs_protocol, NULL, &fs_handle_count, &fs_handles);
     if (EFI_ERROR(status)) return status;
 
     for (UINTN i = 0; i < fs_handle_count; ++i) {
-        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
-        EFI_FILE_PROTOCOL *kernel = NULL;
-        UINTN kernel_size = 0;
-
-        status = uefi_call_wrapper(bs->HandleProtocol, 3,
-            fs_handles[i], &fs_protocol, (void**)&fs);
-        if (EFI_ERROR(status)) {
-            last_error = status;
-            continue;
+        status = try_open_kernel_on_handle(bs, fs_handles[i], &fs_protocol, SystemTable, out);
+        if (!EFI_ERROR(status)) {
+            uefi_call_wrapper(bs->FreePool, 1, fs_handles);
+            return EFI_SUCCESS;
         }
-
-        status = open_file_on_fs(fs, KERNEL_PATH, &kernel);
-        if (EFI_ERROR(status)) {
-            last_error = status;
-            continue;
-        }
-
-        status = get_file_size(SystemTable, kernel, &kernel_size);
-        if (EFI_ERROR(status)) {
-            uefi_call_wrapper(kernel->Close, 1, kernel);
-            last_error = status;
-            continue;
-        }
-
-        out->handle = kernel;
-        out->size = kernel_size;
-        uefi_call_wrapper(bs->FreePool, 1, fs_handles);
-        return EFI_SUCCESS;
+        last_error = status;
     }
 
     uefi_call_wrapper(bs->FreePool, 1, fs_handles);
@@ -264,7 +275,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
     UINTN map_key = 0;
     UINTN descriptor_size = 0;
     UINT32 descriptor_version = 0;
-    EFI_PHYSICAL_ADDRESS bootinfo_addr = BOOTINFO_LOAD_ADDRESS;
+    EFI_PHYSICAL_ADDRESS bootinfo_addr = 0;
     boot_info_t *boot_info = NULL;
 
     Print(L"Lain UEFI loader starting...\r\n");
@@ -281,7 +292,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"Optional NTFS driver started.\r\n");
     }
 
-    status = open_kernel(SystemTable, &kernel_file);
+    status = open_kernel(image, SystemTable, &kernel_file);
     if (EFI_ERROR(status)) {
         Print(L"Failed to open kernel.elf: %r\r\n", status);
         return status;
@@ -300,14 +311,15 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
         return status;
     }
 
-    status = uefi_call_wrapper(bs->AllocatePages, 4, AllocateAddress, EfiLoaderData,
+    status = uefi_call_wrapper(bs->AllocatePages, 4, AllocateAnyPages, EfiLoaderData,
         EFI_SIZE_TO_PAGES(sizeof(boot_info_t)), &bootinfo_addr);
     if (EFI_ERROR(status)) {
         Print(L"Failed to allocate boot info page: %r\r\n", status);
         return status;
     }
 
-    boot_info = (boot_info_t*)BOOTINFO_LOAD_ADDRESS;
+    boot_info = (boot_info_t*)(UINTN)bootinfo_addr;
+    SetMem(boot_info, sizeof(*boot_info), 0);
     boot_info->magic = BOOTINFO_MAGIC;
     boot_info->kernel_base = kernel_base;
     boot_info->kernel_size = kernel_end - kernel_base;

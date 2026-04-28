@@ -35,6 +35,7 @@ typedef struct {
     int present;
     char drive_letter;
     uint32_t partition_index;
+    char partition_name[12];
     char fs_name[8];
 } mount_t;
 
@@ -49,6 +50,7 @@ void storage_discover_partitions(void);
 
 uint32_t storage_block_device_count(void);
 const block_device_t *storage_get_block_device(uint32_t index);
+const block_device_t *storage_find_block_device(const char *name, uint32_t *out_index);
 
 uint32_t storage_partition_count(void);
 const partition_t *storage_get_partition(uint32_t index);
@@ -61,5 +63,10 @@ int storage_drive_is_mounted(char drive_letter);
 int storage_read_partition(uint32_t partition_index, uint64_t lba, uint32_t count, void *buffer);
 int storage_write_partition(uint32_t partition_index, uint64_t lba, uint32_t count, const void *buffer);
 int storage_partition_is_writable(uint32_t partition_index);
+int storage_read_block_device(uint32_t device_index, uint64_t lba, uint32_t count, void *buffer);
+int storage_write_block_device(uint32_t device_index, uint64_t lba, uint32_t count, const void *buffer);
+int storage_block_device_is_writable(uint32_t device_index);
+int storage_device_has_mounted_partitions(uint32_t device_index);
+int storage_create_mbr_partition(uint32_t device_index, uint8_t mbr_type, uint32_t *out_partition_index);
 
 #endif

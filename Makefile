@@ -9,9 +9,13 @@ KERNEL_BIN := kernel.bin
 KERNEL_ELF := kernel.elf
 ESP_IMG := esp.img
 BOOTDISK_IMG := bootdisk.img
+BOOTDISK_GPT_IMG := bootdisk-gpt.img
 DATA_IMG := data.img
+ISO_IMG := boot.iso
 ISO_DIR := build/image
 EFI_DIR := $(ISO_DIR)/EFI/BOOT
+ISO_STAGING_DIR := build/iso-root
+ISO_BOOT_IMG := efiboot.img
 BUILD_VERSION_H := build/version.h
 EFI_ARCH ?= x86_64
 EFI_INC ?= /usr/include/efi
@@ -22,6 +26,9 @@ MTOOLS_MCOPY ?= mcopy
 MTOOLS_MMD ?= mmd
 MKFS_FAT ?= mkfs.fat
 SGDISK ?= sgdisk
+XORRISO ?= xorriso
+MKISOFS ?= mkisofs
+GENISOIMAGE ?= genisoimage
 ESP_SIZE_KB ?= 65536
 BOOTDISK_SIZE_KB ?= 131072
 DATA_SIZE_KB ?= 65536
@@ -35,7 +42,7 @@ LDFLAGS_EFI := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_
 LDLIBS_EFI := -lefi -lgnuefi
 OBJCOPY_EFI_FLAGS := --target efi-app-$(EFI_ARCH) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rela -j .rel -j .reloc
 
-all: build/$(BOOTLOADER) build/$(KERNEL_BIN) build/$(KERNEL_ELF) image build/$(ESP_IMG) build/$(BOOTDISK_IMG) build/$(DATA_IMG)
+all: build/$(BOOTLOADER) build/$(KERNEL_BIN) build/$(KERNEL_ELF) image build/$(ESP_IMG) build/$(BOOTDISK_IMG) build/$(BOOTDISK_GPT_IMG) build/$(DATA_IMG) build/$(ISO_IMG)
 
 build:
 	$(MKDIR_P) build
@@ -153,13 +160,41 @@ build/$(ESP_IMG): image
 
 build/$(BOOTDISK_IMG): build/$(ESP_IMG)
 	dd if=/dev/zero of=build/$(BOOTDISK_IMG) bs=1024 count=$(BOOTDISK_SIZE_KB)
-	$(SGDISK) --clear --new=1:2048:+64M --typecode=1:EF00 --change-name=1:EFI build/$(BOOTDISK_IMG)
 	dd if=build/$(ESP_IMG) of=build/$(BOOTDISK_IMG) bs=512 seek=2048 conv=notrunc
+	printf '\200\000\002\000\014\377\377\377\000\010\000\000\000\000\002\000' | dd of=build/$(BOOTDISK_IMG) bs=1 seek=446 conv=notrunc
+	printf '\125\252' | dd of=build/$(BOOTDISK_IMG) bs=1 seek=510 conv=notrunc
+
+build/$(BOOTDISK_GPT_IMG): build/$(ESP_IMG)
+	dd if=/dev/zero of=build/$(BOOTDISK_GPT_IMG) bs=1024 count=$(BOOTDISK_SIZE_KB)
+	$(SGDISK) --clear --new=1:2048:+64M --typecode=1:EF00 --change-name=1:EFI build/$(BOOTDISK_GPT_IMG)
+	dd if=build/$(ESP_IMG) of=build/$(BOOTDISK_GPT_IMG) bs=512 seek=2048 conv=notrunc
 
 build/$(DATA_IMG): | build
 	dd if=/dev/zero of=build/$(DATA_IMG) bs=1024 count=$(DATA_SIZE_KB)
 	printf '\000\000\002\000\231\377\377\377\000\010\000\000\000\370\001\000' | dd of=build/$(DATA_IMG) bs=1 seek=446 conv=notrunc
 	printf '\125\252' | dd of=build/$(DATA_IMG) bs=1 seek=510 conv=notrunc
+
+build/$(ISO_IMG): build/$(ESP_IMG) | build
+	rm -rf $(ISO_STAGING_DIR)
+	$(MKDIR_P) $(ISO_STAGING_DIR)
+	cp build/$(ESP_IMG) $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG)
+	if [ -d "$(ISO_DIR)" ]; then cp -R $(ISO_DIR)/. $(ISO_STAGING_DIR)/; fi
+	if command -v $(XORRISO) >/dev/null 2>&1; then \
+		$(XORRISO) -as mkisofs -R -J -V LainOS \
+			-eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
+			-o $@ $(ISO_STAGING_DIR); \
+	elif command -v $(MKISOFS) >/dev/null 2>&1; then \
+		$(MKISOFS) -R -J -V LainOS \
+			-eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
+			-o $@ $(ISO_STAGING_DIR); \
+	elif command -v $(GENISOIMAGE) >/dev/null 2>&1; then \
+		$(GENISOIMAGE) -R -J -V LainOS \
+			-eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
+			-o $@ $(ISO_STAGING_DIR); \
+	else \
+		echo "No supported ISO builder found. Install xorriso, mkisofs, or genisoimage." >&2; \
+		exit 1; \
+	fi
 
 run: all
 	qemu-system-x86_64 \
@@ -191,6 +226,25 @@ run-bootdisk: all
 		-drive if=none,id=data,format=raw,file=build/$(DATA_IMG) \
 		-device ide-hd,drive=data,bus=ahci.0
 
+run-bootdisk-gpt: all
+	qemu-system-x86_64 \
+		-enable-kvm \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+		-drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+		-drive format=raw,file=build/$(BOOTDISK_GPT_IMG),if=ide,index=0 \
+		-device ich9-ahci,id=ahci \
+		-drive if=none,id=data,format=raw,file=build/$(DATA_IMG) \
+		-device ide-hd,drive=data,bus=ahci.0
+
+run-iso: build/$(ISO_IMG)
+	qemu-system-x86_64 \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
+		-drive if=pflash,format=raw,file=./OVMF_VARS.fd \
+		-cdrom build/$(ISO_IMG) \
+		-drive format=raw,file=build/$(DATA_IMG),if=ide,index=1
+
 clean:
 	rm -rf build BOOTX64.EFI
 
@@ -206,4 +260,4 @@ print-efi-config:
 	@echo EFI_LDS=$(EFI_LDS)
 	@echo EFI_ARCH=$(EFI_ARCH)
 
-.PHONY: all build image run run-ahci run-bootdisk clean inspect-efi print-efi-config FORCE
+.PHONY: all build image run run-ahci run-bootdisk run-bootdisk-gpt run-iso clean inspect-efi print-efi-config FORCE

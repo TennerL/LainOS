@@ -99,6 +99,41 @@ static const mount_t *mount_for_drive(char drive_letter) {
     return storage_get_mount_by_drive(to_upper(drive_letter));
 }
 
+static int format_partition_index(uint32_t partition_index) {
+    const partition_t *part = storage_get_partition(partition_index);
+
+    if (!part || part->block_count < 64u) {
+        return -2;
+    }
+
+    if (!storage_partition_is_writable(partition_index)) {
+        return -4;
+    }
+
+    mem_zero(sector, sizeof(sector));
+    lainfs_superblock_t *super = (lainfs_superblock_t *)sector;
+    super->magic0 = LAINFS_MAGIC0;
+    super->magic1 = LAINFS_MAGIC1;
+    super->version = 1;
+    super->block_size = LAINFS_BLOCK_SIZE;
+    super->dir_start_lba = 1;
+    super->dir_blocks = LAINFS_DIR_BLOCKS;
+    super->data_start_lba = 1 + LAINFS_DIR_BLOCKS;
+    super->max_files = LAINFS_MAX_FILES;
+
+    if (storage_write_partition(partition_index, 0, 1, sector) != 0) {
+        return -5;
+    }
+
+    mem_zero(directory, sizeof(directory));
+    if (storage_write_partition(partition_index, super->dir_start_lba, super->dir_blocks, directory) != 0) {
+        return -5;
+    }
+
+    storage_discover_partitions();
+    return 0;
+}
+
 static int read_super(uint32_t partition_index, lainfs_superblock_t *super) {
     if (storage_read_partition(partition_index, 0, 1, super) != 0) {
         return -1;
@@ -319,36 +354,52 @@ int lainfs_format(char drive_letter) {
         return -1;
     }
 
-    const partition_t *part = storage_get_partition(mount->partition_index);
-    if (!part || part->block_count < 64u) {
+    return format_partition_index(mount->partition_index);
+}
+
+int lainfs_format_partition(const char *partition_name) {
+    uint32_t partition_index = 0;
+
+    if (!storage_find_partition(partition_name, &partition_index)) {
+        return -1;
+    }
+
+    return format_partition_index(partition_index);
+}
+
+int lainfs_format_block_device(const char *device_name, char *out_partition_name, uint32_t out_partition_name_size) {
+    uint32_t device_index = 0;
+    uint32_t partition_index = 0;
+    const block_device_t *dev = storage_find_block_device(device_name, &device_index);
+    const partition_t *part;
+
+    if (out_partition_name && out_partition_name_size > 0) {
+        out_partition_name[0] = '\0';
+    }
+
+    if (!dev) {
+        return -1;
+    }
+
+    if (storage_create_mbr_partition(device_index, 0x99u, &partition_index) != 0) {
         return -2;
     }
 
-    if (!storage_partition_is_writable(mount->partition_index)) {
-        return -4;
+    part = storage_get_partition(partition_index);
+    if (!part) {
+        return -3;
     }
 
-    mem_zero(sector, sizeof(sector));
-    lainfs_superblock_t *super = (lainfs_superblock_t *)sector;
-    super->magic0 = LAINFS_MAGIC0;
-    super->magic1 = LAINFS_MAGIC1;
-    super->version = 1;
-    super->block_size = LAINFS_BLOCK_SIZE;
-    super->dir_start_lba = 1;
-    super->dir_blocks = LAINFS_DIR_BLOCKS;
-    super->data_start_lba = 1 + LAINFS_DIR_BLOCKS;
-    super->max_files = LAINFS_MAX_FILES;
-
-    if (storage_write_partition(mount->partition_index, 0, 1, sector) != 0) {
-        return -5;
+    if (out_partition_name && out_partition_name_size > 0) {
+        uint32_t i = 0;
+        while (part->name[i] && i + 1 < out_partition_name_size) {
+            out_partition_name[i] = part->name[i];
+            ++i;
+        }
+        out_partition_name[i] = '\0';
     }
 
-    mem_zero(directory, sizeof(directory));
-    if (storage_write_partition(mount->partition_index, super->dir_start_lba, super->dir_blocks, directory) != 0) {
-        return -5;
-    }
-
-    return 0;
+    return format_partition_index(partition_index);
 }
 
 int lainfs_list(char drive_letter) {
