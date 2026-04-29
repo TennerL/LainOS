@@ -1,0 +1,17 @@
+uint32_t add_bytes(uint8_t a, uint8_t b) {
+    uint32_t total = a + b;
+    return total;
+}
+
+uint8_t small = 255;
+int8_t signed_small = 255;
+
+print("small=");
+print(small);
+print("\n");
+
+print("signed_small=");
+print(signed_small);
+print("\n");
+
+return add_bytes(10, small);

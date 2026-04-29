@@ -1,0 +1,23 @@
+uint64_t raw = 255;
+uint32_t big = 0xFFFFFFFF;
+int total = 0;
+uint8_t *p = (uint8_t *)&raw;
+
+if ((uint8_t)raw == 255) {
+    total = total + 1;
+}
+
+if ((int8_t)raw < 0) {
+    total = total + 2;
+}
+
+if (big > 1) {
+    total = total + 4;
+}
+
+*p = 127;
+if (*p == 127) {
+    total = total + 8;
+}
+
+return total;

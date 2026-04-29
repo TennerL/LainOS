@@ -26,6 +26,7 @@ typedef struct {
     char label[ASM_LABEL_NAME_SIZE];
     asm_reg_t base;
     int32_t displacement;
+    int bits;
 } asm_mem_t;
 
 static int char_is_space(char ch) {
@@ -211,6 +212,14 @@ static int asm_register(const char *name, asm_reg_t *out) {
         "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
         "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
     };
+    static const char *const r16[] = {
+        "ax", "cx", "dx", "bx", "sp", "bp", "si", "di",
+        "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
+    };
+    static const char *const r8[] = {
+        "al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil",
+        "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
+    };
 
     for (int i = 0; i < 16; ++i) {
         if (streq(name, r64[i])) {
@@ -221,6 +230,16 @@ static int asm_register(const char *name, asm_reg_t *out) {
         if (streq(name, r32[i])) {
             out->code = i;
             out->bits = 32;
+            return 0;
+        }
+        if (streq(name, r16[i])) {
+            out->code = i;
+            out->bits = 16;
+            return 0;
+        }
+        if (streq(name, r8[i])) {
+            out->code = i;
+            out->bits = 8;
             return 0;
         }
     }
@@ -557,16 +576,40 @@ static int asm_split_three_args(char *args, char **first, char **second, char **
     return (**first != '\0' && **second != '\0' && **third != '\0') ? 0 : -1;
 }
 
-static int asm_parse_label_memory(const char *text, char *label, unsigned int label_size) {
+static const char *asm_parse_mem_size_prefix(const char *text, int *out_bits) {
+    const char *s = skip_const_spaces(text);
+
+    *out_bits = 0;
+    if (s[0] == 'b' && s[1] == 'y' && s[2] == 't' && s[3] == 'e' && char_is_space(s[4])) {
+        *out_bits = 8;
+        return skip_const_spaces(s + 4);
+    }
+
+    if (s[0] == 'w' && s[1] == 'o' && s[2] == 'r' && s[3] == 'd' && char_is_space(s[4])) {
+        *out_bits = 16;
+        return skip_const_spaces(s + 4);
+    }
+
+    if (s[0] == 'd' && s[1] == 'w' && s[2] == 'o' && s[3] == 'r' && s[4] == 'd' && char_is_space(s[5])) {
+        *out_bits = 32;
+        return skip_const_spaces(s + 5);
+    }
+
+    if (s[0] == 'q' && s[1] == 'w' && s[2] == 'o' && s[3] == 'r' && s[4] == 'd' && char_is_space(s[5])) {
+        *out_bits = 64;
+        return skip_const_spaces(s + 5);
+    }
+
+    return s;
+}
+
+static int asm_parse_label_memory(const char *text, char *label, unsigned int label_size, int *out_bits) {
     const char *s = skip_const_spaces(text);
     const char *start;
     const char *end;
     unsigned int len = 0;
 
-    if (s[0] == 'q' && s[1] == 'w' && s[2] == 'o' && s[3] == 'r' && s[4] == 'd' &&
-        char_is_space(s[5])) {
-        s = skip_const_spaces(s + 5);
-    }
+    s = asm_parse_mem_size_prefix(s, out_bits);
 
     if (*s != '[') {
         return -1;
@@ -634,11 +677,10 @@ static int asm_parse_memory_operand(const char *text, asm_mem_t *out) {
     char *op = 0;
     char reg_name[16];
     unsigned int reg_len = 0;
+    int bits = 0;
 
-    if (s[0] == 'q' && s[1] == 'w' && s[2] == 'o' && s[3] == 'r' && s[4] == 'd' &&
-        char_is_space(s[5])) {
-        s = skip_const_spaces(s + 5);
-    }
+    s = asm_parse_mem_size_prefix(s, &bits);
+    out->bits = bits;
 
     if (*s != '[') {
         return -1;
@@ -692,7 +734,7 @@ static int asm_parse_memory_operand(const char *text, asm_mem_t *out) {
         return asm_parse_signed_i32(op, &out->displacement);
     }
 
-    if (asm_parse_label_memory(text, out->label, sizeof(out->label)) == 0) {
+    if (asm_parse_label_memory(text, out->label, sizeof(out->label), &out->bits) == 0) {
         out->is_label = 1;
         out->displacement = 0;
         return 0;
@@ -731,10 +773,12 @@ static int asm_emit_mov_reg_mem_label(const assembler_context_t *ctx,
                                       uint32_t label_count,
                                       asm_reg_t dst,
                                       const char *label) {
+    int bits = dst.bits;
     uint32_t displacement = 0;
-    uint32_t next_offset = *offset + 7u;
+    uint32_t next_offset = *offset + ((bits == 16) ? 7u : 6u);
+    uint8_t opcode = (bits == 8) ? 0x8A : 0x8B;
 
-    if (dst.bits != 64) {
+    if (bits != 8 && bits != 16 && bits != 32 && bits != 64) {
         return -1;
     }
 
@@ -742,8 +786,9 @@ static int asm_emit_mov_reg_mem_label(const assembler_context_t *ctx,
         return -1;
     }
 
-    if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
-        asm_emit_byte(ctx, offset, emit, 0x8B) != 0 ||
+    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+        asm_emit_rex(ctx, offset, emit, bits == 64, dst.code, 0) != 0 ||
+        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
         asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
         return -1;
     }
@@ -756,12 +801,16 @@ static int asm_emit_mov_reg_mem_base(const assembler_context_t *ctx,
                                      int emit,
                                      asm_reg_t dst,
                                      asm_mem_t src) {
-    if (dst.bits != 64 || src.base.bits != 64) {
+    int bits = src.bits ? src.bits : dst.bits;
+    uint8_t opcode = (bits == 8) ? 0x8A : 0x8B;
+
+    if (src.base.bits != 64 || bits != dst.bits) {
         return -1;
     }
 
-    if (asm_emit_rex(ctx, offset, emit, 1, dst.code, src.base.code) != 0 ||
-        asm_emit_byte(ctx, offset, emit, 0x8B) != 0 ||
+    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+        asm_emit_rex(ctx, offset, emit, bits == 64, dst.code, src.base.code) != 0 ||
+        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
         asm_emit_modrm_base_disp32(ctx, offset, emit, dst.code, src.base, src.displacement) != 0) {
         return -1;
     }
@@ -776,10 +825,12 @@ static int asm_emit_mov_mem_label_reg(const assembler_context_t *ctx,
                                       uint32_t label_count,
                                       const char *label,
                                       asm_reg_t src) {
+    int bits = src.bits;
     uint32_t displacement = 0;
-    uint32_t next_offset = *offset + 7u;
+    uint32_t next_offset = *offset + ((bits == 16) ? 7u : 6u);
+    uint8_t opcode = (bits == 8) ? 0x88 : 0x89;
 
-    if (src.bits != 64) {
+    if (bits != 8 && bits != 16 && bits != 32 && bits != 64) {
         return -1;
     }
 
@@ -787,8 +838,9 @@ static int asm_emit_mov_mem_label_reg(const assembler_context_t *ctx,
         return -1;
     }
 
-    if (asm_emit_rex(ctx, offset, emit, 1, src.code, 0) != 0 ||
-        asm_emit_byte(ctx, offset, emit, 0x89) != 0 ||
+    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+        asm_emit_rex(ctx, offset, emit, bits == 64, src.code, 0) != 0 ||
+        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
         asm_emit_modrm_rip_relative(ctx, offset, emit, src.code, displacement) != 0) {
         return -1;
     }
@@ -801,12 +853,16 @@ static int asm_emit_mov_mem_base_reg(const assembler_context_t *ctx,
                                      int emit,
                                      asm_mem_t dst,
                                      asm_reg_t src) {
-    if (dst.base.bits != 64 || src.bits != 64) {
+    int bits = dst.bits ? dst.bits : src.bits;
+    uint8_t opcode = (bits == 8) ? 0x88 : 0x89;
+
+    if (dst.base.bits != 64 || bits != src.bits) {
         return -1;
     }
 
-    if (asm_emit_rex(ctx, offset, emit, 1, src.code, dst.base.code) != 0 ||
-        asm_emit_byte(ctx, offset, emit, 0x89) != 0 ||
+    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+        asm_emit_rex(ctx, offset, emit, bits == 64, src.code, dst.base.code) != 0 ||
+        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
         asm_emit_modrm_base_disp32(ctx, offset, emit, src.code, dst.base, dst.displacement) != 0) {
         return -1;
     }
@@ -820,11 +876,15 @@ static int asm_emit_mov_mem_label_imm(const assembler_context_t *ctx,
                                       const asm_label_t *labels,
                                       uint32_t label_count,
                                       const char *label,
+                                      asm_mem_t dst,
                                       uint64_t value) {
+    int bits = dst.bits ? dst.bits : 64;
     uint32_t displacement = 0;
-    uint32_t next_offset = *offset + 11u;
+    uint32_t next_offset = *offset + ((bits == 8) ? 6u : ((bits == 16) ? 8u : 10u));
 
-    if (value > 0xFFFFFFFFull) {
+    if ((bits == 8 && value > 0xFFull) ||
+        (bits == 16 && value > 0xFFFFull) ||
+        ((bits == 32 || bits == 64) && value > 0xFFFFFFFFull)) {
         return -1;
     }
 
@@ -832,10 +892,22 @@ static int asm_emit_mov_mem_label_imm(const assembler_context_t *ctx,
         return -1;
     }
 
-    if (asm_emit_rex(ctx, offset, emit, 1, 0, 0) != 0 ||
-        asm_emit_byte(ctx, offset, emit, 0xC7) != 0 ||
-        asm_emit_modrm_rip_relative(ctx, offset, emit, 0, displacement) != 0 ||
-        asm_emit_u32(ctx, offset, emit, (uint32_t)value) != 0) {
+    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+        asm_emit_rex(ctx, offset, emit, bits == 64, 0, 0) != 0 ||
+        asm_emit_byte(ctx, offset, emit, (bits == 8) ? 0xC6 : 0xC7) != 0 ||
+        asm_emit_modrm_rip_relative(ctx, offset, emit, 0, displacement) != 0) {
+        return -1;
+    }
+
+    if (bits == 8) {
+        return asm_emit_byte(ctx, offset, emit, (uint8_t)value);
+    }
+
+    if (bits == 16) {
+        return asm_emit_u16(ctx, offset, emit, (uint16_t)value);
+    }
+
+    if (asm_emit_u32(ctx, offset, emit, (uint32_t)value) != 0) {
         return -1;
     }
 
@@ -847,14 +919,31 @@ static int asm_emit_mov_mem_base_imm(const assembler_context_t *ctx,
                                      int emit,
                                      asm_mem_t dst,
                                      uint64_t value) {
-    if (dst.base.bits != 64 || value > 0xFFFFFFFFull) {
+    int bits = dst.bits ? dst.bits : 64;
+
+    if (dst.base.bits != 64 ||
+        (bits == 8 && value > 0xFFull) ||
+        (bits == 16 && value > 0xFFFFull) ||
+        ((bits == 32 || bits == 64) && value > 0xFFFFFFFFull)) {
         return -1;
     }
 
-    if (asm_emit_rex(ctx, offset, emit, 1, 0, dst.base.code) != 0 ||
-        asm_emit_byte(ctx, offset, emit, 0xC7) != 0 ||
-        asm_emit_modrm_base_disp32(ctx, offset, emit, 0, dst.base, dst.displacement) != 0 ||
-        asm_emit_u32(ctx, offset, emit, (uint32_t)value) != 0) {
+    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+        asm_emit_rex(ctx, offset, emit, bits == 64, 0, dst.base.code) != 0 ||
+        asm_emit_byte(ctx, offset, emit, (bits == 8) ? 0xC6 : 0xC7) != 0 ||
+        asm_emit_modrm_base_disp32(ctx, offset, emit, 0, dst.base, dst.displacement) != 0) {
+        return -1;
+    }
+
+    if (bits == 8) {
+        return asm_emit_byte(ctx, offset, emit, (uint8_t)value);
+    }
+
+    if (bits == 16) {
+        return asm_emit_u16(ctx, offset, emit, (uint16_t)value);
+    }
+
+    if (asm_emit_u32(ctx, offset, emit, (uint32_t)value) != 0) {
         return -1;
     }
 
@@ -1238,7 +1327,7 @@ static int asm_assemble_instruction(char *line,
             }
 
             if (dst_mem.is_label) {
-                return asm_emit_mov_mem_label_imm(ctx, offset, emit, labels, label_count, dst_mem.label, value);
+                return asm_emit_mov_mem_label_imm(ctx, offset, emit, labels, label_count, dst_mem.label, dst_mem, value);
             }
             return asm_emit_mov_mem_base_imm(ctx, offset, emit, dst_mem, value);
         }
@@ -1280,6 +1369,107 @@ static int asm_assemble_instruction(char *line,
             asm_emit_byte(ctx, offset, emit, (uint8_t)(0xB8 + (dst.code & 7))) != 0 ||
             asm_emit_u32(ctx, offset, emit, (uint32_t)value) != 0) {
             return -1;
+        }
+
+        return 0;
+    }
+
+    if (streq(line, "movzx") || streq(line, "movsx") || streq(line, "movsxd")) {
+        char *dst_text;
+        char *src_text;
+        asm_reg_t dst;
+        asm_mem_t src_mem;
+        uint8_t opcode2 = 0xB6;
+
+        if (asm_split_two_args(args, &dst_text, &src_text) != 0 ||
+            asm_register(dst_text, &dst) != 0 ||
+            asm_parse_memory_operand(src_text, &src_mem) != 0) {
+            return -1;
+        }
+
+        if (streq(line, "movzx")) {
+            if (dst.bits != 32 || (src_mem.bits != 8 && src_mem.bits != 16)) {
+                return -1;
+            }
+            opcode2 = (src_mem.bits == 8) ? 0xB6 : 0xB7;
+            if (src_mem.is_label) {
+                uint32_t displacement = 0;
+                uint32_t next_offset = *offset + 7u;
+
+                if (emit && asm_rip_relative_disp32(ctx, next_offset, labels, label_count, src_mem.label, &displacement) != 0) {
+                    return -1;
+                }
+
+                if (asm_emit_rex(ctx, offset, emit, 0, dst.code, 0) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
+                    asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
+                    return -1;
+                }
+            } else {
+                if (asm_emit_rex(ctx, offset, emit, 0, dst.code, src_mem.base.code) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
+                    asm_emit_modrm_base_disp32(ctx, offset, emit, dst.code, src_mem.base, src_mem.displacement) != 0) {
+                    return -1;
+                }
+            }
+            return 0;
+        }
+
+        if (streq(line, "movsx")) {
+            if (dst.bits != 64 || (src_mem.bits != 8 && src_mem.bits != 16)) {
+                return -1;
+            }
+            opcode2 = (src_mem.bits == 8) ? 0xBE : 0xBF;
+            if (src_mem.is_label) {
+                uint32_t displacement = 0;
+                uint32_t next_offset = *offset + 8u;
+
+                if (emit && asm_rip_relative_disp32(ctx, next_offset, labels, label_count, src_mem.label, &displacement) != 0) {
+                    return -1;
+                }
+
+                if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
+                    asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
+                    return -1;
+                }
+            } else {
+                if (asm_emit_rex(ctx, offset, emit, 1, dst.code, src_mem.base.code) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
+                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
+                    asm_emit_modrm_base_disp32(ctx, offset, emit, dst.code, src_mem.base, src_mem.displacement) != 0) {
+                    return -1;
+                }
+            }
+            return 0;
+        }
+
+        if (dst.bits != 64 || src_mem.bits != 32) {
+            return -1;
+        }
+
+        if (src_mem.is_label) {
+            uint32_t displacement = 0;
+            uint32_t next_offset = *offset + 7u;
+
+            if (emit && asm_rip_relative_disp32(ctx, next_offset, labels, label_count, src_mem.label, &displacement) != 0) {
+                return -1;
+            }
+
+            if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
+                asm_emit_byte(ctx, offset, emit, 0x63) != 0 ||
+                asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
+                return -1;
+            }
+        } else {
+            if (asm_emit_rex(ctx, offset, emit, 1, dst.code, src_mem.base.code) != 0 ||
+                asm_emit_byte(ctx, offset, emit, 0x63) != 0 ||
+                asm_emit_modrm_base_disp32(ctx, offset, emit, dst.code, src_mem.base, src_mem.displacement) != 0) {
+                return -1;
+            }
         }
 
         return 0;
@@ -1375,8 +1565,11 @@ static int asm_assemble_instruction(char *line,
             return asm_emit_reg_reg_op(ctx, offset, emit, opcode, dst.bits == 64, dst, src);
         }
 
-        if (asm_parse_label_memory(src_text, src_label, sizeof(src_label)) == 0) {
-            return asm_emit_reg_mem_label_op(ctx, offset, emit, labels, label_count, mem_opcode, dst, src_label);
+        {
+            int src_mem_bits = 0;
+            if (asm_parse_label_memory(src_text, src_label, sizeof(src_label), &src_mem_bits) == 0) {
+                return asm_emit_reg_mem_label_op(ctx, offset, emit, labels, label_count, mem_opcode, dst, src_label);
+            }
         }
 
         if (emit && asm_value(ctx, src_text, labels, label_count, &value) != 0) {
@@ -1428,6 +1621,40 @@ static int asm_assemble_instruction(char *line,
         if (asm_emit_rex(ctx, offset, emit, 1, 0, reg.code) != 0 ||
             asm_emit_byte(ctx, offset, emit, 0xF7) != 0 ||
             asm_emit_modrm_reg(ctx, offset, emit, 7, reg.code) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if (streq(line, "shl") || streq(line, "shr") || streq(line, "sar")) {
+        char *dst_text;
+        char *src_text;
+        asm_reg_t dst;
+        uint64_t value = 0;
+        int group = 4;
+
+        if (asm_split_two_args(args, &dst_text, &src_text) != 0 ||
+            asm_register(dst_text, &dst) != 0) {
+            return -1;
+        }
+
+        if (emit && asm_value(ctx, src_text, labels, label_count, &value) != 0) {
+            return -1;
+        }
+
+        if (value > 255ull) {
+            return -1;
+        }
+
+        if (streq(line, "shl")) group = 4;
+        if (streq(line, "shr")) group = 5;
+        if (streq(line, "sar")) group = 7;
+
+        if (asm_emit_rex(ctx, offset, emit, dst.bits == 64, 0, dst.code) != 0 ||
+            asm_emit_byte(ctx, offset, emit, 0xC1) != 0 ||
+            asm_emit_modrm_reg(ctx, offset, emit, group, dst.code) != 0 ||
+            asm_emit_byte(ctx, offset, emit, (uint8_t)value) != 0) {
             return -1;
         }
 

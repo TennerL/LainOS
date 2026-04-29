@@ -1,0 +1,31 @@
+struct Inner {
+    uint8_t x;
+    uint16_t y;
+};
+
+struct Outer {
+    uint8_t tag;
+    struct Inner inner;
+    struct Inner *ptr;
+};
+
+struct Outer o;
+struct Inner i;
+struct Outer *op = &o;
+
+o.tag = 5;
+o.inner.x = 7;
+o.inner.y = 300;
+o.ptr = &i;
+o.ptr->x = o.inner.x + 1;
+op->inner.y += o.ptr->x;
+
+print("tag=");
+print(o.tag);
+print("\n");
+
+print("inner.y=");
+print(op->inner.y);
+print("\n");
+
+return o.inner.x + o.ptr->x;

@@ -1,0 +1,32 @@
+struct Header {
+    uint8_t tag;
+    uint16_t count;
+    uint32_t size;
+};
+
+struct Header h;
+struct Header *p = &h;
+uint16_t *cp = &p->count;
+
+p->tag = 3;
+p->count = 10;
+p->count += 5;
+*cp = *cp + 1;
+
+if (p->count == 16) {
+    p->size = 0x1234;
+}
+
+print("tag=");
+print(p->tag);
+print("\n");
+
+print("count=");
+print(p->count);
+print("\n");
+
+print("size=");
+print_hex(p->size);
+print("\n");
+
+return p->tag + p->count + p->size;

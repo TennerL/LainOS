@@ -1,0 +1,31 @@
+struct Header {
+    uint8_t tag;
+    uint16_t count;
+    uint32_t size;
+    uint64_t addr;
+};
+
+struct Header h;
+
+h.tag = 255;
+h.count = 0x1234;
+h.size = 0x89ABCDEF;
+h.addr = 0x1122334455667788;
+
+print("tag=");
+print(h.tag);
+print("\n");
+
+print("count=");
+print(h.count);
+print("\n");
+
+print("size=");
+print_hex(h.size);
+print("\n");
+
+print("addr=");
+print_hex(h.addr);
+print("\n");
+
+return h.tag + h.count;

@@ -480,6 +480,9 @@ building blocks:
 - data movement: `mov r64, imm64`, `mov r32, imm32`, `mov reg, reg`,
   `mov r64, [label]`, `mov r64, [rbp-8]`, `mov [label], r64`,
   `mov [rbp-8], r64`, `mov qword [label], imm32`, `mov qword [rbp-8], imm32`,
+  sized memory forms such as `movzx eax, byte [rbp-1]`, `movsx rax, word [rbp-3]`,
+  `mov eax, dword [rbp-7]`, `mov byte [rbp-1], al`, `mov word [rbp-3], ax`,
+  and `mov dword [rbp-7], eax`,
   `push r64`, `pop r64`
 - arithmetic and logic: `add`, `sub`, `imul`, `cmp`, `and`, `or`, `xor`,
   `test`, `inc`, `dec`; `add/sub/cmp/and/or/xor/test` support `r64, [label]`;
@@ -496,8 +499,10 @@ building blocks:
   `set_margin`, and `statusbar_enable`
 
 Memory operands currently support:
-- RIP-relative label forms such as `[counter]` and `qword [counter]`
-- simple base-plus-displacement forms such as `[rbp-8]`, `[rsp+16]`, and `[rax]`
+- RIP-relative label forms such as `[counter]` and sized forms such as
+  `byte [counter]`, `word [counter]`, `dword [counter]`, `qword [counter]`
+- simple base-plus-displacement forms such as `[rbp-8]`, `[rsp+16]`, and `[rax]`,
+  with optional `byte` / `word` / `dword` / `qword` prefixes
 
 Scaled index forms such as `[rdi + rax * 8]` are not implemented yet.
 
@@ -527,6 +532,10 @@ Current workflow:
 
 Supported `.Z` subset:
 - integer variables: `int counter;`, `int total = 3;`
+- explicit global storage declarations before functions/top-level statements:
+  `global uint64_t counter = 5;`, `global int values[4];`
+- fixed-width scalar integer variables and parameters such as `uint8_t`, `int8_t`,
+  `uint16_t`, `int16_t`, `uint32_t`, `int32_t`, `uint64_t`, `int64_t`
 - integer and void functions with up to 6 parameters:
   `int add(int a, int b) { return a + b; }`
   `void line(void) { print("\n"); return; }`
@@ -543,8 +552,11 @@ Supported `.Z` subset:
   `++`, `--`
 - arithmetic expressions: `+`, `-`, `*`, `/`, `%`, unary `-`, parentheses,
   decimal and `0x` literals
+- scalar casts such as `(uint8_t)value`, `(int16_t)value`, `(uint64_t)value`,
+  and pointer casts such as `(uint8_t *)ptr`
 - comparisons and boolean expressions: `==`, `!=`, `<`, `<=`, `>`, `>=`,
-  `&&`, `||`, `!`
+  `&&`, `||`, `!`; `<`, `<=`, `>`, `>=` now use unsigned jumps when the
+  comparison operands resolve to an unsigned scalar type
 - control flow: `if`, `else`, `while`, `for`, `do ... while`, `break`, `continue`
 - returns: `return expr;` and `return;`
 - function calls inside expressions: `print(add(2, 3));`
@@ -561,6 +573,11 @@ Supported `.Z` subset:
   - declare a local struct variable: `struct Point p;`
   - read a field: `print(p.x);`
   - write a field: `p.y = 42;`
+  - pointer-to-struct field access: `p->x`, `p->y = 42;`, `p->count += 1;`
+  - nested field chains such as `outer.inner.x`, `outer.ptr->x`, and
+    `outer_ptr->inner.y += 1;`
+  - mixed-width fixed-layout fields such as `uint8_t`, `uint16_t`, `uint32_t`,
+    `uint64_t`, and pointer fields inside structs
 - builtin calls:
   - `print("text");`
   - `print(expr);` for decimal output
@@ -598,11 +615,24 @@ implemented yet. Current pointer support is intentionally narrow:
 address-of only works on stack-backed locals/parameters, dereference is scalar-only,
 and there is no pointer arithmetic beyond treating pointers as raw integers in
 normal expressions. Current array support is also narrow: arrays are fixed-size
-stack-backed `int` arrays, brace initialization is limited to flat element lists,
+stack-backed arrays with 8 byte slots, brace initialization is limited to flat element lists,
 multidimensional arrays currently use chained local-array indexing only, and
-current struct support is also narrow: structs must be declared at top level,
-their fields are `int`-only, struct variables are local stack-backed values, and
-there is no `->`, struct return, or struct-parameter support yet.
+current struct support is still incomplete: structs must be declared at top level,
+there is no struct return or struct-parameter support yet, and whole-struct
+assignment/value passing remains minimal. Mixed-width scalar, pointer, and nested
+struct fields now use packed offsets and width-correct memory access, so layouts such as
+`uint8_t` + `uint16_t` + `uint32_t` + `uint64_t` no longer collapse into
+8-byte `int` slots. `.` and `->` can now be chained through nested struct fields.
+Explicit `global` declarations emit real labels in the generated data section,
+and functions/top-level code can read, write, index, take addresses of, and use
+compound updates on those globals. Global initializers are still intentionally
+limited to numeric scalar constants; arrays and structs are zero-initialized.
+
+Fixed-width scalar support is still partial: `.Z` now preserves truncation
+and sign/zero-extension for scalar locals, parameters, indexed local-array
+elements, mixed-width struct fields, and explicit scalar casts. Basic unsigned
+comparison semantics are now wired into relational operators, but `.Z` still
+does not provide whole-struct assignment, struct parameters, or struct returns.
 
 ## Timer
 

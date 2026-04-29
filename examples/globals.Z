@@ -1,0 +1,21 @@
+global uint64_t counter = 5;
+global uint8_t flag = 1;
+global int values[4];
+
+int bump(int amount) {
+    counter += amount;
+    values[0] = counter;
+    values[1] = values[0] + flag;
+    return values[1];
+}
+
+print("counter=");
+print(bump(7));
+print("\n");
+
+flag++;
+print("flag=");
+print(flag);
+print("\n");
+
+return counter + flag;
