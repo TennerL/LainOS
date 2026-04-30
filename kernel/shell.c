@@ -8,6 +8,7 @@
 #include "lainfs.h"
 #include "shell.h"
 #include "storage.h"
+#include "zobject.h"
 #include "zscript.h"
 
 #define MAX_DRIVES 26
@@ -19,6 +20,10 @@
 #define ASM_SOURCE_SIZE LAINFS_FILE_CAPACITY
 #define SHELL_PATH_SIZE 128u
 #define SHELL_MAX_SESSIONS 2u
+#define ZLINK_MAX_OBJECTS 4u
+#define ZMODULE_MAX_MODULES 4u
+#define ZMODULE_MAX_EXPORTS 16u
+#define ZMODULE_NAME_SIZE 32u
 
 static int script_depth;
 static char script_buffers[SCRIPT_MAX_DEPTH][SCRIPT_BUFFER_SIZE + 1];
@@ -26,6 +31,17 @@ static unsigned char exec_buffer[EXEC_BUFFER_SIZE] __attribute__((aligned(16)));
 static unsigned char asm_output[EXEC_BUFFER_SIZE];
 static char zscript_output[ASM_SOURCE_SIZE + 1];
 
+typedef struct {
+    int loaded;
+    char name[ZMODULE_NAME_SIZE];
+    unsigned char image[EXEC_BUFFER_SIZE] __attribute__((aligned(16)));
+    uint32_t image_size;
+    uint32_t object_count;
+    uint32_t export_count;
+    zobject_resolved_symbol_t exports[ZMODULE_MAX_EXPORTS];
+} zmodule_slot_t;
+
+static zmodule_slot_t zmodule_slots[ZMODULE_MAX_MODULES];
 
 typedef void (*command_handler_t)(const char *args, const boot_info_t *info);
 
@@ -149,6 +165,37 @@ static char to_upper(char c) {
     return c;
 }
 
+static char hex_digit(unsigned int value) {
+    value &= 0xFu;
+    if (value < 10u) {
+        return (char)('0' + value);
+    }
+    return (char)('a' + (value - 10u));
+}
+
+static void make_zobject_prefix(const char *name, char *out, uint32_t out_capacity) {
+    uint32_t hash = 0x811u;
+
+    while (*name) {
+        hash = ((hash << 5) ^ (hash >> 2) ^ (unsigned char)*name) & 0xFFFu;
+        ++name;
+    }
+
+    if (out_capacity < 6u) {
+        if (out_capacity != 0) {
+            out[0] = '\0';
+        }
+        return;
+    }
+
+    out[0] = 'o';
+    out[1] = hex_digit(hash >> 8);
+    out[2] = hex_digit(hash >> 4);
+    out[3] = hex_digit(hash);
+    out[4] = '_';
+    out[5] = '\0';
+}
+
 static int parse_drive_spec(const char *s) {
     s = skip_const_spaces(s);
 
@@ -196,6 +243,21 @@ static void copy_label(char *dst, const char *src) {
     unsigned int i = 0;
 
     while (src[i] && i < 11) {
+        dst[i] = src[i];
+        ++i;
+    }
+
+    dst[i] = '\0';
+}
+
+static void copy_text_limited(char *dst, uint32_t dst_size, const char *src) {
+    uint32_t i = 0;
+
+    if (dst_size == 0) {
+        return;
+    }
+
+    while (src[i] && i + 1u < dst_size) {
         dst[i] = src[i];
         ++i;
     }
@@ -395,6 +457,10 @@ static void cmd_run(const char *args, const boot_info_t *info);
 static void cmd_exec(const char *args, const boot_info_t *info);
 static void cmd_asm(const char *args, const boot_info_t *info);
 static void cmd_zc(const char *args, const boot_info_t *info);
+static void cmd_zco(const char *args, const boot_info_t *info);
+static void cmd_zlink(const char *args, const boot_info_t *info);
+static void cmd_zmod(const char *args, const boot_info_t *info);
+static void cmd_zmods(const char *args, const boot_info_t *info);
 static void cmd_zrun(const char *args, const boot_info_t *info);
 static void cmd_zasm(const char *args, const boot_info_t *info);
 static void cmd_keymap(const char *args, const boot_info_t *info);
@@ -431,6 +497,10 @@ static const command_t commands[] = {
     { "exec",    "run a flat binary file",     cmd_exec },
     { "asm",     "assemble a tiny asm file",   cmd_asm },
     { "zc",      "compile a tiny .Z file",     cmd_zc },
+    { "zco",     "compile .Z to a .zo object", cmd_zco },
+    { "zlink",   "link a .zo object",          cmd_zlink },
+    { "zmod",    "load and run .zo module(s)",  cmd_zmod },
+    { "zmods",   "list loaded .zo modules",     cmd_zmods },
     { "zrun",    "compile and run a .Z file",  cmd_zrun },
     { "zasm",    "dump generated asm for a .Z file", cmd_zasm },
 };
@@ -1559,6 +1629,450 @@ static void cmd_zc(const char *args, const boot_info_t *info) {
     console_puts(" bytes=");
     console_put_dec64(output_size);
     console_puts("\n");
+}
+
+static void cmd_zco(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char source[ASM_SOURCE_SIZE + 1];
+    uint32_t source_size = 0;
+    uint32_t asm_size = 0;
+    uint32_t object_size = 0;
+    uint32_t compile_error_line = 0;
+    char entry_label[32];
+    char label_prefix[8];
+    char *mutable_args = (char *)args;
+    char *source_name = 0;
+    char *output_name = 0;
+    int drive = active_drive();
+    int status = 0;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    split_first_arg(mutable_args, &source_name, &output_name);
+    if (*source_name == '\0' || *output_name == '\0') {
+        console_puts("usage: zco source.Z output.zo\n");
+        return;
+    }
+
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     source_name,
+                                     source,
+                                     ASM_SOURCE_SIZE,
+                                     &source_size);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts(".Z source not found\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zco failed: could not load source\n");
+        return;
+    }
+
+    source[source_size] = '\0';
+    zero_memory(zscript_output, sizeof(zscript_output));
+    make_zobject_prefix(output_name, label_prefix, sizeof(label_prefix));
+    if (zscript_compile_source_object(source,
+                                      source_size,
+                                      label_prefix,
+                                      zscript_output,
+                                      ASM_SOURCE_SIZE,
+                                      &asm_size,
+                                      &compile_error_line,
+                                      entry_label,
+                                      sizeof(entry_label)) != 0) {
+        console_puts("zco failed: unsupported .Z syntax");
+        if (compile_error_line != 0) {
+            console_puts(" on line ");
+            console_put_dec64(compile_error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+    zscript_output[asm_size] = '\0';
+
+    zero_memory(asm_output, EXEC_BUFFER_SIZE);
+    if (zobject_from_asm(zscript_output,
+                         asm_size,
+                         entry_label,
+                         asm_output,
+                         EXEC_BUFFER_SIZE,
+                         &object_size) != 0) {
+        console_puts("zco failed: object is too large\n");
+        return;
+    }
+
+    status = lainfs_save_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     output_name,
+                                     (const char *)asm_output,
+                                     object_size);
+    if (status == -9) {
+        console_puts("zco failed: disk is full\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zco failed: could not save output\n");
+        return;
+    }
+
+    console_puts("compiled object ");
+    console_puts(output_name);
+    console_puts(" bytes=");
+    console_put_dec64(object_size);
+    console_puts("\n");
+}
+
+static void cmd_zlink(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    const unsigned char *objects[ZLINK_MAX_OBJECTS];
+    uint32_t object_sizes[ZLINK_MAX_OBJECTS];
+    uint32_t object_count = 0;
+    uint32_t object_offset = 0;
+    uint32_t output_size = 0;
+    uint32_t error_line = 0;
+    char *mutable_args = (char *)args;
+    char *tokens[ZLINK_MAX_OBJECTS + 1u];
+    uint32_t token_count = 0;
+    char *output_name = 0;
+    int drive = active_drive();
+    int status = 0;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    mutable_args = skip_spaces(mutable_args);
+    while (*mutable_args != '\0') {
+        if (token_count >= ZLINK_MAX_OBJECTS + 1u) {
+            console_puts("usage: zlink input.zo [more.zo ...] output.bin\n");
+            return;
+        }
+
+        tokens[token_count++] = mutable_args;
+        while (*mutable_args && *mutable_args != ' ' && *mutable_args != '\t') {
+            ++mutable_args;
+        }
+        if (*mutable_args != '\0') {
+            *mutable_args++ = '\0';
+            mutable_args = skip_spaces(mutable_args);
+        }
+    }
+
+    if (token_count < 2u) {
+        console_puts("usage: zlink input.zo [more.zo ...] output.bin\n");
+        return;
+    }
+
+    output_name = tokens[token_count - 1u];
+    zero_memory(asm_output, EXEC_BUFFER_SIZE);
+
+    for (uint32_t i = 0; i + 1u < token_count; ++i) {
+        uint32_t remaining = EXEC_BUFFER_SIZE - object_offset;
+
+        objects[object_count] = asm_output + object_offset;
+        status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         cwd_dirs[drive],
+                                         tokens[i],
+                                         (char *)(asm_output + object_offset),
+                                         remaining,
+                                         &object_sizes[object_count]);
+        if (status == -3) {
+            console_puts("drive is not formatted as lainfs\n");
+            return;
+        }
+        if (status == -5) {
+            console_puts(".zo object not found: ");
+            console_puts(tokens[i]);
+            console_puts("\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("zlink failed: could not load object\n");
+            return;
+        }
+
+        object_offset += object_sizes[object_count];
+        ++object_count;
+    }
+
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    if (zobject_link_flat_many(objects,
+                               object_sizes,
+                               object_count,
+                               exec_buffer,
+                               EXEC_BUFFER_SIZE,
+                               (uint64_t)(uintptr_t)exec_buffer,
+                               &output_size,
+                               &error_line) != 0) {
+        console_puts("zlink failed: unsupported object");
+        if (error_line != 0) {
+            console_puts(" asm line ");
+            console_put_dec64(error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+
+    status = lainfs_save_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     output_name,
+                                     (const char *)exec_buffer,
+                                     output_size);
+    if (status == -9) {
+        console_puts("zlink failed: disk is full\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zlink failed: could not save output\n");
+        return;
+    }
+
+    console_puts("linked ");
+    console_put_dec64(object_count);
+    console_puts(" object(s)");
+    console_puts(" to ");
+    console_puts(output_name);
+    console_puts(" bytes=");
+    console_put_dec64(output_size);
+    console_puts("\n");
+}
+
+static int zmodule_find_free_slot(void) {
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            return (int)i;
+        }
+    }
+
+    return -1;
+}
+
+static int zmodule_collect_exports(zobject_resolved_symbol_t *symbols,
+                                   uint32_t capacity,
+                                   uint32_t *out_count) {
+    uint32_t count = 0;
+
+    if (symbols == 0 || out_count == 0) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+
+        for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+            if (count >= capacity) {
+                return -1;
+            }
+
+            symbols[count++] = zmodule_slots[i].exports[j];
+        }
+    }
+
+    *out_count = count;
+    return 0;
+}
+
+static void cmd_zmod(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    const unsigned char *objects[ZLINK_MAX_OBJECTS];
+    uint32_t object_sizes[ZLINK_MAX_OBJECTS];
+    uint32_t object_count = 0;
+    uint32_t object_offset = 0;
+    uint32_t output_size = 0;
+    uint32_t error_line = 0;
+    uint32_t resident_symbol_count = 0;
+    uint32_t export_symbol_count = 0;
+    char *mutable_args = (char *)args;
+    char *tokens[ZLINK_MAX_OBJECTS];
+    uint32_t token_count = 0;
+    int slot_index = -1;
+    int drive = active_drive();
+    int status = 0;
+    zobject_resolved_symbol_t resident_symbols[ZOBJECT_MAX_RESOLVED_SYMBOLS];
+    zobject_resolved_symbol_t export_symbols[ZMODULE_MAX_EXPORTS];
+
+    static const exec_api_t api = {
+        EXEC_API_MAGIC,
+        1,
+        console_puts,
+        console_put_hex64,
+        console_put_dec64,
+        timer_ticks,
+    };
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    mutable_args = skip_spaces(mutable_args);
+    while (*mutable_args != '\0') {
+        if (token_count >= ZLINK_MAX_OBJECTS) {
+            console_puts("usage: zmod input.zo [more.zo ...]\n");
+            return;
+        }
+
+        tokens[token_count++] = mutable_args;
+        while (*mutable_args && *mutable_args != ' ' && *mutable_args != '\t') {
+            ++mutable_args;
+        }
+        if (*mutable_args != '\0') {
+            *mutable_args++ = '\0';
+            mutable_args = skip_spaces(mutable_args);
+        }
+    }
+
+    if (token_count == 0) {
+        console_puts("usage: zmod input.zo [more.zo ...]\n");
+        return;
+    }
+
+    slot_index = zmodule_find_free_slot();
+    if (slot_index < 0) {
+        console_puts("zmod failed: no free resident module slots\n");
+        return;
+    }
+
+    if (zmodule_collect_exports(resident_symbols,
+                                ZOBJECT_MAX_RESOLVED_SYMBOLS,
+                                &resident_symbol_count) != 0) {
+        console_puts("zmod failed: resident symbol table is full\n");
+        return;
+    }
+
+    zero_memory(asm_output, EXEC_BUFFER_SIZE);
+    for (uint32_t i = 0; i < token_count; ++i) {
+        uint32_t remaining = EXEC_BUFFER_SIZE - object_offset;
+
+        objects[object_count] = asm_output + object_offset;
+        status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         cwd_dirs[drive],
+                                         tokens[i],
+                                         (char *)(asm_output + object_offset),
+                                         remaining,
+                                         &object_sizes[object_count]);
+        if (status == -3) {
+            console_puts("drive is not formatted as lainfs\n");
+            return;
+        }
+        if (status == -5) {
+            console_puts(".zo module not found: ");
+            console_puts(tokens[i]);
+            console_puts("\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("zmod failed: could not load module\n");
+            return;
+        }
+
+        object_offset += object_sizes[object_count];
+        ++object_count;
+    }
+
+    zero_memory(zmodule_slots[slot_index].image, EXEC_BUFFER_SIZE);
+    if (zobject_link_flat_many_ex(objects,
+                                  object_sizes,
+                                  object_count,
+                                  zmodule_slots[slot_index].image,
+                                  EXEC_BUFFER_SIZE,
+                                  (uint64_t)(uintptr_t)zmodule_slots[slot_index].image,
+                                  &output_size,
+                                  &error_line,
+                                  resident_symbols,
+                                  resident_symbol_count,
+                                  export_symbols,
+                                  ZMODULE_MAX_EXPORTS,
+                                  &export_symbol_count) != 0) {
+        console_puts("zmod failed: unresolved or unsupported module");
+        if (error_line != 0) {
+            console_puts(" asm line ");
+            console_put_dec64(error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+
+    zmodule_slots[slot_index].loaded = 1;
+    zmodule_slots[slot_index].image_size = output_size;
+    zmodule_slots[slot_index].object_count = object_count;
+    zmodule_slots[slot_index].export_count = export_symbol_count;
+    copy_text_limited(zmodule_slots[slot_index].name,
+                      sizeof(zmodule_slots[slot_index].name),
+                      tokens[0]);
+    for (uint32_t i = 0; i < export_symbol_count; ++i) {
+        zmodule_slots[slot_index].exports[i] = export_symbols[i];
+    }
+
+    console_puts("loading ");
+    console_put_dec64(object_count);
+    console_puts(" module object(s) in slot ");
+    console_put_dec64((uint32_t)slot_index);
+    console_puts(" at 0x");
+    console_put_hex64((uint64_t)(uintptr_t)zmodule_slots[slot_index].image);
+    console_puts(" bytes=");
+    console_put_dec64(output_size);
+    console_puts(" exports=");
+    console_put_dec64(export_symbol_count);
+    console_puts("\n");
+
+    ((exec_program_t)(uintptr_t)zmodule_slots[slot_index].image)(&api);
+
+    console_puts("\nmodule resident\n");
+}
+
+static void cmd_zmods(const char *args, const boot_info_t *info) {
+    (void)args;
+    (void)info;
+
+    int any = 0;
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+
+        any = 1;
+        console_puts("#");
+        console_put_dec64(i);
+        console_puts(" ");
+        console_puts(zmodule_slots[i].name);
+        console_puts(" base=0x");
+        console_put_hex64((uint64_t)(uintptr_t)zmodule_slots[i].image);
+        console_puts(" bytes=");
+        console_put_dec64(zmodule_slots[i].image_size);
+        console_puts(" objects=");
+        console_put_dec64(zmodule_slots[i].object_count);
+        console_puts(" exports=");
+        console_put_dec64(zmodule_slots[i].export_count);
+        console_puts("\n");
+
+        for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+            console_puts("  ");
+            console_puts(zmodule_slots[i].exports[j].name);
+            console_puts(" = 0x");
+            console_put_hex64(zmodule_slots[i].exports[j].value);
+            console_puts("\n");
+        }
+    }
+
+    if (!any) {
+        console_puts("no resident modules\n");
+    }
 }
 
 static void cmd_zrun(const char *args, const boot_info_t *info) {

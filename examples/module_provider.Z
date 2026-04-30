@@ -1,0 +1,5 @@
+export int add_bonus(int value) {
+    return value + 7;
+}
+
+return 0;

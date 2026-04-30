@@ -2,8 +2,8 @@
 #include "kernel.h"
 
 #define ASM_LINE_SIZE 128u
-#define ASM_MAX_LABELS 32u
-#define ASM_LABEL_NAME_SIZE 24u
+#define ASM_MAX_LABELS 96u
+#define ASM_LABEL_NAME_SIZE 40u
 
 typedef struct {
     char name[ASM_LABEL_NAME_SIZE];
@@ -14,6 +14,8 @@ typedef struct {
     unsigned char *out;
     uint32_t out_capacity;
     uint64_t base_address;
+    const assembler_symbol_t *external_symbols;
+    uint32_t external_symbol_count;
 } assembler_context_t;
 
 typedef struct {
@@ -247,7 +249,7 @@ static int asm_register(const char *name, asm_reg_t *out) {
     return -1;
 }
 
-static int asm_symbol_value(const char *name, uint64_t *out) {
+int assembler_symbol_value(const char *name, uint64_t *out) {
     if (streq(name, "puts")) {
         *out = (uint64_t)(uintptr_t)console_puts;
         return 0;
@@ -341,6 +343,24 @@ static int asm_symbol_value(const char *name, uint64_t *out) {
     return -1;
 }
 
+static int asm_external_symbol_value(const assembler_context_t *ctx, const char *name, uint64_t *out) {
+    uint32_t i;
+
+    if (ctx == 0 || name == 0 || out == 0) {
+        return -1;
+    }
+
+    for (i = 0; i < ctx->external_symbol_count; ++i) {
+        if (ctx->external_symbols[i].name != 0 &&
+            streq(ctx->external_symbols[i].name, name)) {
+            *out = ctx->external_symbols[i].value;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 static int asm_value(const assembler_context_t *ctx,
                      const char *s,
                      const asm_label_t *labels,
@@ -353,12 +373,13 @@ static int asm_value(const assembler_context_t *ctx,
         return 0;
     }
 
-    if (asm_symbol_value(s, out) == 0) {
+    if (asm_find_label(labels, label_count, s, &label_offset) == 0) {
+        *out = ctx->base_address + label_offset;
         return 0;
     }
 
-    if (asm_find_label(labels, label_count, s, &label_offset) == 0) {
-        *out = ctx->base_address + label_offset;
+    if (asm_external_symbol_value(ctx, s, out) == 0 ||
+        assembler_symbol_value(s, out) == 0) {
         return 0;
     }
 
@@ -1009,6 +1030,7 @@ static int asm_emit_call_jmp_target(const assembler_context_t *ctx,
                                     uint8_t rel_opcode,
                                     int reg_group) {
     asm_reg_t reg;
+    uint64_t symbol_value = 0;
 
     if (asm_register(target, &reg) == 0) {
         if (reg.bits != 64) {
@@ -1018,6 +1040,20 @@ static int asm_emit_call_jmp_target(const assembler_context_t *ctx,
         if (asm_emit_rex(ctx, offset, emit, 1, 0, reg.code) != 0 ||
             asm_emit_byte(ctx, offset, emit, 0xFF) != 0 ||
             asm_emit_modrm_reg(ctx, offset, emit, reg_group, reg.code) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    if (asm_external_symbol_value(ctx, target, &symbol_value) == 0 ||
+        assembler_symbol_value(target, &symbol_value) == 0) {
+        if (asm_emit_rex(ctx, offset, emit, 1, 0, 0) != 0 ||
+            asm_emit_byte(ctx, offset, emit, 0xB8) != 0 ||
+            asm_emit_u64(ctx, offset, emit, symbol_value) != 0 ||
+            asm_emit_rex(ctx, offset, emit, 1, 0, 0) != 0 ||
+            asm_emit_byte(ctx, offset, emit, 0xFF) != 0 ||
+            asm_emit_modrm_reg(ctx, offset, emit, reg_group, 0) != 0) {
             return -1;
         }
 
@@ -1824,10 +1860,38 @@ int assembler_assemble_source_ex(const char *source,
                                  uint64_t base_address,
                                  uint32_t *out_size,
                                  uint32_t *error_line) {
+    return assembler_assemble_source_ex_symbols(source,
+                                                size,
+                                                out,
+                                                out_capacity,
+                                                base_address,
+                                                out_size,
+                                                error_line,
+                                                0,
+                                                0,
+                                                0,
+                                                0,
+                                                0);
+}
+
+int assembler_assemble_source_ex_symbols(const char *source,
+                                         uint32_t size,
+                                         unsigned char *out,
+                                         uint32_t out_capacity,
+                                         uint64_t base_address,
+                                         uint32_t *out_size,
+                                         uint32_t *error_line,
+                                         const assembler_symbol_t *external_symbols,
+                                         uint32_t external_symbol_count,
+                                         const char *const *export_names,
+                                         uint64_t *export_values,
+                                         uint32_t export_count) {
     assembler_context_t ctx = {
         out,
         out_capacity,
         base_address,
+        external_symbols,
+        external_symbol_count,
     };
     asm_label_t labels[ASM_MAX_LABELS];
     uint32_t label_count = 0;
@@ -1850,6 +1914,18 @@ int assembler_assemble_source_ex(const char *source,
             if (error_line) {
                 *error_line = line_number;
             }
+            return -1;
+        }
+    }
+
+    if ((export_count != 0 && (export_names == 0 || export_values == 0)) ||
+        (external_symbol_count != 0 && external_symbols == 0)) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < export_count; ++i) {
+        if (export_names[i] == 0 ||
+            asm_value(&ctx, export_names[i], labels, label_count, &export_values[i]) != 0) {
             return -1;
         }
     }

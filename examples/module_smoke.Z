@@ -1,0 +1,32 @@
+struct Device {
+    uint8_t kind;
+    volatile uint32_t status;
+    uint16_t *samples;
+};
+
+static uint16_t module_counter = {2,};
+uint16_t samples[3] = {10, 20, 30,};
+struct Device dev;
+struct Device *dp = &dev;
+
+const uint32_t header_size = sizeof(struct Device);
+uint16_t *second = samples + 1;
+int total = sizeof(samples) + header_size;
+
+dp->kind = 7;
+dp->status = 2;
+dp->samples = samples;
+
+switch (dp->status) {
+case 1:
+    total += 100;
+    break;
+case 2:
+    total += *second;
+    total += *(dp->samples + 2);
+    break;
+default:
+    total += 1;
+}
+
+return total + module_counter + dp->kind;

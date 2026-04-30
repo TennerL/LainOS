@@ -119,7 +119,7 @@ Right now it is intentionally simple:
 On Debian/Ubuntu-like systems you typically need:
 
 ```bash
-sudo apt install gcc make nasm binutils qemu-system-x86 ovmf gnu-efi dosfstools mtools gdisk
+sudo apt install gcc make nasm binutils qemu-system-x86 ovmf gnu-efi dosfstools mtools gdisk xorriso
 ```
 
 For a bootable UEFI ISO, install one ISO builder as well:
@@ -387,6 +387,10 @@ The kernel console has a tiny command shell:
 - `cat name` - print a text file from the current drive
 - `asm source.asm output.bin` - assemble a tiny x86_64 source file
 - `zc source.Z output.bin` - compile a tiny `.Z` source file into a flat binary
+- `zco source.Z output.zo` - compile a tiny `.Z` source file into a `.zo` object
+- `zlink input.zo [more.zo ...] output.bin` - link `.zo` objects into a flat binary
+- `zmod input.zo [more.zo ...]` - link `.zo` objects in memory and run the module initializer
+- `zmods` - list resident `.zo` modules and their exported symbols
 - `zrun source.Z` - compile and run a tiny `.Z` source file directly
 - `zasm source.Z [output.asm]` - print or save the generated asm for a `.Z` source file
 - `exec file.bin` - run a flat binary from the current drive
@@ -527,6 +531,19 @@ Current workflow:
 - `zc demo.Z demo.bin`
 - `exec demo.bin`
 - or `zrun demo.Z`
+- object/link path: `zco demo.Z demo.zo`, then `zlink demo.zo demo.bin`,
+  then `exec demo.bin`; multiple objects can be linked with
+  `zlink first.zo second.zo combined.bin`
+- kernel-module path: `zco provider.Z provider.zo`, `zco user.Z user.zo`,
+  then `zmod provider.zo user.zo`; this links in memory, resolves object
+  exports plus exposed kernel symbols, and calls each object's initializer
+- resident module path: after `zmod provider.zo`, later `zmod user.zo` can
+  resolve `extern` references against the provider's resident exported symbols;
+  use `zmods` to inspect loaded module slots and export addresses
+- object functions can cross-call by name with `export int name(...) { ... }`
+  in the defining object and `extern int name(...);` in the caller; the linker
+  validates exported/extern symbol records against both linked objects and
+  exposed kernel symbols before resolving the final call relocations
 - use `zasm demo.Z` to print the generated asm
 - or `zasm demo.Z demo.asm` to save it as a text file
 
@@ -534,8 +551,12 @@ Supported `.Z` subset:
 - integer variables: `int counter;`, `int total = 3;`
 - explicit global storage declarations before functions/top-level statements:
   `global uint64_t counter = 5;`, `global int values[4];`
+- file-local static storage declarations before functions/top-level statements:
+  `static uint32_t tick_cache = {0,};`
 - fixed-width scalar integer variables and parameters such as `uint8_t`, `int8_t`,
   `uint16_t`, `int16_t`, `uint32_t`, `int32_t`, `uint64_t`, `int64_t`
+- `const` and `volatile` qualifiers are accepted on declarations and casts;
+  they document intent but do not yet enforce read-only or volatile access rules
 - integer and void functions with up to 6 parameters:
   `int add(int a, int b) { return a + b; }`
   `void line(void) { print("\n"); return; }`
@@ -544,12 +565,14 @@ Supported `.Z` subset:
 - local variables inside functions
 - pointer variables and parameters such as `int *p`
 - fixed-size local arrays such as `int values[4];`
-- brace initialization for fixed-size local arrays such as `int values[4] = {1, 2, 3, 4};`
+- brace initialization for fixed-size local arrays such as `int values[4] = {1, 2, 3, 4};`,
+  including trailing commas; scalar declarations also accept one-value braces
 - multidimensional local arrays such as `int grid[2][3];`
 - top-level struct definitions with integer fields
 - assignment: `counter = counter + 1;`
 - compound assignment and increment/decrement: `+=`, `-=`, `*=`, `/=`, `%=`,
   `++`, `--`
+- `sizeof(type)` and `sizeof(name)` for storage sizes known to the compiler
 - arithmetic expressions: `+`, `-`, `*`, `/`, `%`, unary `-`, parentheses,
   decimal and `0x` literals
 - scalar casts such as `(uint8_t)value`, `(int16_t)value`, `(uint64_t)value`,
@@ -557,13 +580,15 @@ Supported `.Z` subset:
 - comparisons and boolean expressions: `==`, `!=`, `<`, `<=`, `>`, `>=`,
   `&&`, `||`, `!`; `<`, `<=`, `>`, `>=` now use unsigned jumps when the
   comparison operands resolve to an unsigned scalar type
-- control flow: `if`, `else`, `while`, `for`, `do ... while`, `break`, `continue`
+- control flow: `if`, `else`, `while`, `for`, `do ... while`, `switch`,
+  `case`, `default`, `break`, `continue`
 - returns: `return expr;` and `return;`
 - function calls inside expressions: `print(add(2, 3));`
 - pointer operations:
   - address-of locals/parameters: `p = &value;`
   - dereference in expressions: `print(*p);`
   - dereference store: `*p = *p + 1;`
+  - pointer arithmetic scaled by pointee size: `p + 1`, `p - 1`
 - array operations:
   - indexed read: `print(values[2]);`
   - indexed write: `values[i] = 42;`
@@ -612,10 +637,10 @@ return value;
 
 This is still not full C. Preprocessing and type checking are not
 implemented yet. Current pointer support is intentionally narrow:
-address-of only works on stack-backed locals/parameters, dereference is scalar-only,
-and there is no pointer arithmetic beyond treating pointers as raw integers in
-normal expressions. Current array support is also narrow: arrays are fixed-size
-stack-backed arrays with 8 byte slots, brace initialization is limited to flat element lists,
+address-of works for compiler-known locals, globals, array elements, and struct
+fields, dereference is scalar-only, and pointer arithmetic is limited to
+`pointer +/- integer` scaling. Current array support is also narrow: arrays are
+fixed-size compiler-backed storage, brace initialization is limited to flat element lists,
 multidimensional arrays currently use chained local-array indexing only, and
 current struct support is still incomplete: structs must be declared at top level,
 there is no struct return or struct-parameter support yet, and whole-struct
@@ -623,7 +648,7 @@ assignment/value passing remains minimal. Mixed-width scalar, pointer, and neste
 struct fields now use packed offsets and width-correct memory access, so layouts such as
 `uint8_t` + `uint16_t` + `uint32_t` + `uint64_t` no longer collapse into
 8-byte `int` slots. `.` and `->` can now be chained through nested struct fields.
-Explicit `global` declarations emit real labels in the generated data section,
+Explicit `global` and `static` declarations emit real labels in the generated data section,
 and functions/top-level code can read, write, index, take addresses of, and use
 compound updates on those globals. Global initializers are still intentionally
 limited to numeric scalar constants; arrays and structs are zero-initialized.
@@ -633,6 +658,21 @@ and sign/zero-extension for scalar locals, parameters, indexed local-array
 elements, mixed-width struct fields, and explicit scalar casts. Basic unsigned
 comparison semantics are now wired into relational operators, but `.Z` still
 does not provide whole-struct assignment, struct parameters, or struct returns.
+
+The `.zo` object format is a first in-OS toolchain checkpoint, not the final
+kernel object ABI. Version 3 stores generated assembly, a namespaced entry
+symbol, exported function symbols, and external function references in a small
+binary container; `zlink` validates duplicate/missing symbols and combines one
+or more objects into the flat executable format used by `exec`. `zmod` uses the
+same linker in memory, also allowing extern references to resolve against the
+small exposed kernel symbol table and any resident module exports, then calls
+the linked module initializer and keeps the module image resident. `zmods`
+lists resident module slots and final export addresses.
+Relocation is still intentionally narrow: the linker builds one assembly unit
+and the in-kernel assembler resolves rel32 calls and RIP-relative label
+references in the final pass. Real section records, dependency-aware unload
+hooks, and independently relocatable binary sections remain the next milestones
+before `.Z` can build loadable kernel modules or the kernel image itself.
 
 ## Timer
 

@@ -1,0 +1,8 @@
+extern int add_bonus(int value);
+
+int total = add_bonus(35);
+print("linked total=");
+print(total);
+print("\n");
+
+return total;

@@ -81,7 +81,7 @@ build/kernel/main.o: kernel/main.c kernel/kernel.h kernel/shell.h kernel/storage
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/storage.h kernel/lainfs.h kernel/editor.h kernel/ahci.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
+build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/storage.h kernel/lainfs.h kernel/editor.h kernel/ahci.h kernel/zobject.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -90,6 +90,10 @@ build/kernel/assembler.o: kernel/assembler.c kernel/assembler.h kernel/kernel.h 
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 build/kernel/zscript.o: kernel/zscript.c kernel/zscript.h | build
+	$(MKDIR_P) build/kernel
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+build/kernel/zobject.o: kernel/zobject.c kernel/zobject.h kernel/assembler.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -137,8 +141,8 @@ build/kernel/interrupts.o: kernel/interrupts.asm | build
 	$(MKDIR_P) build/kernel
 	$(NASM) $(NASMFLAGS) -f elf64 $< -o $@
 
-build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o kernel/linker.ld
-	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o
+build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o kernel/linker.ld
+	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o
 
 build/$(KERNEL_BIN): build/$(KERNEL_ELF)
 	$(OBJCOPY) -O binary build/$(KERNEL_ELF) $@
