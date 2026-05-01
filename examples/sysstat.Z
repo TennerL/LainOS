@@ -1,0 +1,13 @@
+#include "kernel_api.Z"
+
+print("sysstat ticks=");
+print(ticks());
+print(" mem=");
+print(mem_used_kb());
+print("/");
+print(mem_total_kb());
+print(" KiB cpu0=");
+print(cpu_usage(0));
+print("%\n");
+
+return 7;

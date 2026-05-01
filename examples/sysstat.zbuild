@@ -1,0 +1,5 @@
+include .
+output sysstat.bin
+install-name sysstat.bin
+test-return 7
+sysstat.Z sysstat.zo

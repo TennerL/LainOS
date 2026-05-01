@@ -1,0 +1,36 @@
+#include "kernel_api.Z"
+
+uint8_t entry_name[64];
+int count;
+int i;
+int entry_type;
+
+print("zreport entries=");
+count = os_dir_count(".");
+print(count);
+print("\n");
+
+i = 0;
+while (i < count) {
+    os_dir_name(".", i, entry_name, 64);
+    entry_type = os_dir_type(".", i);
+    if (entry_type == OS_ENTRY_DIR) {
+        print("dir  ");
+        print(entry_name);
+        print("\n");
+    } else {
+        print("file ");
+        print(entry_name);
+        print(" ");
+        print(os_dir_size(".", i));
+        print("\n");
+    }
+    i = i + 1;
+}
+
+print("\n-- sysstat.buildlog --\n");
+os_cat_file("sysstat.buildlog");
+print("\n-- sysstat.testlog --\n");
+os_cat_file("sysstat.testlog");
+
+return 13;

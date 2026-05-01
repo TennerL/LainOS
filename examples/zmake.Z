@@ -1,0 +1,47 @@
+#include "kernel_api.Z"
+
+uint8_t sysstat_name[16] = "sysstat";
+uint8_t zreport_name[16] = "zreport";
+uint8_t number_text[8] = "42";
+
+if (os_strlen(sysstat_name) != 7 || os_strcmp(sysstat_name, "sysstat") != 0 || os_atoi(number_text) != 42) {
+    print("zmake: string helpers failed\n");
+    return 10;
+}
+
+if (!os_starts_with(zreport_name, "z")) {
+    print("zmake: prefix helper failed\n");
+    return 11;
+}
+
+print("zmake: test sysstat\n");
+if (os_ztest(sysstat_name) != 0) {
+    print("zmake: sysstat test failed\n");
+    return 1;
+}
+
+print("zmake: install sysstat\n");
+if (os_zinstall(sysstat_name) != 0) {
+    print("zmake: sysstat install failed\n");
+    return 2;
+}
+
+print("zmake: test zreport\n");
+if (os_ztest(zreport_name) != 0) {
+    print("zmake: zreport test failed\n");
+    return 3;
+}
+
+print("zmake: install zreport\n");
+if (os_zinstall(zreport_name) != 0) {
+    print("zmake: zreport install failed\n");
+    return 4;
+}
+
+if (os_copy_file("zreport.testlog", "last.testlog") != 0) {
+    print("zmake: copy failed\n");
+    return 5;
+}
+
+print("zmake: ok\n");
+return 0;

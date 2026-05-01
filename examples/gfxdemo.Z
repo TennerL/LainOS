@@ -1,0 +1,35 @@
+#include "kernel_api.Z"
+
+uint32_t w;
+uint32_t h;
+uint32_t x;
+
+w = gfx_width();
+h = gfx_height();
+
+if (w < 96 || h < 96) {
+    return 1;
+}
+
+gfx_clear(0x101018);
+gfx_fill_rect(24, 24, w - 48, h - 48, 0x182030);
+gfx_draw_rect(24, 24, w - 48, h - 48, 0x00ff66);
+gfx_draw_line(24, 24, w - 25, h - 25, 0xff3355);
+gfx_draw_line(w - 25, 24, 24, h - 25, 0x33aaff);
+
+x = 48;
+while (x < w - 48) {
+    gfx_fill_rect(x, 64, 8, 48, 0xf7d154);
+    x = x + 24;
+}
+
+set_margin(32, 140);
+print("gfxdemo ");
+print(w);
+print("x");
+print(h);
+print(" format=");
+print(gfx_format());
+print("\n");
+
+return 9;

@@ -20,7 +20,10 @@
 #define ASM_SOURCE_SIZE LAINFS_FILE_CAPACITY
 #define SHELL_PATH_SIZE 128u
 #define SHELL_MAX_SESSIONS 2u
-#define ZLINK_MAX_OBJECTS 4u
+#define Z_INCLUDE_MAX_DEPTH 4u
+#define Z_INCLUDE_MAX_DIRS 4u
+#define Z_INCLUDE_ONCE_MAX 16u
+#define ZLINK_MAX_OBJECTS 16u
 #define ZMODULE_MAX_MODULES 4u
 #define ZMODULE_MAX_EXPORTS 16u
 #define ZMODULE_NAME_SIZE 32u
@@ -30,6 +33,9 @@ static char script_buffers[SCRIPT_MAX_DEPTH][SCRIPT_BUFFER_SIZE + 1];
 static unsigned char exec_buffer[EXEC_BUFFER_SIZE] __attribute__((aligned(16)));
 static unsigned char asm_output[EXEC_BUFFER_SIZE];
 static char zscript_output[ASM_SOURCE_SIZE + 1];
+static char zinclude_buffers[Z_INCLUDE_MAX_DEPTH][ASM_SOURCE_SIZE + 1];
+static char zbuild_report[512];
+static char ztest_report[256];
 
 typedef struct {
     int loaded;
@@ -55,12 +61,23 @@ typedef struct {
 } exec_api_t;
 
 typedef void (*exec_program_t)(const exec_api_t *api);
+typedef uint64_t (*exec_program_ret_t)(const exec_api_t *api);
 
 typedef struct {
     const char *name;
     const char *help;
     command_handler_t handler;
 } command_t;
+
+typedef struct {
+    char drive_letter;
+    uint32_t base_dir;
+    uint32_t include_dirs[Z_INCLUDE_MAX_DIRS];
+    uint32_t include_dir_count;
+    uint32_t once_dirs[Z_INCLUDE_ONCE_MAX];
+    char once_names[Z_INCLUDE_ONCE_MAX][32];
+    uint32_t once_count;
+} z_source_context_t;
 
 typedef struct {
     int present;
@@ -265,6 +282,635 @@ static void copy_text_limited(char *dst, uint32_t dst_size, const char *src) {
     dst[i] = '\0';
 }
 
+static int make_suffixed_name(const char *base, const char *suffix, char *out, uint32_t out_size) {
+    uint32_t i = 0;
+    uint32_t j = 0;
+
+    if (base == 0 || suffix == 0 || out == 0 || out_size == 0 || *base == '\0') {
+        return -1;
+    }
+
+    while (base[i]) {
+        if (i + 1u >= out_size) {
+            out[0] = '\0';
+            return -1;
+        }
+        out[i] = base[i];
+        ++i;
+    }
+
+    while (suffix[j]) {
+        if (i + 1u >= out_size) {
+            out[0] = '\0';
+            return -1;
+        }
+        out[i++] = suffix[j++];
+    }
+
+    out[i] = '\0';
+    return 0;
+}
+
+static int make_object_name_from_source(const char *source_name, char *out, uint32_t out_size) {
+    uint32_t i = 0;
+    uint32_t dot = 0xFFFFFFFFu;
+
+    if (source_name == 0 || out == 0 || out_size == 0 || *source_name == '\0') {
+        return -1;
+    }
+
+    while (source_name[i]) {
+        if (source_name[i] == '.') {
+            dot = i;
+        }
+        ++i;
+    }
+
+    if (dot != 0xFFFFFFFFu) {
+        i = dot;
+    }
+
+    if (i == 0 || i + 3u >= out_size) {
+        out[0] = '\0';
+        return -1;
+    }
+
+    for (uint32_t j = 0; j < i; ++j) {
+        out[j] = source_name[j];
+    }
+    out[i++] = '.';
+    out[i++] = 'z';
+    out[i++] = 'o';
+    out[i] = '\0';
+    return 0;
+}
+
+static void copy_bytes(unsigned char *dst, const unsigned char *src, uint32_t size) {
+    for (uint32_t i = 0; i < size; ++i) {
+        dst[i] = src[i];
+    }
+}
+
+static int append_text_limited(char *out, uint32_t out_size, uint32_t *pos, const char *text) {
+    if (out == 0 || pos == 0 || text == 0 || out_size == 0) {
+        return -1;
+    }
+
+    while (*text) {
+        if (*pos + 1u >= out_size) {
+            out[out_size - 1u] = '\0';
+            return -1;
+        }
+        out[*pos] = *text++;
+        ++(*pos);
+    }
+    out[*pos] = '\0';
+    return 0;
+}
+
+static int append_dec_limited(char *out, uint32_t out_size, uint32_t *pos, uint64_t value) {
+    char digits[21];
+    uint32_t count = 0;
+
+    if (value == 0) {
+        return append_text_limited(out, out_size, pos, "0");
+    }
+
+    while (value != 0 && count < sizeof(digits)) {
+        digits[count++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+
+    while (count > 0) {
+        char text[2];
+        text[0] = digits[--count];
+        text[1] = '\0';
+        if (append_text_limited(out, out_size, pos, text) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int parse_u64_arg(const char *s, uint64_t *out) {
+    uint64_t value = 0;
+
+    if (s == 0 || out == 0) {
+        return -1;
+    }
+
+    s = skip_const_spaces(s);
+    if (*s == '\0') {
+        return -1;
+    }
+
+    while (*s) {
+        if (*s < '0' || *s > '9') {
+            return -1;
+        }
+        value = value * 10u + (uint64_t)(*s - '0');
+        ++s;
+    }
+
+    *out = value;
+    return 0;
+}
+
+static int starts_with_text(const char *s, const char *prefix) {
+    while (*prefix) {
+        if (*s != *prefix) {
+            return 0;
+        }
+        ++s;
+        ++prefix;
+    }
+
+    return 1;
+}
+
+static int contains_text(const char *s, const char *needle) {
+    if (s == 0 || needle == 0 || *needle == '\0') {
+        return 0;
+    }
+
+    while (*s) {
+        const char *a = s;
+        const char *b = needle;
+        while (*a && *b && *a == *b) {
+            ++a;
+            ++b;
+        }
+        if (*b == '\0') {
+            return 1;
+        }
+        ++s;
+    }
+
+    return 0;
+}
+
+static int path_is_separator(char ch) {
+    return ch == '/' || ch == '\\';
+}
+
+static int copy_path_part_limited(char *dst, uint32_t dst_size, const char *start, uint32_t len) {
+    if (dst == 0 || dst_size == 0 || len == 0 || len >= dst_size) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < len; ++i) {
+        dst[i] = start[i];
+    }
+    dst[len] = '\0';
+    return 0;
+}
+
+static int resolve_file_path(char drive_letter,
+                             uint32_t base_dir,
+                             const char *path,
+                             uint32_t *out_parent,
+                             char *out_name,
+                             uint32_t out_name_size) {
+    uint32_t dir = base_dir;
+    const char *s = path;
+    char part[32];
+
+    if (path == 0 || out_parent == 0 || out_name == 0 || out_name_size == 0) {
+        return -1;
+    }
+
+    while (*s == ' ' || *s == '\t') {
+        ++s;
+    }
+    if (*s == '\0') {
+        return -1;
+    }
+
+    if (path_is_separator(*s)) {
+        dir = LAINFS_ROOT_DIR;
+        while (path_is_separator(*s)) {
+            ++s;
+        }
+    }
+
+    for (;;) {
+        const char *start = s;
+        uint32_t len = 0;
+        int is_last = 0;
+
+        while (*s && !path_is_separator(*s)) {
+            ++s;
+            ++len;
+        }
+        while (path_is_separator(*s)) {
+            ++s;
+        }
+        is_last = *s == '\0';
+
+        if (copy_path_part_limited(part, sizeof(part), start, len) != 0) {
+            return -1;
+        }
+
+        if (is_last) {
+            copy_text_limited(out_name, out_name_size, part);
+            *out_parent = dir;
+            return 0;
+        }
+
+        if (streq(part, ".")) {
+            continue;
+        }
+        if (streq(part, "..")) {
+            if (lainfs_parent_dir(drive_letter, dir, &dir) != 0) {
+                return -5;
+            }
+            continue;
+        }
+        if (lainfs_find_dir(drive_letter, dir, part, &dir) != 0) {
+            return -5;
+        }
+    }
+}
+
+static int resolve_dir_path(char drive_letter,
+                            uint32_t base_dir,
+                            const char *path,
+                            uint32_t *out_dir) {
+    uint32_t dir = base_dir;
+    const char *s = path;
+    char part[32];
+
+    if (path == 0 || out_dir == 0) {
+        return -1;
+    }
+
+    s = skip_const_spaces(s);
+    if (*s == '\0' || streq(s, ".")) {
+        *out_dir = base_dir;
+        return 0;
+    }
+
+    if (path_is_separator(*s)) {
+        dir = LAINFS_ROOT_DIR;
+        while (path_is_separator(*s)) {
+            ++s;
+        }
+    }
+
+    if (*s == '\0') {
+        *out_dir = dir;
+        return 0;
+    }
+
+    for (;;) {
+        const char *start = s;
+        uint32_t len = 0;
+
+        while (*s && !path_is_separator(*s)) {
+            ++s;
+            ++len;
+        }
+        while (path_is_separator(*s)) {
+            ++s;
+        }
+
+        if (copy_path_part_limited(part, sizeof(part), start, len) != 0) {
+            return -1;
+        }
+
+        if (streq(part, ".")) {
+        } else if (streq(part, "..")) {
+            if (lainfs_parent_dir(drive_letter, dir, &dir) != 0) {
+                return -5;
+            }
+        } else if (lainfs_find_dir(drive_letter, dir, part, &dir) != 0) {
+            return -5;
+        }
+
+        if (*s == '\0') {
+            *out_dir = dir;
+            return 0;
+        }
+    }
+}
+
+static int append_source_bytes(char *out,
+                               uint32_t out_capacity,
+                               uint32_t *out_size,
+                               const char *text,
+                               uint32_t size) {
+    if (out == 0 || out_size == 0 || text == 0 ||
+        size > out_capacity ||
+        *out_size > out_capacity - size) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < size; ++i) {
+        out[*out_size + i] = text[i];
+    }
+    *out_size += size;
+    if (*out_size < out_capacity) {
+        out[*out_size] = '\0';
+    }
+    return 0;
+}
+
+static int parse_z_include_line(char *line, char **include_name) {
+    char *s = skip_spaces(line);
+    char *start;
+    char *end;
+
+    if (*s == '#') {
+        ++s;
+        s = skip_spaces(s);
+    }
+
+    if (!starts_with_text(s, "include")) {
+        return 0;
+    }
+    s += 7;
+    if (*s != ' ' && *s != '\t') {
+        return 0;
+    }
+    s = skip_spaces(s);
+    if (*s != '"') {
+        return -1;
+    }
+
+    start = ++s;
+    while (*s && *s != '"') {
+        ++s;
+    }
+    if (*s != '"') {
+        return -1;
+    }
+    end = s;
+    *end = '\0';
+    s = skip_spaces(end + 1);
+    if (*start == '\0' || (*s != '\0' && *s != '\n' && *s != '\r')) {
+        return -1;
+    }
+
+    *include_name = start;
+    return 1;
+}
+
+static int parse_z_pragma_once_line(char *line) {
+    char *s = skip_spaces(line);
+
+    if (*s != '#') {
+        return 0;
+    }
+    ++s;
+    s = skip_spaces(s);
+    if (!starts_with_text(s, "pragma")) {
+        return 0;
+    }
+    s += 6;
+    if (*s != ' ' && *s != '\t') {
+        return 0;
+    }
+    s = skip_spaces(s);
+    if (!starts_with_text(s, "once")) {
+        return 0;
+    }
+    s += 4;
+    s = skip_spaces(s);
+    return *s == '\0' || *s == '\n' || *s == '\r';
+}
+
+static int z_source_once_index(const z_source_context_t *ctx, uint32_t parent_id, const char *name) {
+    for (uint32_t i = 0; i < ctx->once_count; ++i) {
+        if (ctx->once_dirs[i] == parent_id && streq(ctx->once_names[i], name)) {
+            return (int)i;
+        }
+    }
+
+    return -1;
+}
+
+static int z_source_mark_once(z_source_context_t *ctx, uint32_t parent_id, const char *name) {
+    if (z_source_once_index(ctx, parent_id, name) >= 0) {
+        return 0;
+    }
+    if (ctx->once_count >= Z_INCLUDE_ONCE_MAX) {
+        return -1;
+    }
+
+    ctx->once_dirs[ctx->once_count] = parent_id;
+    copy_text_limited(ctx->once_names[ctx->once_count],
+                      sizeof(ctx->once_names[ctx->once_count]),
+                      name);
+    ++ctx->once_count;
+    return 0;
+}
+
+static int load_z_source_file(z_source_context_t *ctx,
+                              uint32_t parent_id,
+                              const char *path,
+                              char *buffer,
+                              uint32_t buffer_capacity,
+                              uint32_t *size_out,
+                              uint32_t *resolved_parent,
+                              char *resolved_name,
+                              uint32_t resolved_name_size) {
+    int status;
+
+    status = resolve_file_path(ctx->drive_letter,
+                               parent_id,
+                               path,
+                               resolved_parent,
+                               resolved_name,
+                               resolved_name_size);
+    if (status != 0) {
+        return status;
+    }
+
+    if (z_source_once_index(ctx, *resolved_parent, resolved_name) >= 0) {
+        *size_out = 0;
+        buffer[0] = '\0';
+        return 1;
+    }
+
+    return lainfs_load_file_in_dir(ctx->drive_letter,
+                                   *resolved_parent,
+                                   resolved_name,
+                                   buffer,
+                                   buffer_capacity,
+                                   size_out);
+}
+
+static int load_z_include_file(z_source_context_t *ctx,
+                               uint32_t current_parent_id,
+                               const char *include_name,
+                               char *buffer,
+                               uint32_t buffer_capacity,
+                               uint32_t *size_out,
+                               uint32_t *resolved_parent,
+                               char *resolved_name,
+                               uint32_t resolved_name_size) {
+    int status = load_z_source_file(ctx,
+                                    current_parent_id,
+                                    include_name,
+                                    buffer,
+                                    buffer_capacity,
+                                    size_out,
+                                    resolved_parent,
+                                    resolved_name,
+                                    resolved_name_size);
+    if (status != -5) {
+        return status;
+    }
+
+    for (uint32_t i = 0; i < ctx->include_dir_count; ++i) {
+        status = load_z_source_file(ctx,
+                                    ctx->include_dirs[i],
+                                    include_name,
+                                    buffer,
+                                    buffer_capacity,
+                                    size_out,
+                                    resolved_parent,
+                                    resolved_name,
+                                    resolved_name_size);
+        if (status != -5) {
+            return status;
+        }
+    }
+
+    return -5;
+}
+
+static int load_z_source_expanded_recursive(z_source_context_t *ctx,
+                                            uint32_t parent_id,
+                                            const char *name,
+                                            char *out,
+                                            uint32_t out_capacity,
+                                            uint32_t *out_size,
+                                            uint32_t depth) {
+    char *buffer;
+    uint32_t size = 0;
+    uint32_t resolved_parent = parent_id;
+    char resolved_name[32];
+    int status;
+
+    if (depth >= Z_INCLUDE_MAX_DEPTH) {
+        return -30;
+    }
+
+    buffer = zinclude_buffers[depth];
+    if (depth == 0) {
+        status = load_z_source_file(ctx,
+                                    parent_id,
+                                    name,
+                                    buffer,
+                                    ASM_SOURCE_SIZE,
+                                    &size,
+                                    &resolved_parent,
+                                    resolved_name,
+                                    sizeof(resolved_name));
+    } else {
+        status = load_z_include_file(ctx,
+                                     parent_id,
+                                     name,
+                                     buffer,
+                                     ASM_SOURCE_SIZE,
+                                     &size,
+                                     &resolved_parent,
+                                     resolved_name,
+                                     sizeof(resolved_name));
+    }
+    if (status == 1) {
+        return 0;
+    }
+    if (status != 0) {
+        return status;
+    }
+    buffer[size] = '\0';
+
+    for (uint32_t pos = 0; pos < size;) {
+        char *line_start = buffer + pos;
+        char *include_name = 0;
+        uint32_t line_len;
+        int include_status;
+
+        while (pos < size && buffer[pos] != '\n' && buffer[pos] != '\r') {
+            ++pos;
+        }
+        line_len = (uint32_t)((buffer + pos) - line_start);
+        if (pos < size) {
+            buffer[pos++] = '\0';
+            if (pos < size && buffer[pos - 1u] == '\r' && buffer[pos] == '\n') {
+                ++pos;
+            }
+        }
+
+        include_status = parse_z_include_line(line_start, &include_name);
+        if (include_status < 0) {
+            return -31;
+        }
+        if (include_status > 0) {
+            status = load_z_source_expanded_recursive(ctx,
+                                                      resolved_parent,
+                                                      include_name,
+                                                      out,
+                                                      out_capacity,
+                                                      out_size,
+                                                      depth + 1u);
+            if (status != 0) {
+                return status;
+            }
+            if (append_source_bytes(out, out_capacity, out_size, "\n", 1u) != 0) {
+                return -32;
+            }
+        } else if (parse_z_pragma_once_line(line_start)) {
+            if (z_source_mark_once(ctx, resolved_parent, resolved_name) != 0) {
+                return -33;
+            }
+        } else {
+            if (append_source_bytes(out, out_capacity, out_size, line_start, line_len) != 0 ||
+                append_source_bytes(out, out_capacity, out_size, "\n", 1u) != 0) {
+                return -32;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int load_z_source_expanded(char drive_letter,
+                                  uint32_t parent_id,
+                                  const uint32_t *include_dirs,
+                                  uint32_t include_dir_count,
+                                  const char *name,
+                                  char *out,
+                                  uint32_t out_capacity,
+                                  uint32_t *out_size) {
+    z_source_context_t ctx;
+
+    if (out == 0 || out_size == 0 || out_capacity == 0) {
+        return -1;
+    }
+
+    ctx.drive_letter = drive_letter;
+    ctx.base_dir = parent_id;
+    ctx.include_dir_count = include_dir_count > Z_INCLUDE_MAX_DIRS ? Z_INCLUDE_MAX_DIRS : include_dir_count;
+    ctx.once_count = 0;
+    for (uint32_t i = 0; i < Z_INCLUDE_MAX_DIRS; ++i) {
+        ctx.include_dirs[i] = (i < ctx.include_dir_count && include_dirs != 0) ? include_dirs[i] : 0;
+    }
+
+    *out_size = 0;
+    out[0] = '\0';
+    return load_z_source_expanded_recursive(&ctx,
+                                            parent_id,
+                                            name,
+                                            out,
+                                            out_capacity,
+                                            out_size,
+                                            0);
+}
+
 static void print_drive_name(int index) {
     char name[3];
 
@@ -432,6 +1078,7 @@ static void run_script_text(char *script, uint32_t size, const boot_info_t *info
 static void cmd_help(const char *args, const boot_info_t *info);
 static void cmd_bgcolor(const char *args, const boot_info_t *info);
 static void cmd_fgcolor(const char *args, const boot_info_t *info);
+static void cmd_resolution(const char *args, const boot_info_t *info);
 static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
@@ -448,6 +1095,7 @@ static void cmd_pwd(const char *args, const boot_info_t *info);
 static void cmd_mkdir(const char *args, const boot_info_t *info);
 static void cmd_rm(const char *args, const boot_info_t *info);
 static void cmd_rename(const char *args, const boot_info_t *info);
+static void cmd_cp(const char *args, const boot_info_t *info);
 static void cmd_write(const char *args, const boot_info_t *info);
 static void cmd_cat(const char *args, const boot_info_t *info);
 static void cmd_edit(const char *args, const boot_info_t *info);
@@ -459,16 +1107,34 @@ static void cmd_asm(const char *args, const boot_info_t *info);
 static void cmd_zc(const char *args, const boot_info_t *info);
 static void cmd_zco(const char *args, const boot_info_t *info);
 static void cmd_zlink(const char *args, const boot_info_t *info);
+static void cmd_zbuild(const char *args, const boot_info_t *info);
+static void cmd_zclean(const char *args, const boot_info_t *info);
+static void cmd_ztest(const char *args, const boot_info_t *info);
+static void cmd_zinstall(const char *args, const boot_info_t *info);
+static int zbuild_read_layout(int drive,
+                              const char *target_name,
+                              char *manifest,
+                              uint32_t manifest_capacity,
+                              uint32_t *build_dir,
+                              char *output_name,
+                              uint32_t output_name_size,
+                              uint32_t *install_dir,
+                              char *install_name,
+                              uint32_t install_name_size,
+                              uint64_t *expected_return,
+                              int *has_expected_return);
 static void cmd_zmod(const char *args, const boot_info_t *info);
 static void cmd_zmods(const char *args, const boot_info_t *info);
 static void cmd_zrun(const char *args, const boot_info_t *info);
 static void cmd_zasm(const char *args, const boot_info_t *info);
 static void cmd_keymap(const char *args, const boot_info_t *info);
+static void split_first_arg(char *s, char **first, char **rest);
 
 static const command_t commands[] = {
     { "help",    "show commands",             cmd_help },
     { "bgcolor", "set background color",      cmd_bgcolor },
     { "fgcolor", "set text color",            cmd_fgcolor },
+    { "resolution", "set next-boot resolution", cmd_resolution },
     { "clear",   "clear screen",              cmd_clear },
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
@@ -487,6 +1153,7 @@ static const command_t commands[] = {
     { "del",     "delete a file or directory", cmd_rm },
     { "rename",  "rename a file or directory", cmd_rename },
     { "mv",      "rename a file or directory", cmd_rename },
+    { "cp",      "copy a file",                cmd_cp },
     { "write",   "write a text file",         cmd_write },
     { "cat",     "print a text file",         cmd_cat },
     { "edit",    "edit a text file",          cmd_edit },
@@ -499,6 +1166,10 @@ static const command_t commands[] = {
     { "zc",      "compile a tiny .Z file",     cmd_zc },
     { "zco",     "compile .Z to a .zo object", cmd_zco },
     { "zlink",   "link a .zo object",          cmd_zlink },
+    { "zbuild",  "build many .Z files",         cmd_zbuild },
+    { "zclean",  "remove zbuild artifacts",     cmd_zclean },
+    { "ztest",   "build and run a zbuild target", cmd_ztest },
+    { "zinstall", "build and install a zbuild target", cmd_zinstall },
     { "zmod",    "load and run .zo module(s)",  cmd_zmod },
     { "zmods",   "list loaded .zo modules",     cmd_zmods },
     { "zrun",    "compile and run a .Z file",  cmd_zrun },
@@ -523,6 +1194,90 @@ static void cmd_clear(const char *args, const boot_info_t *info) {
     (void)args;
     (void)info;
     console_clear();
+}
+
+static void cmd_resolution(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    char *width_text = 0;
+    char *height_text = 0;
+    char *extra = 0;
+    char config[32];
+    uint32_t pos = 0;
+    uint32_t size = 0;
+    uint64_t width = 0;
+    uint64_t height = 0;
+    int drive = active_drive();
+    int status;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    split_first_arg((char *)args, &width_text, &height_text);
+    split_first_arg(height_text, &height_text, &extra);
+    if (*width_text == '\0') {
+        console_puts("current resolution: ");
+        console_put_dec64(graphics_width());
+        console_puts("x");
+        console_put_dec64(graphics_height());
+        console_puts(" format=");
+        console_put_dec64(graphics_format());
+        console_puts("\n");
+
+        status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         LAINFS_ROOT_DIR,
+                                         "bootres.cfg",
+                                         config,
+                                         sizeof(config) - 1u,
+                                         &size);
+        if (status == 0) {
+            config[size] = '\0';
+            console_puts("next boot request: ");
+            console_puts(config);
+            if (size == 0 || config[size - 1u] != '\n') {
+                console_puts("\n");
+            }
+        } else {
+            console_puts("next boot request: firmware default\n");
+        }
+        return;
+    }
+
+    if (*height_text == '\0' || *extra != '\0' ||
+        parse_u64_arg(width_text, &width) != 0 ||
+        parse_u64_arg(height_text, &height) != 0 ||
+        width == 0 || height == 0 ||
+        width > 16384u || height > 16384u) {
+        console_puts("usage: resolution width height\n");
+        return;
+    }
+
+    config[0] = '\0';
+    if (append_dec_limited(config, sizeof(config), &pos, width) != 0 ||
+        append_text_limited(config, sizeof(config), &pos, " ") != 0 ||
+        append_dec_limited(config, sizeof(config), &pos, height) != 0 ||
+        append_text_limited(config, sizeof(config), &pos, "\n") != 0) {
+        console_puts("resolution failed: config is too large\n");
+        return;
+    }
+
+    status = lainfs_save_file_in_dir((char)('A' + drive),
+                                     LAINFS_ROOT_DIR,
+                                     "bootres.cfg",
+                                     config,
+                                     pos);
+    if (status != 0) {
+        console_puts("resolution failed: could not save bootres.cfg\n");
+        return;
+    }
+
+    console_puts("next boot resolution set to ");
+    console_put_dec64(width);
+    console_puts("x");
+    console_put_dec64(height);
+    console_puts("\nreboot to apply it\n");
 }
 
 static void cmd_echo(const char *args, const boot_info_t *info) {
@@ -1138,6 +1893,33 @@ static void cmd_rename(const char *args, const boot_info_t *info) {
     }
 }
 
+static void cmd_cp(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    char *src_name = 0;
+    char *dst_name = 0;
+    char *extra = 0;
+
+    split_first_arg((char *)args, &src_name, &dst_name);
+    split_first_arg(dst_name, &dst_name, &extra);
+
+    if (*src_name == '\0' || *dst_name == '\0' || *extra != '\0') {
+        console_puts("usage: cp source dest\n");
+        return;
+    }
+
+    if (shell_api_copy_file(src_name, dst_name) != 0) {
+        console_puts("cp failed\n");
+        return;
+    }
+
+    console_puts("copied ");
+    console_puts(src_name);
+    console_puts(" to ");
+    console_puts(dst_name);
+    console_puts("\n");
+}
+
 static void cmd_write(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -1224,6 +2006,491 @@ static void cmd_edit(const char *args, const boot_info_t *info) {
     } else if (status != 0) {
         console_puts("edit failed\n");
     }
+}
+
+int shell_api_mkdir(const char *path) {
+    int drive = active_drive();
+    uint32_t parent = LAINFS_ROOT_DIR;
+    char name[32];
+
+    if (drive < 0 || path == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          path,
+                          &parent,
+                          name,
+                          sizeof(name)) != 0) {
+        return -1;
+    }
+
+    return lainfs_make_dir_in_dir((char)('A' + drive), parent, name);
+}
+
+int shell_api_delete(const char *path) {
+    int drive = active_drive();
+    uint32_t parent = LAINFS_ROOT_DIR;
+    char name[32];
+
+    if (drive < 0 || path == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          path,
+                          &parent,
+                          name,
+                          sizeof(name)) != 0) {
+        return -1;
+    }
+
+    return lainfs_delete_in_dir((char)('A' + drive), parent, name);
+}
+
+int shell_api_write_file(const char *path, const char *text) {
+    int drive = active_drive();
+    uint32_t parent = LAINFS_ROOT_DIR;
+    char name[32];
+
+    if (drive < 0 || path == 0 || text == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          path,
+                          &parent,
+                          name,
+                          sizeof(name)) != 0) {
+        return -1;
+    }
+
+    return lainfs_write_file_in_dir((char)('A' + drive), parent, name, text);
+}
+
+int shell_api_cat_file(const char *path) {
+    int drive = active_drive();
+    uint32_t parent = LAINFS_ROOT_DIR;
+    char name[32];
+
+    if (drive < 0 || path == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          path,
+                          &parent,
+                          name,
+                          sizeof(name)) != 0) {
+        return -1;
+    }
+
+    return lainfs_read_file_in_dir((char)('A' + drive), parent, name);
+}
+
+int shell_api_file_size(const char *path) {
+    int drive = active_drive();
+    uint32_t parent = LAINFS_ROOT_DIR;
+    uint32_t size = 0;
+    char name[32];
+
+    if (drive < 0 || path == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          path,
+                          &parent,
+                          name,
+                          sizeof(name)) != 0) {
+        return -1;
+    }
+
+    if (lainfs_load_file_in_dir((char)('A' + drive),
+                                parent,
+                                name,
+                                zinclude_buffers[0],
+                                ASM_SOURCE_SIZE,
+                                &size) != 0) {
+        return -1;
+    }
+
+    return (int)size;
+}
+
+int shell_api_read_file(const char *path, char *buffer, uint32_t capacity) {
+    int drive = active_drive();
+    uint32_t parent = LAINFS_ROOT_DIR;
+    uint32_t size = 0;
+    char name[32];
+
+    if (drive < 0 || path == 0 || buffer == 0 || capacity == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          path,
+                          &parent,
+                          name,
+                          sizeof(name)) != 0) {
+        return -1;
+    }
+
+    if (lainfs_load_file_in_dir((char)('A' + drive),
+                                parent,
+                                name,
+                                buffer,
+                                capacity,
+                                &size) != 0) {
+        return -1;
+    }
+
+    if (size < capacity) {
+        buffer[size] = '\0';
+    }
+    return (int)size;
+}
+
+int shell_api_rename(const char *old_path, const char *new_path) {
+    int drive = active_drive();
+    uint32_t old_parent = LAINFS_ROOT_DIR;
+    uint32_t new_parent = LAINFS_ROOT_DIR;
+    char old_name[32];
+    char new_name[32];
+
+    if (drive < 0 || old_path == 0 || new_path == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          old_path,
+                          &old_parent,
+                          old_name,
+                          sizeof(old_name)) != 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          new_path,
+                          &new_parent,
+                          new_name,
+                          sizeof(new_name)) != 0) {
+        return -1;
+    }
+
+    return lainfs_rename_in_dir((char)('A' + drive),
+                                old_parent,
+                                old_name,
+                                new_parent,
+                                new_name);
+}
+
+int shell_api_copy_file(const char *src_path, const char *dst_path) {
+    int drive = active_drive();
+    uint32_t src_parent = LAINFS_ROOT_DIR;
+    uint32_t dst_parent = LAINFS_ROOT_DIR;
+    uint32_t size = 0;
+    char src_name[32];
+    char dst_name[32];
+
+    if (drive < 0 || src_path == 0 || dst_path == 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          src_path,
+                          &src_parent,
+                          src_name,
+                          sizeof(src_name)) != 0 ||
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          dst_path,
+                          &dst_parent,
+                          dst_name,
+                          sizeof(dst_name)) != 0) {
+        return -1;
+    }
+
+    if (lainfs_load_file_in_dir((char)('A' + drive),
+                                src_parent,
+                                src_name,
+                                zinclude_buffers[0],
+                                ASM_SOURCE_SIZE,
+                                &size) != 0) {
+        return -1;
+    }
+
+    return lainfs_save_file_in_dir((char)('A' + drive),
+                                   dst_parent,
+                                   dst_name,
+                                   zinclude_buffers[0],
+                                   size);
+}
+
+int shell_api_strlen(const char *text) {
+    uint32_t len = 0;
+
+    if (text == 0) {
+        return -1;
+    }
+
+    while (text[len]) {
+        ++len;
+    }
+
+    return (int)len;
+}
+
+int shell_api_strcmp(const char *a, const char *b) {
+    if (a == 0 || b == 0) {
+        return -1;
+    }
+
+    while (*a && *b && *a == *b) {
+        ++a;
+        ++b;
+    }
+
+    if (*a == *b) {
+        return 0;
+    }
+
+    return ((unsigned char)*a < (unsigned char)*b) ? -1 : 1;
+}
+
+int shell_api_starts_with(const char *text, const char *prefix) {
+    if (text == 0 || prefix == 0) {
+        return 0;
+    }
+
+    while (*prefix) {
+        if (*text != *prefix) {
+            return 0;
+        }
+        ++text;
+        ++prefix;
+    }
+
+    return 1;
+}
+
+int shell_api_atoi(const char *text) {
+    int sign = 1;
+    int value = 0;
+
+    if (text == 0) {
+        return 0;
+    }
+
+    text = skip_const_spaces(text);
+    if (*text == '-') {
+        sign = -1;
+        ++text;
+    } else if (*text == '+') {
+        ++text;
+    }
+
+    while (*text >= '0' && *text <= '9') {
+        value = value * 10 + (*text - '0');
+        ++text;
+    }
+
+    return value * sign;
+}
+
+int shell_api_list_dir(const char *path) {
+    int drive = active_drive();
+    uint32_t dir = LAINFS_ROOT_DIR;
+
+    if (drive < 0 || path == 0 ||
+        resolve_dir_path((char)('A' + drive), cwd_dirs[drive], path, &dir) != 0) {
+        return -1;
+    }
+
+    return lainfs_list_dir((char)('A' + drive), dir);
+}
+
+int shell_api_dir_count(const char *path) {
+    int drive = active_drive();
+    uint32_t dir = LAINFS_ROOT_DIR;
+    uint32_t count = 0;
+
+    if (drive < 0 || path == 0 ||
+        resolve_dir_path((char)('A' + drive), cwd_dirs[drive], path, &dir) != 0 ||
+        lainfs_child_count((char)('A' + drive), dir, &count) != 0) {
+        return -1;
+    }
+
+    return (int)count;
+}
+
+int shell_api_dir_name(const char *path, uint32_t index, char *buffer, uint32_t capacity) {
+    int drive = active_drive();
+    uint32_t dir = LAINFS_ROOT_DIR;
+    uint32_t type = 0;
+    uint32_t size = 0;
+
+    if (drive < 0 || path == 0 || buffer == 0 || capacity == 0 ||
+        resolve_dir_path((char)('A' + drive), cwd_dirs[drive], path, &dir) != 0 ||
+        lainfs_child_info((char)('A' + drive), dir, index, buffer, capacity, &type, &size) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int shell_api_dir_type(const char *path, uint32_t index) {
+    int drive = active_drive();
+    uint32_t dir = LAINFS_ROOT_DIR;
+    uint32_t type = 0;
+    uint32_t size = 0;
+    char name[32];
+
+    if (drive < 0 || path == 0 ||
+        resolve_dir_path((char)('A' + drive), cwd_dirs[drive], path, &dir) != 0 ||
+        lainfs_child_info((char)('A' + drive), dir, index, name, sizeof(name), &type, &size) != 0) {
+        return -1;
+    }
+
+    return (int)type;
+}
+
+int shell_api_dir_size(const char *path, uint32_t index) {
+    int drive = active_drive();
+    uint32_t dir = LAINFS_ROOT_DIR;
+    uint32_t type = 0;
+    uint32_t size = 0;
+    char name[32];
+
+    if (drive < 0 || path == 0 ||
+        resolve_dir_path((char)('A' + drive), cwd_dirs[drive], path, &dir) != 0 ||
+        lainfs_child_info((char)('A' + drive), dir, index, name, sizeof(name), &type, &size) != 0) {
+        return -1;
+    }
+
+    return (int)size;
+}
+
+static int copy_command_arg(const char *text, char *command, uint32_t command_size) {
+    uint32_t i = 0;
+
+    if (text == 0 || command == 0 || command_size == 0 || *text == '\0') {
+        return -1;
+    }
+
+    while (text[i] && i + 1u < command_size) {
+        command[i] = text[i];
+        ++i;
+    }
+    if (text[i] != '\0') {
+        return -1;
+    }
+    command[i] = '\0';
+    return 0;
+}
+
+int shell_api_zbuild(const char *target) {
+    static char manifest[ASM_SOURCE_SIZE + 1];
+    char command[64];
+    char output_name[32];
+    uint32_t build_dir = 0;
+    uint32_t output_size = 0;
+    int drive = active_drive();
+
+    if (drive < 0 || copy_command_arg(target, command, sizeof(command)) != 0 ||
+        zbuild_read_layout(drive,
+                           command,
+                           manifest,
+                           ASM_SOURCE_SIZE,
+                           &build_dir,
+                           output_name,
+                           sizeof(output_name),
+                           0,
+                           0,
+                           0,
+                           0,
+                           0) != 0) {
+        return -1;
+    }
+
+    cmd_zclean(command, 0);
+    cmd_zbuild(command, 0);
+    if (lainfs_load_file_in_dir((char)('A' + drive),
+                                build_dir,
+                                output_name,
+                                zinclude_buffers[0],
+                                ASM_SOURCE_SIZE,
+                                &output_size) != 0 ||
+        output_size == 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int shell_api_ztest(const char *target) {
+    static char manifest[ASM_SOURCE_SIZE + 1];
+    char command[64];
+    char output_name[32];
+    char testlog_name[32];
+    uint32_t build_dir = 0;
+    uint32_t testlog_size = 0;
+    int drive = active_drive();
+
+    if (drive < 0 || copy_command_arg(target, command, sizeof(command)) != 0 ||
+        make_suffixed_name(command, ".testlog", testlog_name, sizeof(testlog_name)) != 0 ||
+        zbuild_read_layout(drive,
+                           command,
+                           manifest,
+                           ASM_SOURCE_SIZE,
+                           &build_dir,
+                           output_name,
+                           sizeof(output_name),
+                           0,
+                           0,
+                           0,
+                           0,
+                           0) != 0) {
+        return -1;
+    }
+
+    cmd_ztest(command, 0);
+    if (lainfs_load_file_in_dir((char)('A' + drive),
+                                build_dir,
+                                testlog_name,
+                                zinclude_buffers[0],
+                                ASM_SOURCE_SIZE,
+                                &testlog_size) != 0 ||
+        testlog_size >= ASM_SOURCE_SIZE) {
+        return -1;
+    }
+    zinclude_buffers[0][testlog_size] = '\0';
+
+    return contains_text(zinclude_buffers[0], "\nstatus ok\n") ? 0 : -1;
+}
+
+int shell_api_zinstall(const char *target) {
+    static char manifest[ASM_SOURCE_SIZE + 1];
+    char command[64];
+    char output_name[32];
+    char install_name[32];
+    uint32_t build_dir = 0;
+    uint32_t install_dir = 0;
+    uint32_t installed_size = 0;
+    int drive = active_drive();
+
+    if (drive < 0 || copy_command_arg(target, command, sizeof(command)) != 0 ||
+        zbuild_read_layout(drive,
+                           command,
+                           manifest,
+                           ASM_SOURCE_SIZE,
+                           &build_dir,
+                           output_name,
+                           sizeof(output_name),
+                           &install_dir,
+                           install_name,
+                           sizeof(install_name),
+                           0,
+                           0) != 0) {
+        return -1;
+    }
+    (void)build_dir;
+    (void)output_name;
+
+    cmd_zinstall(command, 0);
+    if (lainfs_load_file_in_dir((char)('A' + drive),
+                                install_dir,
+                                install_name,
+                                zinclude_buffers[0],
+                                ASM_SOURCE_SIZE,
+                                &installed_size) != 0 ||
+        installed_size == 0) {
+        return -1;
+    }
+
+    return 0;
 }
 
 static void cmd_keymap(const char *args, const boot_info_t *info) {
@@ -1510,17 +2777,18 @@ static int compile_z_source_file(const char *name,
         return -10;
     }
 
-    status = lainfs_load_file_in_dir((char)('A' + drive),
-                                     cwd_dirs[drive],
-                                     name,
-                                     source,
-                                     ASM_SOURCE_SIZE,
-                                     source_size);
+    status = load_z_source_expanded((char)('A' + drive),
+                                    cwd_dirs[drive],
+                                    0,
+                                    0,
+                                    name,
+                                    source,
+                                    ASM_SOURCE_SIZE,
+                                    source_size);
     if (status != 0) {
         return status;
     }
 
-    source[*source_size] = '\0';
     zero_memory(zscript_output, sizeof(zscript_output));
 
     if (zscript_compile_source(source,
@@ -1583,6 +2851,22 @@ static void cmd_zc(const char *args, const boot_info_t *info) {
             console_put_dec64(compile_error_line);
         }
         console_puts("\n");
+        return;
+    }
+    if (status == -30) {
+        console_puts("zc failed: include nesting is too deep\n");
+        return;
+    }
+    if (status == -31) {
+        console_puts("zc failed: malformed include line\n");
+        return;
+    }
+    if (status == -32) {
+        console_puts("zc failed: expanded source is too large\n");
+        return;
+    }
+    if (status == -33) {
+        console_puts("zc failed: too many pragma once headers\n");
         return;
     }
     if (status != 0) {
@@ -1658,12 +2942,14 @@ static void cmd_zco(const char *args, const boot_info_t *info) {
         return;
     }
 
-    status = lainfs_load_file_in_dir((char)('A' + drive),
-                                     cwd_dirs[drive],
-                                     source_name,
-                                     source,
-                                     ASM_SOURCE_SIZE,
-                                     &source_size);
+    status = load_z_source_expanded((char)('A' + drive),
+                                    cwd_dirs[drive],
+                                    0,
+                                    0,
+                                    source_name,
+                                    source,
+                                    ASM_SOURCE_SIZE,
+                                    &source_size);
     if (status == -3) {
         console_puts("drive is not formatted as lainfs\n");
         return;
@@ -1672,12 +2958,27 @@ static void cmd_zco(const char *args, const boot_info_t *info) {
         console_puts(".Z source not found\n");
         return;
     }
+    if (status == -30) {
+        console_puts("zco failed: include nesting is too deep\n");
+        return;
+    }
+    if (status == -31) {
+        console_puts("zco failed: malformed include line\n");
+        return;
+    }
+    if (status == -32) {
+        console_puts("zco failed: expanded source is too large\n");
+        return;
+    }
+    if (status == -33) {
+        console_puts("zco failed: too many pragma once headers\n");
+        return;
+    }
     if (status != 0) {
         console_puts("zco failed: could not load source\n");
         return;
     }
 
-    source[source_size] = '\0';
     zero_memory(zscript_output, sizeof(zscript_output));
     make_zobject_prefix(output_name, label_prefix, sizeof(label_prefix));
     if (zscript_compile_source_object(source,
@@ -1843,6 +3144,949 @@ static void cmd_zlink(const char *args, const boot_info_t *info) {
     console_puts(" object(s)");
     console_puts(" to ");
     console_puts(output_name);
+    console_puts(" bytes=");
+    console_put_dec64(output_size);
+    console_puts("\n");
+}
+
+static void cmd_zbuild(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char manifest[ASM_SOURCE_SIZE + 1];
+    static char source[ASM_SOURCE_SIZE + 1];
+    const unsigned char *objects[ZLINK_MAX_OBJECTS];
+    uint32_t object_sizes[ZLINK_MAX_OBJECTS];
+    uint32_t object_count = 0;
+    uint32_t object_offset = 0;
+    uint32_t manifest_size = 0;
+    uint32_t output_size = 0;
+    uint32_t link_error_line = 0;
+    uint32_t source_dir = 0;
+    uint32_t build_dir = 0;
+    uint32_t include_dirs[Z_INCLUDE_MAX_DIRS];
+    uint32_t include_dir_count = 0;
+    char *mutable_args = (char *)args;
+    char *target_name = 0;
+    char *extra = 0;
+    char manifest_name[32];
+    char output_name[32];
+    char report_name[32];
+    uint32_t report_size = 0;
+    int drive = active_drive();
+    int status = 0;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+    source_dir = cwd_dirs[drive];
+    build_dir = cwd_dirs[drive];
+
+    split_first_arg(mutable_args, &target_name, &extra);
+    if (*target_name == '\0' || *extra != '\0') {
+        console_puts("usage: zbuild target\n");
+        console_puts("reads target.zbuild; lines are: source.Z [output.zo]\n");
+        return;
+    }
+
+    if (make_suffixed_name(target_name, ".zbuild", manifest_name, sizeof(manifest_name)) != 0 ||
+        make_suffixed_name(target_name, ".bin", output_name, sizeof(output_name)) != 0 ||
+        make_suffixed_name(target_name, ".buildlog", report_name, sizeof(report_name)) != 0) {
+        console_puts("zbuild failed: target name is too long\n");
+        return;
+    }
+
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     manifest_name,
+                                     manifest,
+                                     ASM_SOURCE_SIZE,
+                                     &manifest_size);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts("zbuild failed: manifest not found: ");
+        console_puts(manifest_name);
+        console_puts("\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zbuild failed: could not load manifest\n");
+        return;
+    }
+
+    manifest[manifest_size] = '\0';
+    zero_memory(asm_output, EXEC_BUFFER_SIZE);
+    include_dirs[include_dir_count++] = cwd_dirs[drive];
+
+    for (uint32_t pos = 0, line = 1; pos < manifest_size;) {
+        char *line_start = manifest + pos;
+        char *line_text;
+        char *source_name;
+        char *object_name;
+        char object_name_buffer[32];
+        uint32_t source_size = 0;
+        uint32_t asm_size = 0;
+        uint32_t object_size = 0;
+        uint32_t compile_error_line = 0;
+        char entry_label[32];
+        char label_prefix[8];
+
+        while (pos < manifest_size && manifest[pos] != '\n' && manifest[pos] != '\r') {
+            ++pos;
+        }
+        if (pos < manifest_size) {
+            manifest[pos++] = '\0';
+            if (pos < manifest_size && manifest[pos - 1u] == '\r' && manifest[pos] == '\n') {
+                manifest[pos++] = '\0';
+            }
+        }
+
+        line_text = skip_spaces(line_start);
+        if (*line_text == '\0' ||
+            *line_text == '#' ||
+            *line_text == ';' ||
+            (line_text[0] == '/' && line_text[1] == '/')) {
+            ++line;
+            continue;
+        }
+
+        split_first_arg(line_text, &source_name, &object_name);
+        if (streq(source_name, "src") || streq(source_name, "source")) {
+            char *dir_name = 0;
+            char *unused = 0;
+            split_first_arg(object_name, &dir_name, &unused);
+            if (*dir_name == '\0' || *unused != '\0' ||
+                resolve_dir_path((char)('A' + drive), cwd_dirs[drive], dir_name, &source_dir) != 0) {
+                console_puts("zbuild failed: bad src directive on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            ++line;
+            continue;
+        }
+        if (streq(source_name, "build")) {
+            char *dir_name = 0;
+            char *unused = 0;
+            split_first_arg(object_name, &dir_name, &unused);
+            if (*dir_name == '\0' || *unused != '\0' ||
+                resolve_dir_path((char)('A' + drive), cwd_dirs[drive], dir_name, &build_dir) != 0) {
+                console_puts("zbuild failed: bad build directive on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            ++line;
+            continue;
+        }
+        if (streq(source_name, "include")) {
+            char *dir_name = 0;
+            char *unused = 0;
+            uint32_t include_dir = 0;
+            split_first_arg(object_name, &dir_name, &unused);
+            if (*dir_name == '\0' || *unused != '\0' ||
+                include_dir_count >= Z_INCLUDE_MAX_DIRS ||
+                resolve_dir_path((char)('A' + drive), cwd_dirs[drive], dir_name, &include_dir) != 0) {
+                console_puts("zbuild failed: bad include directive on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            include_dirs[include_dir_count++] = include_dir;
+            ++line;
+            continue;
+        }
+        if (streq(source_name, "output")) {
+            char *directive_output = 0;
+            char *unused = 0;
+            split_first_arg(object_name, &directive_output, &unused);
+            if (*directive_output == '\0' || *unused != '\0') {
+                console_puts("zbuild failed: bad output directive on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            copy_text_limited(output_name, sizeof(output_name), directive_output);
+            ++line;
+            continue;
+        }
+        if (streq(source_name, "test-return") ||
+            streq(source_name, "install") ||
+            streq(source_name, "install-name")) {
+            ++line;
+            continue;
+        }
+
+        if (*object_name == '\0') {
+            if (make_object_name_from_source(source_name,
+                                             object_name_buffer,
+                                             sizeof(object_name_buffer)) != 0) {
+                console_puts("zbuild failed: bad source name on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            object_name = object_name_buffer;
+        } else {
+            char *unused = 0;
+            char *first_object_name = object_name;
+            split_first_arg(object_name, &first_object_name, &unused);
+            if (*unused != '\0') {
+                console_puts("zbuild failed: too many fields on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            object_name = first_object_name;
+        }
+
+        if (object_count >= ZLINK_MAX_OBJECTS) {
+            console_puts("zbuild failed: too many objects; max=");
+            console_put_dec64(ZLINK_MAX_OBJECTS);
+            console_puts("\n");
+            return;
+        }
+
+        status = load_z_source_expanded((char)('A' + drive),
+                                        source_dir,
+                                        include_dirs,
+                                        include_dir_count,
+                                        source_name,
+                                        source,
+                                        ASM_SOURCE_SIZE,
+                                        &source_size);
+        if (status == -5) {
+            console_puts("zbuild failed: source not found on line ");
+            console_put_dec64(line);
+            console_puts(": ");
+            console_puts(source_name);
+            console_puts("\n");
+            return;
+        }
+        if (status == -30) {
+            console_puts("zbuild failed: include nesting is too deep on line ");
+            console_put_dec64(line);
+            console_puts("\n");
+            return;
+        }
+        if (status == -31) {
+            console_puts("zbuild failed: malformed include while loading line ");
+            console_put_dec64(line);
+            console_puts("\n");
+            return;
+        }
+        if (status == -32) {
+            console_puts("zbuild failed: expanded source is too large on line ");
+            console_put_dec64(line);
+            console_puts("\n");
+            return;
+        }
+        if (status == -33) {
+            console_puts("zbuild failed: too many pragma once headers on line ");
+            console_put_dec64(line);
+            console_puts("\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("zbuild failed: could not load source on line ");
+            console_put_dec64(line);
+            console_puts("\n");
+            return;
+        }
+
+        zero_memory(zscript_output, sizeof(zscript_output));
+        make_zobject_prefix(object_name, label_prefix, sizeof(label_prefix));
+        if (zscript_compile_source_object(source,
+                                          source_size,
+                                          label_prefix,
+                                          zscript_output,
+                                          ASM_SOURCE_SIZE,
+                                          &asm_size,
+                                          &compile_error_line,
+                                          entry_label,
+                                          sizeof(entry_label)) != 0) {
+            console_puts("zbuild failed: ");
+            console_puts(source_name);
+            console_puts(" unsupported .Z syntax");
+            if (compile_error_line != 0) {
+                console_puts(" on line ");
+                console_put_dec64(compile_error_line);
+            }
+            console_puts("\n");
+            return;
+        }
+        zscript_output[asm_size] = '\0';
+
+        zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+        if (zobject_from_asm(zscript_output,
+                             asm_size,
+                             entry_label,
+                             exec_buffer,
+                             EXEC_BUFFER_SIZE,
+                             &object_size) != 0) {
+            console_puts("zbuild failed: object too large for ");
+            console_puts(source_name);
+            console_puts("\n");
+            return;
+        }
+
+        status = lainfs_save_file_in_dir((char)('A' + drive),
+                                         build_dir,
+                                         object_name,
+                                         (const char *)exec_buffer,
+                                         object_size);
+        if (status == -9) {
+            console_puts("zbuild failed: disk is full while saving ");
+            console_puts(object_name);
+            console_puts("\n");
+            return;
+        }
+        if (status != 0) {
+            console_puts("zbuild failed: could not save ");
+            console_puts(object_name);
+            console_puts("\n");
+            return;
+        }
+
+        if (object_size > EXEC_BUFFER_SIZE ||
+            object_offset > EXEC_BUFFER_SIZE - object_size) {
+            console_puts("zbuild failed: object set is too large\n");
+            return;
+        }
+
+        objects[object_count] = asm_output + object_offset;
+        object_sizes[object_count] = object_size;
+        copy_bytes(asm_output + object_offset, exec_buffer, object_size);
+        object_offset += object_size;
+        ++object_count;
+
+        console_puts("zbuild: ");
+        console_puts(source_name);
+        console_puts(" -> ");
+        console_puts(object_name);
+        console_puts(" bytes=");
+        console_put_dec64(object_size);
+        console_puts("\n");
+        ++line;
+    }
+
+    if (object_count == 0) {
+        console_puts("zbuild failed: manifest has no sources\n");
+        return;
+    }
+
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    if (zobject_link_flat_many(objects,
+                               object_sizes,
+                               object_count,
+                               exec_buffer,
+                               EXEC_BUFFER_SIZE,
+                               (uint64_t)(uintptr_t)exec_buffer,
+                               &output_size,
+                               &link_error_line) != 0) {
+        console_puts("zbuild failed: link failed");
+        if (link_error_line != 0) {
+            console_puts(" asm line ");
+            console_put_dec64(link_error_line);
+        }
+        console_puts("\n");
+        return;
+    }
+
+    status = lainfs_save_file_in_dir((char)('A' + drive),
+                                     build_dir,
+                                     output_name,
+                                     (const char *)exec_buffer,
+                                     output_size);
+    if (status == -9) {
+        console_puts("zbuild failed: disk is full while saving output\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zbuild failed: could not save output\n");
+        return;
+    }
+
+    zbuild_report[0] = '\0';
+    if (append_text_limited(zbuild_report, sizeof(zbuild_report), &report_size, "target ") != 0 ||
+        append_text_limited(zbuild_report, sizeof(zbuild_report), &report_size, target_name) != 0 ||
+        append_text_limited(zbuild_report, sizeof(zbuild_report), &report_size, "\nobjects ") != 0 ||
+        append_dec_limited(zbuild_report, sizeof(zbuild_report), &report_size, object_count) != 0 ||
+        append_text_limited(zbuild_report, sizeof(zbuild_report), &report_size, "\noutput ") != 0 ||
+        append_text_limited(zbuild_report, sizeof(zbuild_report), &report_size, output_name) != 0 ||
+        append_text_limited(zbuild_report, sizeof(zbuild_report), &report_size, "\nbytes ") != 0 ||
+        append_dec_limited(zbuild_report, sizeof(zbuild_report), &report_size, output_size) != 0 ||
+        append_text_limited(zbuild_report, sizeof(zbuild_report), &report_size, "\nstatus ok\n") != 0) {
+        report_size = 0;
+    }
+    if (report_size != 0) {
+        status = lainfs_save_file_in_dir((char)('A' + drive),
+                                         build_dir,
+                                         report_name,
+                                         zbuild_report,
+                                         report_size);
+        if (status != 0) {
+            console_puts("zbuild warning: could not save build log\n");
+        }
+    }
+
+    console_puts("zbuild: linked ");
+    console_put_dec64(object_count);
+    console_puts(" object(s) to ");
+    console_puts(output_name);
+    console_puts(" bytes=");
+    console_put_dec64(output_size);
+    console_puts("\n");
+}
+
+static void cmd_zclean(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char manifest[ASM_SOURCE_SIZE + 1];
+    uint32_t manifest_size = 0;
+    uint32_t build_dir = 0;
+    uint32_t removed_count = 0;
+    char *mutable_args = (char *)args;
+    char *target_name = 0;
+    char *extra = 0;
+    char manifest_name[32];
+    char output_name[32];
+    char report_name[32];
+    char testlog_name[32];
+    int drive = active_drive();
+    int status = 0;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+    build_dir = cwd_dirs[drive];
+
+    split_first_arg(mutable_args, &target_name, &extra);
+    if (*target_name == '\0' || *extra != '\0') {
+        console_puts("usage: zclean target\n");
+        return;
+    }
+
+    if (make_suffixed_name(target_name, ".zbuild", manifest_name, sizeof(manifest_name)) != 0 ||
+        make_suffixed_name(target_name, ".bin", output_name, sizeof(output_name)) != 0 ||
+        make_suffixed_name(target_name, ".buildlog", report_name, sizeof(report_name)) != 0 ||
+        make_suffixed_name(target_name, ".testlog", testlog_name, sizeof(testlog_name)) != 0) {
+        console_puts("zclean failed: target name is too long\n");
+        return;
+    }
+
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     manifest_name,
+                                     manifest,
+                                     ASM_SOURCE_SIZE,
+                                     &manifest_size);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts("zclean failed: manifest not found: ");
+        console_puts(manifest_name);
+        console_puts("\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zclean failed: could not load manifest\n");
+        return;
+    }
+
+    manifest[manifest_size] = '\0';
+
+    for (uint32_t pos = 0, line = 1; pos < manifest_size;) {
+        char *line_start = manifest + pos;
+        char *line_text;
+        char *source_name;
+        char *object_name;
+        char object_name_buffer[32];
+
+        while (pos < manifest_size && manifest[pos] != '\n' && manifest[pos] != '\r') {
+            ++pos;
+        }
+        if (pos < manifest_size) {
+            manifest[pos++] = '\0';
+            if (pos < manifest_size && manifest[pos - 1u] == '\r' && manifest[pos] == '\n') {
+                manifest[pos++] = '\0';
+            }
+        }
+
+        line_text = skip_spaces(line_start);
+        if (*line_text == '\0' ||
+            *line_text == '#' ||
+            *line_text == ';' ||
+            (line_text[0] == '/' && line_text[1] == '/')) {
+            ++line;
+            continue;
+        }
+
+        split_first_arg(line_text, &source_name, &object_name);
+        if (streq(source_name, "build")) {
+            char *dir_name = 0;
+            char *unused = 0;
+            split_first_arg(object_name, &dir_name, &unused);
+            if (*dir_name == '\0' || *unused != '\0' ||
+                resolve_dir_path((char)('A' + drive), cwd_dirs[drive], dir_name, &build_dir) != 0) {
+                console_puts("zclean failed: bad build directive on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            ++line;
+            continue;
+        }
+        if (streq(source_name, "output")) {
+            char *directive_output = 0;
+            char *unused = 0;
+            split_first_arg(object_name, &directive_output, &unused);
+            if (*directive_output == '\0' || *unused != '\0') {
+                console_puts("zclean failed: bad output directive on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            copy_text_limited(output_name, sizeof(output_name), directive_output);
+            ++line;
+            continue;
+        }
+        if (streq(source_name, "src") ||
+            streq(source_name, "source") ||
+            streq(source_name, "include") ||
+            streq(source_name, "test-return") ||
+            streq(source_name, "install") ||
+            streq(source_name, "install-name")) {
+            ++line;
+            continue;
+        }
+
+        if (*object_name == '\0') {
+            if (make_object_name_from_source(source_name,
+                                             object_name_buffer,
+                                             sizeof(object_name_buffer)) != 0) {
+                console_puts("zclean failed: bad source name on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            object_name = object_name_buffer;
+        } else {
+            char *unused = 0;
+            char *first_object_name = object_name;
+            split_first_arg(object_name, &first_object_name, &unused);
+            if (*unused != '\0') {
+                console_puts("zclean failed: too many fields on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            object_name = first_object_name;
+        }
+
+        status = lainfs_delete_in_dir((char)('A' + drive), build_dir, object_name);
+        if (status == 0) {
+            ++removed_count;
+        } else if (status != -5) {
+            console_puts("zclean failed: could not remove ");
+            console_puts(object_name);
+            console_puts("\n");
+            return;
+        }
+        ++line;
+    }
+
+    status = lainfs_delete_in_dir((char)('A' + drive), build_dir, output_name);
+    if (status == 0) {
+        ++removed_count;
+    } else if (status != -5) {
+        console_puts("zclean failed: could not remove output\n");
+        return;
+    }
+
+    status = lainfs_delete_in_dir((char)('A' + drive), build_dir, report_name);
+    if (status == 0) {
+        ++removed_count;
+    } else if (status != -5) {
+        console_puts("zclean failed: could not remove build log\n");
+        return;
+    }
+
+    status = lainfs_delete_in_dir((char)('A' + drive), build_dir, testlog_name);
+    if (status == 0) {
+        ++removed_count;
+    } else if (status != -5) {
+        console_puts("zclean failed: could not remove test log\n");
+        return;
+    }
+
+    console_puts("zclean: removed ");
+    console_put_dec64(removed_count);
+    console_puts(" artifact(s)\n");
+}
+
+static int zbuild_read_layout(int drive,
+                              const char *target_name,
+                              char *manifest,
+                              uint32_t manifest_capacity,
+                              uint32_t *build_dir,
+                              char *output_name,
+                              uint32_t output_name_size,
+                              uint32_t *install_dir,
+                              char *install_name,
+                              uint32_t install_name_size,
+                              uint64_t *expected_return,
+                              int *has_expected_return) {
+    uint32_t manifest_size = 0;
+    char manifest_name[32];
+    int status;
+
+    if (make_suffixed_name(target_name, ".zbuild", manifest_name, sizeof(manifest_name)) != 0 ||
+        make_suffixed_name(target_name, ".bin", output_name, output_name_size) != 0) {
+        return -20;
+    }
+
+    *build_dir = cwd_dirs[drive];
+    if (install_dir) {
+        *install_dir = cwd_dirs[drive];
+    }
+    if (install_name && install_name_size != 0) {
+        install_name[0] = '\0';
+    }
+    if (has_expected_return) {
+        *has_expected_return = 0;
+    }
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     manifest_name,
+                                     manifest,
+                                     manifest_capacity,
+                                     &manifest_size);
+    if (status != 0) {
+        return status;
+    }
+    manifest[manifest_size] = '\0';
+
+    for (uint32_t pos = 0; pos < manifest_size;) {
+        char *line_start = manifest + pos;
+        char *line_text;
+        char *first;
+        char *rest;
+
+        while (pos < manifest_size && manifest[pos] != '\n' && manifest[pos] != '\r') {
+            ++pos;
+        }
+        if (pos < manifest_size) {
+            manifest[pos++] = '\0';
+            if (pos < manifest_size && manifest[pos - 1u] == '\r' && manifest[pos] == '\n') {
+                manifest[pos++] = '\0';
+            }
+        }
+
+        line_text = skip_spaces(line_start);
+        if (*line_text == '\0' ||
+            *line_text == '#' ||
+            *line_text == ';' ||
+            (line_text[0] == '/' && line_text[1] == '/')) {
+            continue;
+        }
+
+        split_first_arg(line_text, &first, &rest);
+        if (streq(first, "build")) {
+            char *dir_name = 0;
+            char *unused = 0;
+            split_first_arg(rest, &dir_name, &unused);
+            if (*dir_name == '\0' || *unused != '\0' ||
+                resolve_dir_path((char)('A' + drive), cwd_dirs[drive], dir_name, build_dir) != 0) {
+                return -21;
+            }
+        } else if (streq(first, "output")) {
+            char *name = 0;
+            char *unused = 0;
+            split_first_arg(rest, &name, &unused);
+            if (*name == '\0' || *unused != '\0') {
+                return -22;
+            }
+            copy_text_limited(output_name, output_name_size, name);
+        } else if (streq(first, "install")) {
+            char *dir_name = 0;
+            char *unused = 0;
+            split_first_arg(rest, &dir_name, &unused);
+            if (*dir_name == '\0' || *unused != '\0' ||
+                (install_dir &&
+                 resolve_dir_path((char)('A' + drive), cwd_dirs[drive], dir_name, install_dir) != 0)) {
+                return -24;
+            }
+        } else if (streq(first, "install-name")) {
+            char *name = 0;
+            char *unused = 0;
+            split_first_arg(rest, &name, &unused);
+            if (*name == '\0' || *unused != '\0') {
+                return -25;
+            }
+            if (install_name && install_name_size != 0) {
+                copy_text_limited(install_name, install_name_size, name);
+            }
+        } else if (streq(first, "test-return")) {
+            char *value_text = 0;
+            char *unused = 0;
+            uint64_t value = 0;
+            split_first_arg(rest, &value_text, &unused);
+            if (*value_text == '\0' || *unused != '\0' ||
+                parse_u64_arg(value_text, &value) != 0) {
+                return -23;
+            }
+            if (expected_return) {
+                *expected_return = value;
+            }
+            if (has_expected_return) {
+                *has_expected_return = 1;
+            }
+        }
+    }
+
+    if (install_name && install_name_size != 0 && install_name[0] == '\0') {
+        copy_text_limited(install_name, install_name_size, output_name);
+    }
+
+    return 0;
+}
+
+static void cmd_ztest(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *mutable_args = (char *)args;
+    char *target_name = 0;
+    char *extra = 0;
+    char output_name[32];
+    char testlog_name[32];
+    uint32_t build_dir = 0;
+    uint32_t output_size = 0;
+    uint32_t report_size = 0;
+    uint64_t result = 0;
+    uint64_t expected_return = 0;
+    int has_expected_return = 0;
+    int passed = 1;
+    int drive = active_drive();
+    int status;
+
+    static const exec_api_t api = {
+        EXEC_API_MAGIC,
+        1,
+        console_puts,
+        console_put_hex64,
+        console_put_dec64,
+        timer_ticks,
+    };
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    split_first_arg(mutable_args, &target_name, &extra);
+    if (*target_name == '\0' || *extra != '\0') {
+        console_puts("usage: ztest target\n");
+        return;
+    }
+
+    if (make_suffixed_name(target_name, ".testlog", testlog_name, sizeof(testlog_name)) != 0) {
+        console_puts("ztest failed: target name is too long\n");
+        return;
+    }
+
+    status = zbuild_read_layout(drive,
+                                target_name,
+                                manifest,
+                                ASM_SOURCE_SIZE,
+                                &build_dir,
+                                output_name,
+                                sizeof(output_name),
+                                0,
+                                0,
+                                0,
+                                &expected_return,
+                                &has_expected_return);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts("ztest failed: manifest not found\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("ztest failed: bad manifest layout\n");
+        return;
+    }
+
+    cmd_zclean(target_name, 0);
+    cmd_zbuild(target_name, 0);
+
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     build_dir,
+                                     output_name,
+                                     (char *)exec_buffer,
+                                     EXEC_BUFFER_SIZE,
+                                     &output_size);
+    if (status == -5) {
+        console_puts("ztest failed: build did not produce output\n");
+        return;
+    }
+    if (status != 0 || output_size == 0) {
+        console_puts("ztest failed: could not load output\n");
+        return;
+    }
+
+    console_puts("ztest: running ");
+    console_puts(output_name);
+    console_puts("\n");
+    result = ((exec_program_ret_t)(uintptr_t)exec_buffer)(&api);
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    if (has_expected_return && result != expected_return) {
+        passed = 0;
+    }
+
+    ztest_report[0] = '\0';
+    if (append_text_limited(ztest_report, sizeof(ztest_report), &report_size, "target ") == 0 &&
+        append_text_limited(ztest_report, sizeof(ztest_report), &report_size, target_name) == 0 &&
+        append_text_limited(ztest_report, sizeof(ztest_report), &report_size, "\noutput ") == 0 &&
+        append_text_limited(ztest_report, sizeof(ztest_report), &report_size, output_name) == 0 &&
+        append_text_limited(ztest_report, sizeof(ztest_report), &report_size, "\nresult ") == 0 &&
+        append_dec_limited(ztest_report, sizeof(ztest_report), &report_size, result) == 0 &&
+        (!has_expected_return ||
+         (append_text_limited(ztest_report, sizeof(ztest_report), &report_size, "\nexpected ") == 0 &&
+          append_dec_limited(ztest_report, sizeof(ztest_report), &report_size, expected_return) == 0)) &&
+        append_text_limited(ztest_report, sizeof(ztest_report), &report_size, passed ? "\nstatus ok\n" : "\nstatus failed\n") == 0) {
+        status = lainfs_save_file_in_dir((char)('A' + drive),
+                                         build_dir,
+                                         testlog_name,
+                                         ztest_report,
+                                         report_size);
+        if (status != 0) {
+            console_puts("ztest warning: could not save test log\n");
+        }
+    }
+
+    console_puts("ztest: result=");
+    console_put_dec64(result);
+    if (has_expected_return) {
+        console_puts(" expected=");
+        console_put_dec64(expected_return);
+    }
+    console_puts(passed ? " ok\n" : " failed\n");
+}
+
+static void cmd_zinstall(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *mutable_args = (char *)args;
+    char *target_name = 0;
+    char *dest_path = 0;
+    char *extra = 0;
+    char output_name[32];
+    char install_name[32];
+    uint32_t build_dir = 0;
+    uint32_t install_dir = 0;
+    uint32_t output_size = 0;
+    int drive = active_drive();
+    int status;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    split_first_arg(mutable_args, &target_name, &dest_path);
+    split_first_arg(dest_path, &dest_path, &extra);
+    if (*target_name == '\0' || *extra != '\0') {
+        console_puts("usage: zinstall target [dest.bin]\n");
+        return;
+    }
+
+    status = zbuild_read_layout(drive,
+                                target_name,
+                                manifest,
+                                ASM_SOURCE_SIZE,
+                                &build_dir,
+                                output_name,
+                                sizeof(output_name),
+                                &install_dir,
+                                install_name,
+                                sizeof(install_name),
+                                0,
+                                0);
+    if (status == -3) {
+        console_puts("drive is not formatted as lainfs\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts("zinstall failed: manifest not found\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zinstall failed: bad manifest layout\n");
+        return;
+    }
+
+    if (*dest_path != '\0' &&
+        resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          dest_path,
+                          &install_dir,
+                          install_name,
+                          sizeof(install_name)) != 0) {
+        console_puts("zinstall failed: bad install path\n");
+        return;
+    }
+
+    cmd_zclean(target_name, 0);
+    cmd_zbuild(target_name, 0);
+
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     build_dir,
+                                     output_name,
+                                     (char *)exec_buffer,
+                                     EXEC_BUFFER_SIZE,
+                                     &output_size);
+    if (status == -5) {
+        console_puts("zinstall failed: build did not produce output\n");
+        return;
+    }
+    if (status != 0 || output_size == 0) {
+        console_puts("zinstall failed: could not load output\n");
+        return;
+    }
+
+    status = lainfs_save_file_in_dir((char)('A' + drive),
+                                     install_dir,
+                                     install_name,
+                                     (const char *)exec_buffer,
+                                     output_size);
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    if (status == -9) {
+        console_puts("zinstall failed: disk is full\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("zinstall failed: could not save installed output\n");
+        return;
+    }
+
+    console_puts("zinstall: installed ");
+    console_puts(output_name);
+    console_puts(" as ");
+    console_puts(install_name);
     console_puts(" bytes=");
     console_put_dec64(output_size);
     console_puts("\n");
@@ -2130,6 +4374,22 @@ static void cmd_zrun(const char *args, const boot_info_t *info) {
         console_puts("\n");
         return;
     }
+    if (status == -30) {
+        console_puts("zrun failed: include nesting is too deep\n");
+        return;
+    }
+    if (status == -31) {
+        console_puts("zrun failed: malformed include line\n");
+        return;
+    }
+    if (status == -32) {
+        console_puts("zrun failed: expanded source is too large\n");
+        return;
+    }
+    if (status == -33) {
+        console_puts("zrun failed: too many pragma once headers\n");
+        return;
+    }
     if (status != 0) {
         console_puts("zrun failed: could not load source\n");
         return;
@@ -2209,6 +4469,22 @@ static void cmd_zasm(const char *args, const boot_info_t *info) {
             console_put_dec64(compile_error_line);
         }
         console_puts("\n");
+        return;
+    }
+    if (status == -30) {
+        console_puts("zasm failed: include nesting is too deep\n");
+        return;
+    }
+    if (status == -31) {
+        console_puts("zasm failed: malformed include line\n");
+        return;
+    }
+    if (status == -32) {
+        console_puts("zasm failed: expanded source is too large\n");
+        return;
+    }
+    if (status == -33) {
+        console_puts("zasm failed: too many pragma once headers\n");
         return;
     }
     if (status != 0) {

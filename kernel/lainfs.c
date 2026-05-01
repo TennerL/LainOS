@@ -9,8 +9,8 @@
 #define LAINFS_MAX_FILE_BLOCKS (LAINFS_FILE_CAPACITY / LAINFS_BLOCK_SIZE)
 #define LAINFS_MAGIC0 0x4E49414Cu
 #define LAINFS_MAGIC1 0x315346u
-#define LAINFS_ENTRY_FILE 1u
-#define LAINFS_ENTRY_DIR 2u
+#define LAINFS_ENTRY_FILE LAINFS_ENTRY_TYPE_FILE
+#define LAINFS_ENTRY_DIR LAINFS_ENTRY_TYPE_DIR
 
 typedef struct __attribute__((packed)) {
     uint32_t magic0;
@@ -692,6 +692,89 @@ int lainfs_parent_dir(char drive_letter, uint32_t dir_id, uint32_t *out_parent_i
     }
 
     return 0;
+}
+
+int lainfs_child_count(char drive_letter, uint32_t parent_id, uint32_t *out_count) {
+    const mount_t *mount = mount_for_drive(drive_letter);
+    lainfs_superblock_t super;
+    uint32_t count = 0;
+
+    if (!mount || out_count == 0) {
+        return -1;
+    }
+
+    if (read_super(mount->partition_index, &super) != 0) {
+        return -2;
+    }
+
+    if (load_directory(mount->partition_index, &super) != 0) {
+        return -3;
+    }
+
+    if (!valid_dir_id(parent_id)) {
+        return -5;
+    }
+
+    for (uint32_t i = 0; i < LAINFS_MAX_FILES; ++i) {
+        lainfs_dirent_t *entry = dir_entry(i);
+        if (entry->used && entry_parent_id(entry) == parent_id) {
+            ++count;
+        }
+    }
+
+    *out_count = count;
+    return 0;
+}
+
+int lainfs_child_info(char drive_letter,
+                      uint32_t parent_id,
+                      uint32_t child_index,
+                      char *out_name,
+                      uint32_t out_name_size,
+                      uint32_t *out_type,
+                      uint32_t *out_size) {
+    const mount_t *mount = mount_for_drive(drive_letter);
+    lainfs_superblock_t super;
+    uint32_t seen = 0;
+
+    if (!mount || out_name == 0 || out_name_size == 0 || out_type == 0 || out_size == 0) {
+        return -1;
+    }
+
+    if (read_super(mount->partition_index, &super) != 0) {
+        return -2;
+    }
+
+    if (load_directory(mount->partition_index, &super) != 0) {
+        return -3;
+    }
+
+    if (!valid_dir_id(parent_id)) {
+        return -5;
+    }
+
+    for (uint32_t i = 0; i < LAINFS_MAX_FILES; ++i) {
+        lainfs_dirent_t *entry = dir_entry(i);
+        if (!entry->used || entry_parent_id(entry) != parent_id) {
+            continue;
+        }
+
+        if (seen == child_index) {
+            uint32_t n = 0;
+            while (entry->name[n] && n + 1u < out_name_size) {
+                out_name[n] = entry->name[n];
+                ++n;
+            }
+            out_name[n] = '\0';
+            *out_type = entry->used;
+            *out_size = entry->used == LAINFS_ENTRY_DIR ? 0 : entry->byte_size;
+            return 0;
+        }
+
+        ++seen;
+    }
+
+    return -6;
 }
 
 int lainfs_write_file(char drive_letter, const char *name, const char *text) {

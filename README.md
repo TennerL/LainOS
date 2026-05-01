@@ -89,12 +89,14 @@ Magic value:
 0x4C41494E424F4F54ULL
 ```
 
-## Tiny framebuffer console
+## Tiny framebuffer graphics and console
 
-The kernel now includes a very small software text renderer:
+The kernel now includes a very small framebuffer graphics driver and software
+text renderer:
 - fixed 8x8 bitmap glyphs
 - contiguous ASCII font table for readable output
-- direct pixel writes into the GOP framebuffer
+- GOP framebuffer setup with RGB/BGR pixel packing
+- direct pixel writes plus filled rectangles, stroked rectangles, and lines
 - restored darker blue-toned background
 - configurable foreground text
 - line wrapping
@@ -110,8 +112,8 @@ The kernel now includes a very small software text renderer:
 Right now it is intentionally simple:
 - formatter currently supports only a small subset like `%s`, `%x`, `%u`, `%c`
 - no color escape support
-- assumes a 32 bit linear framebuffer layout that works for common GOP modes
-- no framebuffer format conversion layer yet
+- assumes a 32 bit linear framebuffer
+- supports the common UEFI RGB/BGR layouts, but not arbitrary GOP bitmasks yet
 - panic path currently depends on console initialization succeeding
 
 ## Requirements
@@ -160,6 +162,28 @@ That reduces the chance of silent ABI drift while the project grows.
 make clean
 make
 ```
+
+To request a boot-time GOP framebuffer resolution, rebuild with:
+
+```bash
+make BOOT_RES_WIDTH=1024 BOOT_RES_HEIGHT=768
+```
+
+If firmware does not expose that exact RGB/BGR mode, the loader prints a message
+and keeps the firmware default. Resolution changes happen in the UEFI loader
+before `ExitBootServices`; the kernel receives the selected mode through
+`boot_info`.
+
+You can also set the next boot's requested mode from inside the OS after
+mounting a lainfs drive:
+
+```text
+resolution 1024 768
+```
+
+This writes `bootres.cfg` at the lainfs root. On the next boot, the UEFI loader
+scans lainfs block devices and MBR partitions for that file, then applies the
+requested GOP mode if firmware exposes it.
 
 This creates:
 - `build/bootloader.so`
@@ -361,6 +385,8 @@ The kernel console has a tiny command shell:
 - `help` - show commands
 - `bgcolor 0xRRGGBB` - set the background color
 - `fgcolor 0xRRGGBB` - set the text color
+- `resolution [width height]` - show the current framebuffer mode or write a
+  next-boot `bootres.cfg` request to lainfs
 - `keymap us|de` - set the keyboard layout; put `keymap de` in `autoexec` to apply it at boot
 - `clear` - clear the screen
 - `echo text` - print text
@@ -383,6 +409,7 @@ The kernel console has a tiny command shell:
 - `mkdir name` - create a directory entry
 - `rm name` / `del name` - delete a file or directory entry
 - `rename old new` / `mv old new` - rename or move a file or directory entry
+- `cp source dest` - copy a file
 - `write name text` - write a text file to the current drive
 - `cat name` - print a text file from the current drive
 - `asm source.asm output.bin` - assemble a tiny x86_64 source file
@@ -497,7 +524,7 @@ building blocks:
 - data directives: `db` accepts decimal/hex bytes and quoted strings with
   escapes such as `\n`, `\r`, `\t`, `\0`, `\"`, `\\`; `dq` accepts numbers,
   labels, and exposed kernel symbols
-- exposed kernel symbols callable from asm include `puts`, `put_hex64`,
+- exposed kernel symbols come from `kernel/kernel_exports.c` and include `puts`, `put_hex64`,
   `put_dec64`, `ticks`, `mem_total_kb`, `mem_free_kb`, `mem_used_kb`,
   `cpu_count`, `cpu_usage`, `put_pixel`, `put_char_at`, `put_dec_at`,
   `set_margin`, and `statusbar_enable`
@@ -543,7 +570,14 @@ Current workflow:
 - object functions can cross-call by name with `export int name(...) { ... }`
   in the defining object and `extern int name(...);` in the caller; the linker
   validates exported/extern symbol records against both linked objects and
-  exposed kernel symbols before resolving the final call relocations
+  the shared kernel export table before applying relocation records
+- self-hosted build path: `zbuild kernel` reads `kernel.zbuild`, compiles each
+  listed `.Z` file to a `.zo`, links the objects, reports the first failing
+  source/link error, writes all artifacts back to lainfs, and saves a
+  `kernel.buildlog`; `zclean kernel` removes those build artifacts and
+  `ztest kernel` rebuilds/runs the linked output and saves `kernel.testlog`
+- shared source declarations with `#include "file.Z"` are expanded by the
+  in-OS `.Z` commands before compilation, with nested includes capped at 4
 - use `zasm demo.Z` to print the generated asm
 - or `zasm demo.Z demo.asm` to save it as a text file
 
@@ -557,9 +591,13 @@ Supported `.Z` subset:
   `uint16_t`, `int16_t`, `uint32_t`, `int32_t`, `uint64_t`, `int64_t`
 - `const` and `volatile` qualifiers are accepted on declarations and casts;
   they document intent but do not yet enforce read-only or volatile access rules
+- enum integer constants, including anonymous enums:
+  `enum { Width = 80, Height = 25, Error = -1, };`
 - integer and void functions with up to 6 parameters:
   `int add(int a, int b) { return a + b; }`
   `void line(void) { print("\n"); return; }`
+- forward function prototypes before function bodies, including unnamed
+  prototype parameters: `int add(int, int);`
 - top-level statements and declarations outside explicit functions; these are
   lowered into the implicit entry routine that `zrun`/`exec` starts from
 - local variables inside functions
@@ -567,6 +605,8 @@ Supported `.Z` subset:
 - fixed-size local arrays such as `int values[4];`
 - brace initialization for fixed-size local arrays such as `int values[4] = {1, 2, 3, 4};`,
   including trailing commas; scalar declarations also accept one-value braces
+- string-literal initialization for local byte arrays such as
+  `uint8_t name[16] = "sysstat";`
 - multidimensional local arrays such as `int grid[2][3];`
 - top-level struct definitions with integer fields
 - assignment: `counter = counter + 1;`
@@ -608,6 +648,11 @@ Supported `.Z` subset:
   - `print(expr);` for decimal output
   - `print_hex(expr);`
   - `put_pixel(x, y, color);`
+  - `gfx_width()`, `gfx_height()`, `gfx_pitch()`, `gfx_format()`
+  - `gfx_fill_rect(x, y, w, h, color);`
+  - `gfx_draw_rect(x, y, w, h, color);`
+  - `gfx_draw_line(x0, y0, x1, y1, color);`
+  - `gfx_clear(color);`
   - `put_char_at(col, row, ch);`
   - `put_dec_at(col, row, expr);`
   - `set_margin(x, y);` to reserve screen space, for example below a custom status bar
@@ -635,8 +680,8 @@ print("\n");
 return value;
 ```
 
-This is still not full C. Preprocessing and type checking are not
-implemented yet. Current pointer support is intentionally narrow:
+This is still not full C. Preprocessing, include files, function pointer calls,
+bitfields, and stronger type checking are not implemented yet. Current pointer support is intentionally narrow:
 address-of works for compiler-known locals, globals, array elements, and struct
 fields, dereference is scalar-only, and pointer arithmetic is limited to
 `pointer +/- integer` scaling. Current array support is also narrow: arrays are
@@ -660,19 +705,88 @@ comparison semantics are now wired into relational operators, but `.Z` still
 does not provide whole-struct assignment, struct parameters, or struct returns.
 
 The `.zo` object format is a first in-OS toolchain checkpoint, not the final
-kernel object ABI. Version 3 stores generated assembly, a namespaced entry
-symbol, exported function symbols, and external function references in a small
-binary container; `zlink` validates duplicate/missing symbols and combines one
-or more objects into the flat executable format used by `exec`. `zmod` uses the
-same linker in memory, also allowing extern references to resolve against the
-small exposed kernel symbol table and any resident module exports, then calls
-the linked module initializer and keeps the module image resident. `zmods`
-lists resident module slots and final export addresses.
-Relocation is still intentionally narrow: the linker builds one assembly unit
-and the in-kernel assembler resolves rel32 calls and RIP-relative label
-references in the final pass. Real section records, dependency-aware unload
-hooks, and independently relocatable binary sections remain the next milestones
-before `.Z` can build loadable kernel modules or the kernel image itself.
+kernel object ABI. Version 5 stores one assembled load image, explicit `.text`,
+`.data`, and `.bss` section records describing that image, exported and external
+symbol records, an entry offset, and relocation records. The current relocation
+set covers `ABS64` named extern addresses, `RELATIVE64` internal absolute
+addresses, and `RIP32` label-based data references. `zlink` validates
+duplicate/missing symbols, lays out linked `.text`, `.data`, and `.bss` sections
+independently, applies relocations through that layout, and emits the flat
+executable format used by `exec`. `zmod` uses the same linker in memory, also
+allowing extern references to resolve against the shared kernel export table
+and any resident module exports, then calls the linked module initializer
+and keeps the module image resident. `zmods` lists resident module slots and
+final export addresses.
+
+`zbuild` is the first in-OS multi-file build command. A target name maps to a
+manifest in the current lainfs directory:
+
+```text
+zbuild kernel
+```
+
+loads `kernel.zbuild`. Blank lines and lines beginning with `#`, `;`, or `//`
+are ignored. Each source line is either `source.Z` or `source.Z output.zo`.
+The optional directive `output name.bin` changes the linked output name;
+otherwise `zbuild kernel` writes `kernel.bin`. `src dir`, `include dir`, and
+`build dir` directives let a project use a small layout such as `src/`,
+`include/`, and `build/`; object files, the linked binary, and a
+`target.buildlog` report are written to the build directory. Every object is
+saved before the final link, so partial build products are inspectable with
+`zmods`, `zlink`, or `exec` workflows. `zclean target` reads the same manifest
+and removes the generated objects, linked output, build log, and test log from
+the build directory. `ztest target` cleans, builds, runs the linked output from the build
+directory, and writes `target.testlog` with the returned value. A manifest can
+also include `test-return N`; when present, `ztest` records `status ok` only if
+the program returns that exact integer. `zinstall target` builds the target,
+loads the linked output from the build directory, and saves it to the manifest's
+`install dir` plus optional `install-name name.bin`; without those directives it
+installs into the current directory using the output name. `zinstall target
+dest.bin` can override the manifest destination.
+
+The `.Z` shell commands now expand simple include lines before compiling:
+
+```c
+#include "kernel_api.Z"
+include "project_defs.Z"
+```
+
+Included files are loaded beside the current source file, and the same expansion
+path is used by `zc`, `zco`, `zrun`, `zasm`, and `zbuild`. Includes also support
+relative paths such as `src/foo.Z`, root-style paths such as
+`/include/kernel_api.Z`, and `#pragma once` for duplicate-safe shared headers.
+`zbuild` also searches manifest `include` directories when an include is not
+found beside the current source file. See `examples/selfhost_project/` for a
+small `src`/`include`/`build` layout.
+
+The shared kernel API header also exposes a small self-hosting filesystem
+surface to `.Z`: `os_mkdir(path)`, `os_delete(path)`,
+`os_write_file(path, text)`, `os_cat_file(path)`, `os_file_size(path)`,
+`os_read_file(path, buffer, capacity)`, `os_rename(old_path, new_path)`,
+`os_copy_file(src_path, dst_path)`,
+`os_strlen(text)`, `os_strcmp(a, b)`, `os_starts_with(text, prefix)`,
+`os_atoi(text)`,
+`os_list_dir(path)`, `os_dir_count(path)`,
+`os_dir_name(path, index, buffer, capacity)`, `os_dir_type(path, index)`,
+`os_dir_size(path, index)`,
+`os_zbuild(target)`, `os_ztest(target)`, and `os_zinstall(target)`.
+These operate on the shell's active lainfs drive and current directory, and
+paths can include the same simple relative path forms used by `zbuild`.
+The build/test/install API calls return `0` only after verifying their expected
+artifact or `status ok` test log, so `.Z` tools can branch on failures.
+`examples/sysstat.Z` is the first small leaf tool in this flow: copy
+`examples/kernel_api.Z`, `examples/sysstat.Z`, and `examples/sysstat.zbuild`
+into lainfs, then run `ztest sysstat`, `zinstall sysstat`, and
+`exec sysstat.bin`. `examples/zreport.Z` uses the directory-entry API to list
+the current project directory and print build/test logs, then follows the same
+`ztest zreport`, `zinstall zreport`, `exec zreport.bin` flow.
+`examples/zmake.Z` is the first self-hosted orchestrator: it calls `os_ztest`
+and `os_zinstall` for `sysstat` and `zreport`, stopping on the first failure.
+
+The remaining ABI milestones are real nonzero `.bss` emission from `.Z`,
+dependency-aware unload hooks, and enough relocation/runtime surface for
+kernel-shaped code before `.Z` can build loadable kernel modules or the kernel
+image itself.
 
 ## Timer
 

@@ -5,6 +5,8 @@
 
 #define LAINFS_ROOT_DIR 0u
 #define LAINFS_FILE_CAPACITY 65536u
+#define LAINFS_ENTRY_TYPE_FILE 1u
+#define LAINFS_ENTRY_TYPE_DIR 2u
 
 int lainfs_format(char drive_letter);
 int lainfs_format_partition(const char *partition_name);
@@ -23,6 +25,14 @@ int lainfs_rename_in_dir(char drive_letter,
                          const char *new_name);
 int lainfs_find_dir(char drive_letter, uint32_t parent_id, const char *name, uint32_t *out_dir_id);
 int lainfs_parent_dir(char drive_letter, uint32_t dir_id, uint32_t *out_parent_id);
+int lainfs_child_count(char drive_letter, uint32_t parent_id, uint32_t *out_count);
+int lainfs_child_info(char drive_letter,
+                      uint32_t parent_id,
+                      uint32_t child_index,
+                      char *out_name,
+                      uint32_t out_name_size,
+                      uint32_t *out_type,
+                      uint32_t *out_size);
 int lainfs_write_file(char drive_letter, const char *name, const char *text);
 int lainfs_write_file_in_dir(char drive_letter, uint32_t parent_id, const char *name, const char *text);
 int lainfs_read_file(char drive_letter, const char *name);

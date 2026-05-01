@@ -1,5 +1,6 @@
 #include "assembler.h"
 #include "kernel.h"
+#include "kernel_exports.h"
 
 #define ASM_LINE_SIZE 128u
 #define ASM_MAX_LABELS 96u
@@ -16,6 +17,9 @@ typedef struct {
     uint64_t base_address;
     const assembler_symbol_t *external_symbols;
     uint32_t external_symbol_count;
+    assembler_relocation_t *relocations;
+    uint32_t relocation_capacity;
+    uint32_t *relocation_count;
 } assembler_context_t;
 
 typedef struct {
@@ -250,97 +254,7 @@ static int asm_register(const char *name, asm_reg_t *out) {
 }
 
 int assembler_symbol_value(const char *name, uint64_t *out) {
-    if (streq(name, "puts")) {
-        *out = (uint64_t)(uintptr_t)console_puts;
-        return 0;
-    }
-
-    if (streq(name, "put_hex64")) {
-        *out = (uint64_t)(uintptr_t)console_put_hex64;
-        return 0;
-    }
-
-    if (streq(name, "put_dec64")) {
-        *out = (uint64_t)(uintptr_t)console_put_dec64;
-        return 0;
-    }
-
-    if (streq(name, "ticks")) {
-        *out = (uint64_t)(uintptr_t)timer_ticks;
-        return 0;
-    }
-
-    if (streq(name, "status_memory_total_kb")) {
-        *out = (uint64_t)(uintptr_t)status_memory_total_kb;
-        return 0;
-    }
-
-    if (streq(name, "mem_total_kb")) {
-        *out = (uint64_t)(uintptr_t)status_memory_total_kb;
-        return 0;
-    }
-
-    if (streq(name, "status_memory_free_kb")) {
-        *out = (uint64_t)(uintptr_t)status_memory_free_kb;
-        return 0;
-    }
-
-    if (streq(name, "mem_free_kb")) {
-        *out = (uint64_t)(uintptr_t)status_memory_free_kb;
-        return 0;
-    }
-
-    if (streq(name, "status_memory_used_kb")) {
-        *out = (uint64_t)(uintptr_t)status_memory_used_kb;
-        return 0;
-    }
-
-    if (streq(name, "mem_used_kb")) {
-        *out = (uint64_t)(uintptr_t)status_memory_used_kb;
-        return 0;
-    }
-
-    if (streq(name, "status_cpu_core_count")) {
-        *out = (uint64_t)(uintptr_t)status_cpu_core_count;
-        return 0;
-    }
-
-    if (streq(name, "cpu_count")) {
-        *out = (uint64_t)(uintptr_t)status_cpu_core_count;
-        return 0;
-    }
-
-    if (streq(name, "cpu_usage")) {
-        *out = (uint64_t)(uintptr_t)status_cpu_usage_percent;
-        return 0;
-    }
-
-    if (streq(name, "put_pixel")) {
-        *out = (uint64_t)(uintptr_t)put_pixel;
-        return 0;
-    }
-
-    if (streq(name, "put_char_at")) {
-        *out = (uint64_t)(uintptr_t)console_put_char_at;
-        return 0;
-    }
-
-    if (streq(name, "put_dec_at")) {
-        *out = (uint64_t)(uintptr_t)console_put_dec_at;
-        return 0;
-    }
-
-    if(streq(name, "set_margin")) {
-        *out = (uint64_t)(uintptr_t)console_set_margin;
-        return 0;
-    }
-
-    if (streq(name, "statusbar_enable")) {
-        *out = (uint64_t)(uintptr_t)statusbar_enable;
-        return 0;
-    }
-
-    return -1;
+    return kernel_export_value(name, out);
 }
 
 static int asm_external_symbol_value(const assembler_context_t *ctx, const char *name, uint64_t *out) {
@@ -359,6 +273,35 @@ static int asm_external_symbol_value(const assembler_context_t *ctx, const char 
     }
 
     return -1;
+}
+
+static int asm_add_relocation(const assembler_context_t *ctx,
+                              uint32_t offset,
+                              uint32_t type,
+                              const char *name) {
+    uint32_t index;
+
+    if (ctx == 0 || ctx->relocations == 0 || ctx->relocation_count == 0) {
+        return 0;
+    }
+
+    if (*ctx->relocation_count >= ctx->relocation_capacity) {
+        return -1;
+    }
+
+    index = *ctx->relocation_count;
+    ctx->relocations[index].offset = offset;
+    ctx->relocations[index].type = type;
+    ctx->relocations[index].name[0] = '\0';
+    if (name != 0) {
+        if (copy_name_limited(ctx->relocations[index].name,
+                              name,
+                              sizeof(ctx->relocations[index].name)) != 0) {
+            return -1;
+        }
+    }
+    ++(*ctx->relocation_count);
+    return 0;
 }
 
 static int asm_value(const assembler_context_t *ctx,
@@ -447,6 +390,15 @@ static int asm_emit_rex(const assembler_context_t *ctx,
     return asm_emit_byte(ctx, offset, emit, rex);
 }
 
+static uint32_t asm_rex_size(int w, int r, int b) {
+    uint8_t rex = (uint8_t)(0x40 |
+                            (w ? 0x08 : 0) |
+                            ((r & 8) ? 0x04 : 0) |
+                            ((b & 8) ? 0x01 : 0));
+
+    return rex == 0x40 ? 0u : 1u;
+}
+
 static int asm_emit_modrm_reg(const assembler_context_t *ctx,
                               uint32_t *offset,
                               int emit,
@@ -461,6 +413,7 @@ static int asm_emit_modrm_rip_relative(const assembler_context_t *ctx,
                                         int reg,
                                         uint32_t displacement) {
     if (asm_emit_byte(ctx, offset, emit, (uint8_t)(((reg & 7) << 3) | 0x05)) != 0 ||
+        (emit && asm_add_relocation(ctx, *offset, ASSEMBLER_RELOC_RIP32, 0) != 0) ||
         asm_emit_u32(ctx, offset, emit, displacement) != 0) {
         return -1;
     }
@@ -796,7 +749,10 @@ static int asm_emit_mov_reg_mem_label(const assembler_context_t *ctx,
                                       const char *label) {
     int bits = dst.bits;
     uint32_t displacement = 0;
-    uint32_t next_offset = *offset + ((bits == 16) ? 7u : 6u);
+    uint32_t next_offset = *offset +
+                           ((bits == 16) ? 1u : 0u) +
+                           asm_rex_size(bits == 64, dst.code, 0) +
+                           1u + 1u + 4u;
     uint8_t opcode = (bits == 8) ? 0x8A : 0x8B;
 
     if (bits != 8 && bits != 16 && bits != 32 && bits != 64) {
@@ -848,7 +804,10 @@ static int asm_emit_mov_mem_label_reg(const assembler_context_t *ctx,
                                       asm_reg_t src) {
     int bits = src.bits;
     uint32_t displacement = 0;
-    uint32_t next_offset = *offset + ((bits == 16) ? 7u : 6u);
+    uint32_t next_offset = *offset +
+                           ((bits == 16) ? 1u : 0u) +
+                           asm_rex_size(bits == 64, src.code, 0) +
+                           1u + 1u + 4u;
     uint8_t opcode = (bits == 8) ? 0x88 : 0x89;
 
     if (bits != 8 && bits != 16 && bits != 32 && bits != 64) {
@@ -901,7 +860,11 @@ static int asm_emit_mov_mem_label_imm(const assembler_context_t *ctx,
                                       uint64_t value) {
     int bits = dst.bits ? dst.bits : 64;
     uint32_t displacement = 0;
-    uint32_t next_offset = *offset + ((bits == 8) ? 6u : ((bits == 16) ? 8u : 10u));
+    uint32_t next_offset = *offset +
+                           ((bits == 16) ? 1u : 0u) +
+                           asm_rex_size(bits == 64, 0, 0) +
+                           1u + 1u + 4u +
+                           ((bits == 8) ? 1u : ((bits == 16) ? 2u : 4u));
 
     if ((bits == 8 && value > 0xFFull) ||
         (bits == 16 && value > 0xFFFFull) ||
@@ -1048,8 +1011,11 @@ static int asm_emit_call_jmp_target(const assembler_context_t *ctx,
 
     if (asm_external_symbol_value(ctx, target, &symbol_value) == 0 ||
         assembler_symbol_value(target, &symbol_value) == 0) {
+        uint32_t reloc_offset = *offset + 2u;
         if (asm_emit_rex(ctx, offset, emit, 1, 0, 0) != 0 ||
             asm_emit_byte(ctx, offset, emit, 0xB8) != 0 ||
+            (emit && asm_external_symbol_value(ctx, target, &symbol_value) == 0 &&
+             asm_add_relocation(ctx, reloc_offset, ASSEMBLER_RELOC_ABS64, target) != 0) ||
             asm_emit_u64(ctx, offset, emit, symbol_value) != 0 ||
             asm_emit_rex(ctx, offset, emit, 1, 0, 0) != 0 ||
             asm_emit_byte(ctx, offset, emit, 0xFF) != 0 ||
@@ -1388,8 +1354,17 @@ static int asm_assemble_instruction(char *line,
         }
 
         if (dst.bits == 64) {
+            uint32_t local_label_offset = 0;
+            uint32_t reloc_offset = *offset + 2u;
+            int is_external = asm_external_symbol_value(ctx, src_text, &value) == 0;
+            int is_relative = !is_external && asm_find_label(labels, label_count, src_text, &local_label_offset) == 0;
+
             if (asm_emit_rex(ctx, offset, emit, 1, 0, dst.code) != 0 ||
                 asm_emit_byte(ctx, offset, emit, (uint8_t)(0xB8 + (dst.code & 7))) != 0 ||
+                (emit && is_external &&
+                 asm_add_relocation(ctx, reloc_offset, ASSEMBLER_RELOC_ABS64, src_text) != 0) ||
+                (emit && is_relative &&
+                 asm_add_relocation(ctx, reloc_offset, ASSEMBLER_RELOC_RELATIVE64, 0) != 0) ||
                 asm_emit_u64(ctx, offset, emit, value) != 0) {
                 return -1;
             }
@@ -1430,7 +1405,9 @@ static int asm_assemble_instruction(char *line,
             opcode2 = (src_mem.bits == 8) ? 0xB6 : 0xB7;
             if (src_mem.is_label) {
                 uint32_t displacement = 0;
-                uint32_t next_offset = *offset + 7u;
+                uint32_t next_offset = *offset +
+                                       asm_rex_size(0, dst.code, 0) +
+                                       2u + 1u + 4u;
 
                 if (emit && asm_rip_relative_disp32(ctx, next_offset, labels, label_count, src_mem.label, &displacement) != 0) {
                     return -1;
@@ -1460,7 +1437,9 @@ static int asm_assemble_instruction(char *line,
             opcode2 = (src_mem.bits == 8) ? 0xBE : 0xBF;
             if (src_mem.is_label) {
                 uint32_t displacement = 0;
-                uint32_t next_offset = *offset + 8u;
+                uint32_t next_offset = *offset +
+                                       asm_rex_size(1, dst.code, 0) +
+                                       2u + 1u + 4u;
 
                 if (emit && asm_rip_relative_disp32(ctx, next_offset, labels, label_count, src_mem.label, &displacement) != 0) {
                     return -1;
@@ -1489,7 +1468,9 @@ static int asm_assemble_instruction(char *line,
 
         if (src_mem.is_label) {
             uint32_t displacement = 0;
-            uint32_t next_offset = *offset + 7u;
+            uint32_t next_offset = *offset +
+                                   asm_rex_size(1, dst.code, 0) +
+                                   1u + 1u + 4u;
 
             if (emit && asm_rip_relative_disp32(ctx, next_offset, labels, label_count, src_mem.label, &displacement) != 0) {
                 return -1;
@@ -1886,12 +1867,47 @@ int assembler_assemble_source_ex_symbols(const char *source,
                                          const char *const *export_names,
                                          uint64_t *export_values,
                                          uint32_t export_count) {
+    return assembler_assemble_source_ex_relocs(source,
+                                               size,
+                                               out,
+                                               out_capacity,
+                                               base_address,
+                                               out_size,
+                                               error_line,
+                                               external_symbols,
+                                               external_symbol_count,
+                                               export_names,
+                                               export_values,
+                                               export_count,
+                                               0,
+                                               0,
+                                               0);
+}
+
+int assembler_assemble_source_ex_relocs(const char *source,
+                                        uint32_t size,
+                                        unsigned char *out,
+                                        uint32_t out_capacity,
+                                        uint64_t base_address,
+                                        uint32_t *out_size,
+                                        uint32_t *error_line,
+                                        const assembler_symbol_t *external_symbols,
+                                        uint32_t external_symbol_count,
+                                        const char *const *export_names,
+                                        uint64_t *export_values,
+                                        uint32_t export_count,
+                                        assembler_relocation_t *relocations,
+                                        uint32_t relocation_capacity,
+                                        uint32_t *relocation_count) {
     assembler_context_t ctx = {
         out,
         out_capacity,
         base_address,
         external_symbols,
         external_symbol_count,
+        relocations,
+        relocation_capacity,
+        relocation_count,
     };
     asm_label_t labels[ASM_MAX_LABELS];
     uint32_t label_count = 0;
@@ -1906,6 +1922,9 @@ int assembler_assemble_source_ex_symbols(const char *source,
 
     if (error_line) {
         *error_line = 0;
+    }
+    if (relocation_count) {
+        *relocation_count = 0;
     }
 
     while (asm_next_line(source, size, &pos, line)) {
@@ -1936,6 +1955,63 @@ int assembler_assemble_source_ex_symbols(const char *source,
     while (asm_next_line(source, size, &pos, line)) {
         ++line_number;
         if (asm_assemble_line(line, labels, &label_count, &ctx, &offset, 1) != 0) {
+            if (error_line) {
+                *error_line = line_number;
+            }
+            return -1;
+        }
+    }
+
+    *out_size = offset;
+    return 0;
+}
+
+int assembler_measure_source(const char *source,
+                             uint32_t size,
+                             uint32_t *out_size,
+                             uint32_t *error_line) {
+    return assembler_measure_source_ex_symbols(source,
+                                               size,
+                                               out_size,
+                                               error_line,
+                                               0,
+                                               0);
+}
+
+int assembler_measure_source_ex_symbols(const char *source,
+                                        uint32_t size,
+                                        uint32_t *out_size,
+                                        uint32_t *error_line,
+                                        const assembler_symbol_t *external_symbols,
+                                        uint32_t external_symbol_count) {
+    assembler_context_t ctx = {
+        0,
+        0xFFFFFFFFu,
+        0,
+        external_symbols,
+        external_symbol_count,
+        0,
+        0,
+        0,
+    };
+    asm_label_t labels[ASM_MAX_LABELS];
+    uint32_t label_count = 0;
+    uint32_t offset = 0;
+    uint32_t pos = 0;
+    uint32_t line_number = 0;
+    char line[ASM_LINE_SIZE];
+
+    if (source == 0 || out_size == 0) {
+        return -1;
+    }
+
+    if (error_line) {
+        *error_line = 0;
+    }
+
+    while (asm_next_line(source, size, &pos, line)) {
+        ++line_number;
+        if (asm_assemble_line(line, labels, &label_count, &ctx, &offset, 0) != 0) {
             if (error_line) {
                 *error_line = line_number;
             }

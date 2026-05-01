@@ -1,0 +1,50 @@
+#pragma once
+
+enum {
+    KERNEL_COLOR_BLACK = 0x000000,
+    KERNEL_COLOR_WHITE = 0xffffff,
+    KERNEL_COLOR_GREEN = 0x00ff66,
+    KERNEL_COLOR_RED = 0xff3333,
+    OS_ENTRY_FILE = 1,
+    OS_ENTRY_DIR = 2,
+};
+
+extern uint64_t ticks(void);
+extern uint64_t mem_total_kb(void);
+extern uint64_t mem_free_kb(void);
+extern uint64_t mem_used_kb(void);
+extern uint32_t cpu_count(void);
+extern uint32_t cpu_usage(uint32_t core);
+extern void put_pixel(uint32_t x, uint32_t y, uint32_t color);
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern uint32_t gfx_pitch(void);
+extern uint32_t gfx_format(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_line(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t color);
+extern void gfx_clear(uint32_t color);
+extern void put_char_at(uint32_t col, uint32_t row, uint32_t ch);
+extern void put_dec_at(uint32_t col, uint32_t row, uint64_t value);
+extern void set_margin(uint32_t x, uint32_t y);
+extern void statusbar_enable(void);
+extern int os_mkdir(const uint8_t *path);
+extern int os_delete(const uint8_t *path);
+extern int os_write_file(const uint8_t *path, const uint8_t *text);
+extern int os_cat_file(const uint8_t *path);
+extern int os_file_size(const uint8_t *path);
+extern int os_read_file(const uint8_t *path, uint8_t *buffer, uint32_t capacity);
+extern int os_rename(const uint8_t *old_path, const uint8_t *new_path);
+extern int os_copy_file(const uint8_t *src_path, const uint8_t *dst_path);
+extern int os_strlen(const uint8_t *text);
+extern int os_strcmp(const uint8_t *a, const uint8_t *b);
+extern int os_starts_with(const uint8_t *text, const uint8_t *prefix);
+extern int os_atoi(const uint8_t *text);
+extern int os_list_dir(const uint8_t *path);
+extern int os_dir_count(const uint8_t *path);
+extern int os_dir_name(const uint8_t *path, uint32_t index, uint8_t *buffer, uint32_t capacity);
+extern int os_dir_type(const uint8_t *path, uint32_t index);
+extern int os_dir_size(const uint8_t *path, uint32_t index);
+extern int os_zbuild(const uint8_t *target);
+extern int os_ztest(const uint8_t *target);
+extern int os_zinstall(const uint8_t *target);

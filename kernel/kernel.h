@@ -33,6 +33,14 @@ void console_kprintf2(const char *fmt, unsigned long long a1, unsigned long long
 void console_panic(const char *msg);
 int console_read_line(char *buffer, unsigned int max_len);
 void put_pixel(unsigned int x, unsigned int y, unsigned int color);
+unsigned int graphics_width(void);
+unsigned int graphics_height(void);
+unsigned int graphics_pitch(void);
+unsigned int graphics_format(void);
+void graphics_fill_rect(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned int color);
+void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned int color);
+void graphics_draw_line(unsigned int x0, unsigned int y0, unsigned int x1, unsigned int y1, unsigned int color);
+void graphics_clear(unsigned int color);
 void console_set_margin(unsigned int x, unsigned int y);
 int console_split_enable(void);
 void console_split_disable(void);

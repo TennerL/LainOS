@@ -33,10 +33,12 @@ ESP_SIZE_KB ?= 65536
 BOOTDISK_SIZE_KB ?= 131072
 DATA_SIZE_KB ?= 65536
 NTFS_DRIVER ?=
+BOOT_RES_WIDTH ?= 0
+BOOT_RES_HEIGHT ?= 0
 
 PROJECT_CFLAGS := -Iboot/shared -Ibuild
 NASMFLAGS := -Iboot/shared/
-CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER
+CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER -DBOOT_RES_WIDTH=$(BOOT_RES_WIDTH) -DBOOT_RES_HEIGHT=$(BOOT_RES_HEIGHT)
 KERNEL_CFLAGS := $(PROJECT_CFLAGS) -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
 LDFLAGS_EFI := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_LIBDIR) $(EFI_CRT0)
 LDLIBS_EFI := -lefi -lgnuefi
@@ -77,7 +79,7 @@ build/kernel/entry.o: kernel/entry.asm | build
 	$(MKDIR_P) build/kernel
 	$(NASM) $(NASMFLAGS) -f elf64 $< -o $@
 
-build/kernel/main.o: kernel/main.c kernel/kernel.h kernel/shell.h kernel/storage.h kernel/ahci.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
+build/kernel/main.o: kernel/main.c kernel/kernel.h kernel/graphics.h kernel/shell.h kernel/storage.h kernel/ahci.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -85,7 +87,11 @@ build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/stora
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-build/kernel/assembler.o: kernel/assembler.c kernel/assembler.h kernel/kernel.h boot/shared/bootinfo.h | build
+build/kernel/kernel_exports.o: kernel/kernel_exports.c kernel/kernel_exports.h kernel/kernel.h kernel/graphics.h kernel/shell.h boot/shared/bootinfo.h | build
+	$(MKDIR_P) build/kernel
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+build/kernel/assembler.o: kernel/assembler.c kernel/assembler.h kernel/kernel.h kernel/kernel_exports.h boot/shared/bootinfo.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -93,7 +99,7 @@ build/kernel/zscript.o: kernel/zscript.c kernel/zscript.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-build/kernel/zobject.o: kernel/zobject.c kernel/zobject.h kernel/assembler.h | build
+build/kernel/zobject.o: kernel/zobject.c kernel/zobject.h kernel/assembler.h kernel/kernel_exports.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -125,7 +131,11 @@ build/kernel/cpu_c.o: kernel/cpu.c kernel/kernel.h boot/shared/bootinfo.h | buil
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-build/kernel/console_c.o: kernel/console.c kernel/kernel.h boot/shared/bootinfo.h | build
+build/kernel/graphics.o: kernel/graphics.c kernel/graphics.h | build
+	$(MKDIR_P) build/kernel
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+build/kernel/console_c.o: kernel/console.c kernel/kernel.h kernel/graphics.h boot/shared/bootinfo.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -141,8 +151,8 @@ build/kernel/interrupts.o: kernel/interrupts.asm | build
 	$(MKDIR_P) build/kernel
 	$(NASM) $(NASMFLAGS) -f elf64 $< -o $@
 
-build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o kernel/linker.ld
-	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o
+build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o kernel/linker.ld
+	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/interrupts.o
 
 build/$(KERNEL_BIN): build/$(KERNEL_ELF)
 	$(OBJCOPY) -O binary build/$(KERNEL_ELF) $@

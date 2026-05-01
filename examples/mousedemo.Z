@@ -1,0 +1,42 @@
+#include "kernel_api.Z"
+#include "mouse_api.Z"
+
+int x;
+int y;
+int buttons;
+uint32_t color;
+
+if (mouse_enabled() == 0) {
+    print("mouse: disabled\n");
+    return 1;
+}
+
+x = mouse_x();
+y = mouse_y();
+buttons = mouse_buttons();
+color = 0x00ff66;
+
+if (buttons == MOUSE_LEFT) {
+    color = 0xff3355;
+}
+if (buttons == MOUSE_RIGHT) {
+    color = 0x33aaff;
+}
+
+gfx_draw_line(x - 8, y, x + 8, y, color);
+gfx_draw_line(x, y - 8, x, y + 8, color);
+gfx_draw_rect(x - 10, y - 10, 21, 21, color);
+
+print("mouse x=");
+print(x);
+print(" y=");
+print(y);
+print(" buttons=");
+print(buttons);
+print(" dx=");
+print(mouse_dx());
+print(" dy=");
+print(mouse_dy());
+print("\n");
+
+return 0;

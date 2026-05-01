@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "kernel.h"
+#include "graphics.h"
 
 #define FONT_W 8u
 #define FONT_H 8u
@@ -161,9 +162,7 @@ static const uint8_t font_data[ASCII_COUNT][8] = {
 };
 
 void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
-    if (x >= fb_width || y >= fb_height) return;
-    uint32_t *fb = (uint32_t *)(uintptr_t)fb_base;
-    fb[(uint64_t)y * fb_pitch + x] = color;
+    graphics_put_pixel(x, y, color);
 }
 
 static void draw_cursor(void) {
@@ -211,14 +210,13 @@ void console_cursor_tick(void){
 }
 
 void fill_screen_color(uint32_t color) {
-    uint32_t *fb = (uint32_t *)(uintptr_t)fb_base;
-    uint64_t total = (uint64_t)fb_pitch * fb_height;
-    for (uint64_t i = 0; i < total; ++i) fb[i] = color;
+    graphics_clear(color);
 }
 
 static void scroll_screen(void) {
     console_pane_t *pane = active_pane();
     uint32_t *fb = (uint32_t *)(uintptr_t)fb_base;
+    uint32_t packed_bg = graphics_pack_color(current_bg_color);
     uint32_t text_top = pane->top;
     uint32_t text_right = console_text_right();
     uint32_t text_bottom = console_text_bottom();
@@ -238,7 +236,7 @@ static void scroll_screen(void) {
     clear_start = text_bottom - CONSOLE_ROW_ADVANCE;
     for (uint32_t y = clear_start; y < text_bottom; ++y) {
         for (uint32_t x = pane->left; x < text_right; ++x) {
-            fb[y * fb_pitch + x] = current_bg_color;
+            fb[y * fb_pitch + x] = packed_bg;
         }
     }
 

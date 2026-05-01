@@ -1,0 +1,5 @@
+include .
+output gfxdemo.bin
+install-name gfxdemo.bin
+test-return 9
+gfxdemo.Z gfxdemo.zo

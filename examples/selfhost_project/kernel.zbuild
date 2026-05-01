@@ -1,0 +1,7 @@
+include include
+src src
+build build
+output kernel.bin
+install-name selfhost_project.bin
+test-return 41
+selfhost_demo.Z selfhost_demo.zo

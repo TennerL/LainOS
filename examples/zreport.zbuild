@@ -1,0 +1,5 @@
+include .
+output zreport.bin
+install-name zreport.bin
+test-return 13
+zreport.Z zreport.zo

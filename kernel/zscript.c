@@ -13,6 +13,7 @@
 #define Z_MAX_STRUCT_FIELDS 16u
 #define Z_MAX_GLOBALS 32u
 #define Z_MAX_LOOP_DEPTH 16u
+#define Z_MAX_CONSTANTS 64u
 
 typedef enum {
     Z_TOKEN_EOF = 0,
@@ -140,6 +141,11 @@ typedef struct {
 } z_loop_t;
 
 typedef struct {
+    char name[Z_MAX_TOKEN_TEXT];
+    uint64_t value;
+} z_constant_t;
+
+typedef struct {
     const char *source;
     uint32_t size;
     uint32_t pos;
@@ -157,10 +163,12 @@ typedef struct {
     uint32_t function_count;
     uint32_t struct_count;
     uint32_t global_count;
+    uint32_t constant_count;
     z_string_t strings[Z_MAX_STRINGS];
     z_function_t functions[Z_MAX_FUNCTIONS];
     z_struct_t structs[Z_MAX_STRUCTS];
     z_global_t globals[Z_MAX_GLOBALS];
+    z_constant_t constants[Z_MAX_CONSTANTS];
     char string_pool[Z_STRING_POOL_SIZE];
     int in_function;
     char current_function_label[Z_MAX_LABEL_TEXT];
@@ -1214,6 +1222,18 @@ static int z_find_global(const z_compiler_t *c, const char *name) {
     return -1;
 }
 
+static int z_find_constant(const z_compiler_t *c, const char *name) {
+    uint32_t i;
+
+    for (i = 0; i < c->constant_count; ++i) {
+        if (z_streq(c->constants[i].name, name)) {
+            return (int)i;
+        }
+    }
+
+    return -1;
+}
+
 static int z_find_function(const z_compiler_t *c, const char *name) {
     uint32_t i;
 
@@ -1248,6 +1268,20 @@ static int z_find_struct_field(const z_struct_t *s, const char *name) {
     }
 
     return -1;
+}
+
+static int z_add_constant(z_compiler_t *c, const char *name, uint64_t value) {
+    if (c->constant_count >= Z_MAX_CONSTANTS ||
+        z_find_constant(c, name) >= 0 ||
+        z_find_global(c, name) >= 0 ||
+        z_find_function(c, name) >= 0) {
+        return -1;
+    }
+
+    z_copy_text(c->constants[c->constant_count].name, name);
+    c->constants[c->constant_count].value = value;
+    ++c->constant_count;
+    return 0;
 }
 
 static int z_ensure_function(z_compiler_t *c, const char *name, char *out_label) {
@@ -1358,6 +1392,7 @@ static int z_add_global(z_compiler_t *c,
 
     if (c->global_count >= Z_MAX_GLOBALS ||
         z_find_global(c, name) >= 0 ||
+        z_find_constant(c, name) >= 0 ||
         z_find_function(c, name) >= 0) {
         return -1;
     }
@@ -1733,6 +1768,10 @@ static int z_current_starts_struct_definition(z_compiler_t *c) {
     return result;
 }
 
+static int z_current_starts_enum_definition(const z_compiler_t *c) {
+    return c->current.type == Z_TOKEN_IDENT && z_streq(c->current.text, "enum");
+}
+
 static int z_current_starts_global_definition(const z_compiler_t *c) {
     if (c->current.type != Z_TOKEN_IDENT) {
         return 0;
@@ -1740,6 +1779,82 @@ static int z_current_starts_global_definition(const z_compiler_t *c) {
 
     return z_streq(c->current.text, "global") ||
            z_streq(c->current.text, "static");
+}
+
+static int z_parse_constant_literal(z_compiler_t *c, uint64_t *out_value) {
+    int negate = 0;
+
+    if (c->current.type == Z_TOKEN_MINUS) {
+        negate = 1;
+        if (z_next_token(c) != 0) {
+            return -1;
+        }
+    }
+
+    if (c->current.type != Z_TOKEN_NUMBER) {
+        z_set_error(c, c->current.line);
+        return -1;
+    }
+
+    *out_value = negate ? (uint64_t)(0ull - c->current.number) : c->current.number;
+    return z_next_token(c);
+}
+
+static int z_parse_enum_definition(z_compiler_t *c) {
+    uint64_t next_value = 0;
+
+    if (!z_current_starts_enum_definition(c) ||
+        z_next_token(c) != 0) {
+        return -1;
+    }
+
+    if (c->current.type == Z_TOKEN_IDENT) {
+        if (z_next_token(c) != 0) {
+            return -1;
+        }
+    }
+
+    if (z_expect(c, Z_TOKEN_LBRACE) != 0) {
+        return -1;
+    }
+
+    while (c->current.type != Z_TOKEN_RBRACE) {
+        char name[Z_MAX_TOKEN_TEXT];
+        uint64_t value = next_value;
+
+        if (c->current.type == Z_TOKEN_EOF ||
+            z_expect_ident(c, name) != 0) {
+            return -1;
+        }
+
+        if (c->current.type == Z_TOKEN_ASSIGN) {
+            if (z_next_token(c) != 0 ||
+                z_parse_constant_literal(c, &value) != 0) {
+                return -1;
+            }
+        }
+
+        if (z_add_constant(c, name, value) != 0) {
+            z_set_error(c, c->current.line);
+            return -1;
+        }
+        next_value = value + 1u;
+
+        if (c->current.type == Z_TOKEN_COMMA) {
+            if (z_next_token(c) != 0) {
+                return -1;
+            }
+            if (c->current.type == Z_TOKEN_RBRACE) {
+                break;
+            }
+        } else if (c->current.type != Z_TOKEN_RBRACE) {
+            z_set_error(c, c->current.line);
+            return -1;
+        }
+    }
+
+    return z_expect(c, Z_TOKEN_RBRACE) == 0 &&
+           z_expect(c, Z_TOKEN_SEMI) == 0 ? 0 : -1;
 }
 
 static int z_parse_global_definition(z_compiler_t *c) {
@@ -1796,16 +1911,20 @@ static int z_parse_global_definition(z_compiler_t *c) {
             }
         }
 
-        if (c->current.type != Z_TOKEN_NUMBER) {
-            z_set_error(c, c->current.line);
+        if (c->current.type == Z_TOKEN_IDENT) {
+            int constant_index = z_find_constant(c, c->current.text);
+            if (constant_index < 0) {
+                z_set_error(c, c->current.line);
+                return -1;
+            }
+            init_value = c->constants[constant_index].value;
+            if (z_next_token(c) != 0) {
+                return -1;
+            }
+        } else if (z_parse_constant_literal(c, &init_value) != 0) {
             return -1;
         }
-
-        init_value = c->current.number;
         has_init = 1;
-        if (z_next_token(c) != 0) {
-            return -1;
-        }
 
         if (c->current.type == Z_TOKEN_COMMA) {
             if (z_next_token(c) != 0) {
@@ -2294,6 +2413,21 @@ static int z_parse_indexed_global_address(z_compiler_t *c, int global_index, uin
 }
 
 static int z_parse_primary(z_compiler_t *c, z_type_t *out_type) {
+    if (c->current.type == Z_TOKEN_STRING) {
+        int string_index = z_add_string(c, (uint32_t)c->current.number);
+
+        if (string_index < 0 ||
+            z_next_token(c) != 0) {
+            return -1;
+        }
+
+        if (out_type) {
+            *out_type = z_make_type(Z_TYPE_U8, 1, -1);
+        }
+
+        return z_emit_instr2_text(c, "mov", "rax", c->strings[string_index].label);
+    }
+
     if (c->current.type == Z_TOKEN_NUMBER) {
         uint64_t value = c->current.number;
 
@@ -2330,7 +2464,15 @@ static int z_parse_primary(z_compiler_t *c, z_type_t *out_type) {
 
         local_index = z_find_local(c, name);
         if (local_index < 0) {
+            int constant_index = z_find_constant(c, name);
             int global_index = z_find_global(c, name);
+
+            if (constant_index >= 0) {
+                if (out_type) {
+                    *out_type = z_make_type(Z_TYPE_INT, 0, -1);
+                }
+                return z_emit_instr2_u64(c, "mov", "rax", c->constants[constant_index].value);
+            }
 
             if (global_index < 0) {
                 z_set_error(c, c->current.line);
@@ -3081,41 +3223,75 @@ static int z_parse_var_decl(z_compiler_t *c,
         uint32_t i;
 
         if (c->current.type == Z_TOKEN_ASSIGN) {
-            if (z_next_token(c) != 0 ||
-                z_expect(c, Z_TOKEN_LBRACE) != 0) {
+            if (z_next_token(c) != 0) {
                 return -1;
             }
 
-            for (i = 0; i < array_length; ++i) {
-                if (c->current.type == Z_TOKEN_RBRACE) {
-                    break;
-                }
+            if (c->current.type == Z_TOKEN_STRING) {
+                uint32_t offset = (uint32_t)c->current.number;
+                uint32_t element_size = z_array_element_size_bytes(c, type);
 
-                if (z_parse_expr(c, 0) != 0 ||
-                    z_emit_store_rax_to_offset_typed(c,
-                                                     c->locals[local_index].stack_offset +
-                                                         (int32_t)(i * z_array_element_size_bytes(c, type)),
-                                                     type) != 0) {
-                    return -1;
-                }
-
-                if (c->current.type == Z_TOKEN_COMMA) {
-                    if (z_next_token(c) != 0) {
-                        return -1;
-                    }
-                } else if (c->current.type != Z_TOKEN_RBRACE) {
+                if (element_size != 1u) {
                     z_set_error(c, c->current.line);
                     return -1;
                 }
-            }
 
-            if (c->current.type != Z_TOKEN_RBRACE) {
-                z_set_error(c, c->current.line);
-                return -1;
-            }
+                for (i = 0; i < array_length; ++i) {
+                    uint8_t byte_value = (uint8_t)c->string_pool[offset + i];
 
-            if (z_next_token(c) != 0) {
-                return -1;
+                    if (z_emit_instr2_u64(c, "mov", "rax", byte_value) != 0 ||
+                        z_emit_store_rax_to_offset_typed(c,
+                                                         c->locals[local_index].stack_offset +
+                                                             (int32_t)i,
+                                                         type) != 0) {
+                        return -1;
+                    }
+
+                    if (byte_value == 0) {
+                        ++i;
+                        break;
+                    }
+                }
+
+                if (z_next_token(c) != 0) {
+                    return -1;
+                }
+            } else {
+                if (z_expect(c, Z_TOKEN_LBRACE) != 0) {
+                    return -1;
+                }
+
+                for (i = 0; i < array_length; ++i) {
+                    if (c->current.type == Z_TOKEN_RBRACE) {
+                        break;
+                    }
+
+                    if (z_parse_expr(c, 0) != 0 ||
+                        z_emit_store_rax_to_offset_typed(c,
+                                                         c->locals[local_index].stack_offset +
+                                                             (int32_t)(i * z_array_element_size_bytes(c, type)),
+                                                         type) != 0) {
+                        return -1;
+                    }
+
+                    if (c->current.type == Z_TOKEN_COMMA) {
+                        if (z_next_token(c) != 0) {
+                            return -1;
+                        }
+                    } else if (c->current.type != Z_TOKEN_RBRACE) {
+                        z_set_error(c, c->current.line);
+                        return -1;
+                    }
+                }
+
+                if (c->current.type != Z_TOKEN_RBRACE) {
+                    z_set_error(c, c->current.line);
+                    return -1;
+                }
+
+                if (z_next_token(c) != 0) {
+                    return -1;
+                }
             }
         } else {
             i = 0;
@@ -4578,7 +4754,6 @@ static int z_parse_function_definition(z_compiler_t *c, const char *name, int is
 
 static int z_parse_function_prototype_tail(z_compiler_t *c) {
     z_type_t param_type;
-    char param_name[Z_MAX_TOKEN_TEXT];
 
     if (z_expect(c, Z_TOKEN_LPAREN) != 0) {
         return -1;
@@ -4595,8 +4770,14 @@ static int z_parse_function_prototype_tail(z_compiler_t *c) {
         }
     } else if (c->current.type != Z_TOKEN_RPAREN) {
         for (;;) {
-            if (z_parse_typed_name(c, &param_type, param_name) != 0) {
+            if (z_parse_type(c, &param_type) != 0) {
                 return -1;
+            }
+
+            if (c->current.type == Z_TOKEN_IDENT) {
+                if (z_next_token(c) != 0) {
+                    return -1;
+                }
             }
 
             if (c->current.type != Z_TOKEN_COMMA) {
@@ -4611,6 +4792,44 @@ static int z_parse_function_prototype_tail(z_compiler_t *c) {
 
     if (z_expect(c, Z_TOKEN_RPAREN) != 0 ||
         z_expect(c, Z_TOKEN_SEMI) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int z_current_starts_function_prototype(z_compiler_t *c) {
+    uint32_t saved_pos = c->pos;
+    uint32_t saved_line = c->line;
+    uint32_t saved_error_line = c->error_line;
+    z_token_t saved_current = c->current;
+    char name[Z_MAX_TOKEN_TEXT];
+    z_type_t type;
+    int result = 0;
+
+    if (z_current_is_type_name(c) &&
+        z_parse_typed_name(c, &type, name) == 0 &&
+        c->current.type == Z_TOKEN_LPAREN &&
+        z_parse_function_prototype_tail(c) == 0) {
+        result = 1;
+    }
+
+    c->pos = saved_pos;
+    c->line = saved_line;
+    c->error_line = saved_error_line;
+    c->current = saved_current;
+    return result;
+}
+
+static int z_parse_function_prototype(z_compiler_t *c) {
+    z_type_t function_type;
+    char function_name[Z_MAX_TOKEN_TEXT];
+    char function_label[Z_MAX_LABEL_TEXT];
+
+    if (!z_current_starts_function_prototype(c) ||
+        z_parse_typed_name(c, &function_type, function_name) != 0 ||
+        z_ensure_function(c, function_name, function_label) != 0 ||
+        z_parse_function_prototype_tail(c) != 0) {
         return -1;
     }
 
@@ -4766,6 +4985,7 @@ static int zscript_compile_source_internal(const char *source,
     c.function_count = 0;
     c.struct_count = 0;
     c.global_count = 0;
+    c.constant_count = 0;
     c.in_function = 0;
     c.current_function_label[0] = '\0';
     c.current_exit_label[0] = '\0';
@@ -4785,28 +5005,57 @@ static int zscript_compile_source_internal(const char *source,
         return -1;
     }
 
-    while (c.current.type != Z_TOKEN_EOF &&
-           z_current_starts_struct_definition(&c)) {
-        if (z_parse_struct_definition(&c) != 0) {
-            if (error_line) {
-                *error_line = c.error_line;
+    while (c.current.type != Z_TOKEN_EOF) {
+        int parsed_declaration = 0;
+
+        if (z_current_starts_struct_definition(&c)) {
+            parsed_declaration = 1;
+            if (z_parse_struct_definition(&c) != 0) {
+                if (error_line) {
+                    *error_line = c.error_line;
+                }
+                return -1;
             }
-            return -1;
+        } else if (z_current_starts_enum_definition(&c)) {
+            parsed_declaration = 1;
+            if (z_parse_enum_definition(&c) != 0) {
+                if (error_line) {
+                    *error_line = c.error_line;
+                }
+                return -1;
+            }
+        } else if (z_current_starts_global_definition(&c)) {
+            parsed_declaration = 1;
+            if (z_parse_global_definition(&c) != 0) {
+                if (error_line) {
+                    *error_line = c.error_line;
+                }
+                return -1;
+            }
+        } else if (z_current_starts_extern_function(&c)) {
+            parsed_declaration = 1;
+            if (z_parse_extern_function(&c) != 0) {
+                if (error_line) {
+                    *error_line = c.error_line;
+                }
+                return -1;
+            }
+        } else if (z_current_starts_function_prototype(&c)) {
+            parsed_declaration = 1;
+            if (z_parse_function_prototype(&c) != 0) {
+                if (error_line) {
+                    *error_line = c.error_line;
+                }
+                return -1;
+            }
+        }
+
+        if (!parsed_declaration) {
+            break;
         }
     }
 
-    while (c.current.type != Z_TOKEN_EOF &&
-           z_current_starts_global_definition(&c)) {
-        if (z_parse_global_definition(&c) != 0) {
-            if (error_line) {
-                *error_line = c.error_line;
-            }
-            return -1;
-        }
-    }
-
-    while (c.current.type != Z_TOKEN_EOF &&
-           z_current_starts_extern_function(&c)) {
+    while (c.current.type != Z_TOKEN_EOF && z_current_starts_extern_function(&c)) {
         if (z_parse_extern_function(&c) != 0) {
             if (error_line) {
                 *error_line = c.error_line;

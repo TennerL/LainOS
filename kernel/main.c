@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "graphics.h"
 #include "shell.h"
 #include "storage.h"
 
@@ -263,6 +264,12 @@ void kernel_main(boot_info_t *info) {
     }
 
     kernel_boot_info = info;
+
+    graphics_init(info->framebuffer_base,
+                  info->framebuffer_width,
+                  info->framebuffer_height,
+                  info->framebuffer_pixels_per_scanline,
+                  info->framebuffer_format);
 
     console_init(info->framebuffer_base,
                  info->framebuffer_width,

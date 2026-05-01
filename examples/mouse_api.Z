@@ -1,0 +1,14 @@
+#pragma once
+
+enum {
+    MOUSE_LEFT = 1,
+    MOUSE_RIGHT = 2,
+    MOUSE_MIDDLE = 4,
+};
+
+extern int mouse_enabled(void);
+extern int mouse_x(void);
+extern int mouse_y(void);
+extern int mouse_buttons(void);
+extern int mouse_dx(void);
+extern int mouse_dy(void);

@@ -5,6 +5,25 @@
 
 #define KERNEL_PATH L"\\kernel.elf"
 #define NTFS_DRIVER_PATH L"\\EFI\\BOOT\\drivers\\ntfs_x64.efi"
+#define BOOT_RES_CONFIG_NAME "bootres.cfg"
+#define LAINFS_BLOCK_SIZE 512u
+#define LAINFS_DIR_BLOCKS 4u
+#define LAINFS_MAX_FILES 32u
+#define LAINFS_ENTRY_SIZE 64u
+#define LAINFS_MAGIC0 0x4E49414Cu
+#define LAINFS_MAGIC1 0x315346u
+#define LAINFS_ENTRY_FILE 1u
+#define MBR_PARTITION_TABLE_OFFSET 446u
+#define MBR_PARTITION_ENTRY_SIZE 16u
+#define MBR_SIGNATURE_OFFSET 510u
+
+#ifndef BOOT_RES_WIDTH
+#define BOOT_RES_WIDTH 0
+#endif
+
+#ifndef BOOT_RES_HEIGHT
+#define BOOT_RES_HEIGHT 0
+#endif
 
 typedef void (*kernel_entry_t)(boot_info_t *boot_info);
 
@@ -24,6 +43,26 @@ typedef struct {
     EFI_FILE_PROTOCOL *handle;
     UINTN size;
 } kernel_file_t;
+
+typedef struct __attribute__((packed)) {
+    UINT32 magic0;
+    UINT32 magic1;
+    UINT32 version;
+    UINT32 block_size;
+    UINT32 dir_start_lba;
+    UINT32 dir_blocks;
+    UINT32 data_start_lba;
+    UINT32 max_files;
+    UINT8 reserved[LAINFS_BLOCK_SIZE - 32u];
+} boot_lainfs_superblock_t;
+
+typedef struct __attribute__((packed)) {
+    UINT8 used;
+    char name[31];
+    UINT32 start_lba;
+    UINT32 byte_size;
+    UINT8 reserved[24];
+} boot_lainfs_dirent_t;
 
 static EFI_STATUS get_file_size(EFI_SYSTEM_TABLE *SystemTable, EFI_FILE_PROTOCOL *file, UINTN *size) {
     EFI_STATUS status;
@@ -263,6 +302,303 @@ static void *find_rsdp(EFI_SYSTEM_TABLE *SystemTable) {
     return NULL;
 }
 
+static int ascii_is_space(char ch) {
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+static int parse_u32_ascii(const char **text, UINT32 *out) {
+    UINT32 value = 0;
+    const char *s = *text;
+
+    while (ascii_is_space(*s)) {
+        ++s;
+    }
+
+    if (*s < '0' || *s > '9') {
+        return 0;
+    }
+
+    while (*s >= '0' && *s <= '9') {
+        value = value * 10u + (UINT32)(*s - '0');
+        ++s;
+    }
+
+    *text = s;
+    *out = value;
+    return 1;
+}
+
+static int parse_resolution_text(const char *text, UINT32 *out_width, UINT32 *out_height) {
+    UINT32 width = 0;
+    UINT32 height = 0;
+
+    if (!parse_u32_ascii(&text, &width) || !parse_u32_ascii(&text, &height) ||
+        width == 0 || height == 0) {
+        return 0;
+    }
+
+    *out_width = width;
+    *out_height = height;
+    return 1;
+}
+
+static UINT32 read_le32(const UINT8 *p) {
+    return ((UINT32)p[0]) |
+           ((UINT32)p[1] << 8) |
+           ((UINT32)p[2] << 16) |
+           ((UINT32)p[3] << 24);
+}
+
+static int boot_lainfs_name_equals(const char *entry_name, const char *name) {
+    UINTN i = 0;
+
+    while (i < 31u && entry_name[i] && name[i] && entry_name[i] == name[i]) {
+        ++i;
+    }
+
+    return (i == 31u || entry_name[i] == '\0') && name[i] == '\0';
+}
+
+static EFI_STATUS read_lainfs_boot_resolution_from_block(EFI_BLOCK_IO_PROTOCOL *block,
+                                                         EFI_SYSTEM_TABLE *SystemTable,
+                                                         EFI_LBA base_lba,
+                                                         UINT32 *out_width,
+                                                         UINT32 *out_height) {
+    EFI_STATUS status;
+    UINT8 *sector = NULL;
+    UINT8 *directory = NULL;
+    UINT8 *file = NULL;
+    boot_lainfs_superblock_t *super;
+
+    if (block == NULL || block->Media == NULL || block->Media->BlockSize != LAINFS_BLOCK_SIZE) {
+        return EFI_NOT_FOUND;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+        EfiLoaderData, LAINFS_BLOCK_SIZE, (void **)&sector);
+    if (EFI_ERROR(status)) {
+        return status;
+    }
+
+    status = uefi_call_wrapper(block->ReadBlocks, 5,
+        block, block->Media->MediaId, base_lba, LAINFS_BLOCK_SIZE, sector);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, sector);
+        return status;
+    }
+
+    super = (boot_lainfs_superblock_t *)(void *)sector;
+    if (super->magic0 != LAINFS_MAGIC0 ||
+        super->magic1 != LAINFS_MAGIC1 ||
+        super->version != 1 ||
+        super->block_size != LAINFS_BLOCK_SIZE ||
+        super->dir_blocks != LAINFS_DIR_BLOCKS ||
+        super->max_files != LAINFS_MAX_FILES) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, sector);
+        return EFI_NOT_FOUND;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+        EfiLoaderData, LAINFS_DIR_BLOCKS * LAINFS_BLOCK_SIZE, (void **)&directory);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, sector);
+        return status;
+    }
+
+    status = uefi_call_wrapper(block->ReadBlocks, 5,
+        block,
+        block->Media->MediaId,
+        base_lba + super->dir_start_lba,
+        LAINFS_DIR_BLOCKS * LAINFS_BLOCK_SIZE,
+        directory);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, directory);
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, sector);
+        return status;
+    }
+
+    for (UINT32 i = 0; i < LAINFS_MAX_FILES; ++i) {
+        boot_lainfs_dirent_t *entry = (boot_lainfs_dirent_t *)(void *)(directory + i * LAINFS_ENTRY_SIZE);
+        UINT32 parent_id = ((UINT32)entry->reserved[0]) |
+                           ((UINT32)entry->reserved[1] << 8) |
+                           ((UINT32)entry->reserved[2] << 16) |
+                           ((UINT32)entry->reserved[3] << 24);
+
+        if (entry->used != LAINFS_ENTRY_FILE ||
+            parent_id != 0 ||
+            entry->byte_size == 0 ||
+            entry->byte_size > LAINFS_BLOCK_SIZE ||
+            !boot_lainfs_name_equals(entry->name, BOOT_RES_CONFIG_NAME)) {
+            continue;
+        }
+
+        status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+            EfiLoaderData, LAINFS_BLOCK_SIZE, (void **)&file);
+        if (EFI_ERROR(status)) {
+            break;
+        }
+
+        status = uefi_call_wrapper(block->ReadBlocks, 5,
+            block,
+            block->Media->MediaId,
+            base_lba + entry->start_lba,
+            LAINFS_BLOCK_SIZE,
+            file);
+        if (!EFI_ERROR(status)) {
+            file[entry->byte_size < LAINFS_BLOCK_SIZE ? entry->byte_size : LAINFS_BLOCK_SIZE - 1u] = '\0';
+            if (parse_resolution_text((const char *)file, out_width, out_height)) {
+                uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, file);
+                uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, directory);
+                uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, sector);
+                return EFI_SUCCESS;
+            }
+        }
+
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, file);
+        break;
+    }
+
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, directory);
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, sector);
+    return EFI_NOT_FOUND;
+}
+
+static EFI_STATUS read_lainfs_boot_resolution_from_mbr(EFI_BLOCK_IO_PROTOCOL *block,
+                                                       EFI_SYSTEM_TABLE *SystemTable,
+                                                       UINT32 *out_width,
+                                                       UINT32 *out_height) {
+    EFI_STATUS status;
+    UINT8 *mbr = NULL;
+
+    if (block == NULL || block->Media == NULL || block->Media->BlockSize != LAINFS_BLOCK_SIZE) {
+        return EFI_NOT_FOUND;
+    }
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+        EfiLoaderData, LAINFS_BLOCK_SIZE, (void **)&mbr);
+    if (EFI_ERROR(status)) {
+        return status;
+    }
+
+    status = uefi_call_wrapper(block->ReadBlocks, 5,
+        block, block->Media->MediaId, 0, LAINFS_BLOCK_SIZE, mbr);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, mbr);
+        return status;
+    }
+
+    if (mbr[MBR_SIGNATURE_OFFSET] != 0x55 || mbr[MBR_SIGNATURE_OFFSET + 1u] != 0xAA) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, mbr);
+        return EFI_NOT_FOUND;
+    }
+
+    for (UINT32 i = 0; i < 4u; ++i) {
+        UINT8 *entry = mbr + MBR_PARTITION_TABLE_OFFSET + i * MBR_PARTITION_ENTRY_SIZE;
+        UINT32 first_lba = read_le32(entry + 8u);
+        UINT32 sectors = read_le32(entry + 12u);
+
+        if (entry[4] == 0 || first_lba == 0 || sectors == 0) {
+            continue;
+        }
+
+        status = read_lainfs_boot_resolution_from_block(block,
+                                                        SystemTable,
+                                                        (EFI_LBA)first_lba,
+                                                        out_width,
+                                                        out_height);
+        if (!EFI_ERROR(status)) {
+            uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, mbr);
+            return EFI_SUCCESS;
+        }
+    }
+
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, mbr);
+    return EFI_NOT_FOUND;
+}
+
+static EFI_STATUS read_lainfs_boot_resolution(EFI_SYSTEM_TABLE *SystemTable,
+                                              UINT32 *out_width,
+                                              UINT32 *out_height) {
+    EFI_STATUS status;
+    EFI_BOOT_SERVICES *bs = SystemTable->BootServices;
+    EFI_GUID block_io_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_HANDLE *handles = NULL;
+    UINTN handle_count = 0;
+    EFI_STATUS last_status = EFI_NOT_FOUND;
+
+    status = uefi_call_wrapper(bs->LocateHandleBuffer, 5,
+        ByProtocol, &block_io_guid, NULL, &handle_count, &handles);
+    if (EFI_ERROR(status)) {
+        return status;
+    }
+
+    for (UINTN i = 0; i < handle_count; ++i) {
+        EFI_BLOCK_IO_PROTOCOL *block = NULL;
+        status = uefi_call_wrapper(bs->HandleProtocol, 3,
+            handles[i], &block_io_guid, (void **)&block);
+        if (EFI_ERROR(status) || block == NULL || block->Media == NULL) {
+            continue;
+        }
+
+        status = read_lainfs_boot_resolution_from_block(block, SystemTable, 0, out_width, out_height);
+        if (EFI_ERROR(status)) {
+            status = read_lainfs_boot_resolution_from_mbr(block, SystemTable, out_width, out_height);
+        }
+        if (!EFI_ERROR(status)) {
+            uefi_call_wrapper(bs->FreePool, 1, handles);
+            return EFI_SUCCESS;
+        }
+        last_status = status;
+    }
+
+    uefi_call_wrapper(bs->FreePool, 1, handles);
+    return last_status;
+}
+
+static int gop_pixel_format_supported(EFI_GRAPHICS_PIXEL_FORMAT format) {
+    return format == PixelRedGreenBlueReserved8BitPerColor ||
+           format == PixelBlueGreenRedReserved8BitPerColor;
+}
+
+static EFI_STATUS set_requested_graphics_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop,
+                                              UINT32 requested_width,
+                                              UINT32 requested_height) {
+    EFI_STATUS status;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = NULL;
+    UINTN info_size = 0;
+
+    if (gop == NULL || gop->Mode == NULL || requested_width == 0 || requested_height == 0) {
+        return EFI_SUCCESS;
+    }
+
+    for (UINT32 mode = 0; mode < gop->Mode->MaxMode; ++mode) {
+        status = uefi_call_wrapper(gop->QueryMode, 4, gop, mode, &info_size, &info);
+        if (EFI_ERROR(status) || info == NULL) {
+            continue;
+        }
+
+        if (info->HorizontalResolution == requested_width &&
+            info->VerticalResolution == requested_height &&
+            gop_pixel_format_supported(info->PixelFormat)) {
+            status = uefi_call_wrapper(gop->SetMode, 2, gop, mode);
+            if (EFI_ERROR(status)) {
+                Print(L"Failed to set requested GOP mode %ux%u: %r\r\n",
+                      requested_width,
+                      requested_height,
+                      status);
+            } else {
+                Print(L"Set GOP mode %ux%u\r\n", requested_width, requested_height);
+            }
+            return status;
+        }
+    }
+
+    Print(L"Requested GOP mode %ux%u not found; using firmware default.\r\n",
+          requested_width,
+          requested_height);
+    return EFI_NOT_FOUND;
+}
+
 EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
     InitializeLib(image, SystemTable);
 
@@ -277,6 +613,8 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
     UINT32 descriptor_version = 0;
     EFI_PHYSICAL_ADDRESS bootinfo_addr = 0;
     boot_info_t *boot_info = NULL;
+    UINT32 requested_width = (UINT32)BOOT_RES_WIDTH;
+    UINT32 requested_height = (UINT32)BOOT_RES_HEIGHT;
 
     Print(L"Lain UEFI loader starting...\r\n");
 
@@ -290,6 +628,11 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"Optional NTFS driver not started: %r\r\n", status);
     } else {
         Print(L"Optional NTFS driver started.\r\n");
+    }
+
+    status = read_lainfs_boot_resolution(SystemTable, &requested_width, &requested_height);
+    if (!EFI_ERROR(status)) {
+        Print(L"Loaded lainfs boot resolution request: %ux%u\r\n", requested_width, requested_height);
     }
 
     status = open_kernel(image, SystemTable, &kernel_file);
@@ -332,6 +675,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
 
     status = uefi_call_wrapper(bs->LocateProtocol, 3, &gop_guid, NULL, (void**)&gop);
     if (!EFI_ERROR(status) && gop != NULL && gop->Mode != NULL && gop->Mode->Info != NULL) {
+        set_requested_graphics_mode(gop, requested_width, requested_height);
         boot_info->framebuffer_base = gop->Mode->FrameBufferBase;
         boot_info->framebuffer_width = gop->Mode->Info->HorizontalResolution;
         boot_info->framebuffer_height = gop->Mode->Info->VerticalResolution;

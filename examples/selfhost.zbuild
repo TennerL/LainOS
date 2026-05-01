@@ -1,0 +1,4 @@
+output selfhost.bin
+install-name selfhost.bin
+test-return 41
+selfhost_demo.Z selfhost_demo.zo

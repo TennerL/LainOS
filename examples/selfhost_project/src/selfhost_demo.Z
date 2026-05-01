@@ -1,0 +1,24 @@
+#include "kernel_api.Z"
+
+int main_value(void) {
+    return 41;
+}
+
+uint8_t buffer[64];
+
+print("selfhost project ");
+print(main_value());
+print(" ticks=");
+print(ticks());
+print("\n");
+os_mkdir("build");
+os_write_file("build/from_z.txt", "created from selfhost_project\n");
+print(" file-size=");
+print(os_file_size("build/from_z.txt"));
+print("\n");
+os_read_file("build/from_z.txt", buffer, 64);
+os_delete("build/from_z_renamed.txt");
+os_rename("build/from_z.txt", "build/from_z_renamed.txt");
+os_cat_file("build/from_z_renamed.txt");
+
+return main_value();
