@@ -1,0 +1,30 @@
+#pragma once
+
+#ifndef HEADER_CONTROLS_Z
+#define HEADER_CONTROLS_Z
+
+struct Node;
+
+#if 0
+#define HEADER_VALUE 1
+#else
+#define HEADER_VALUE 9
+#endif
+
+struct Node {
+    int value;
+    struct Node *next;
+};
+
+#endif
+
+struct Node first;
+struct Node second;
+struct Node *cursor;
+
+first.value = HEADER_VALUE;
+first.next = &second;
+second.value = 4;
+cursor = first.next;
+
+return first.value + cursor->value;

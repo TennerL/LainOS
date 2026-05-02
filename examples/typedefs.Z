@@ -1,0 +1,39 @@
+#ifndef TYPEDEFS_EXAMPLE_Z
+#define TYPEDEFS_EXAMPLE_Z
+
+typedef uint32_t u32;
+typedef int *int_ptr;
+typedef int (*unary_op)(int);
+typedef struct Node Node;
+
+struct Node {
+    u32 value;
+    Node *next;
+};
+
+typedef struct Pair {
+    u32 left;
+    u32 right;
+} Pair;
+
+#endif
+
+int bump(int n) {
+    return n + 1;
+}
+
+Node node;
+Node second;
+Pair pair;
+int value = 7;
+int_ptr p = &value;
+unary_op op;
+
+node.value = 10;
+node.next = &second;
+node.next->value = 3;
+pair.left = node.value;
+pair.right = *p;
+op = bump;
+
+return pair.left + pair.right + node.next->value + op(4);

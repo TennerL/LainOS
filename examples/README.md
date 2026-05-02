@@ -8,6 +8,12 @@ C:
 zc hello.Z hello.bin
 exec hello.bin
 zrun counter.Z
+zrun defines.Z
+zrun header_controls.Z
+zrun function_pointers.Z
+zrun typedefs.Z
+zrun struct_values.Z
+zrun struct_returns.Z
 cp hello.Z hello-copy.Z
 ztest gfxdemo
 zinstall gfxdemo
@@ -23,7 +29,7 @@ zinstall zmake
 exec zmake.bin
 ```
 
-Mouse examples are staged for the PS/2 mouse driver milestone:
+Mouse example:
 
 ```text
 ztest mousedemo
@@ -31,7 +37,7 @@ zinstall mousedemo
 exec mousedemo.bin
 ```
 
-Those require the kernel to export the `mouse_*` API declared in
-`mouse_api.Z`.
+`mousedemo` reads the kernel `mouse_*` exports declared in `mouse_api.Z`
+and draws the current pointer position with the graphics API.
 
 If your files are on a different drive or partition, mount and switch to that one first.

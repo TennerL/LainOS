@@ -21,7 +21,8 @@ Minimal starter project for:
 - `kernel/cpu.c` - GDT/IDT table construction in C
 - `kernel/cpu_low.asm` - tiny low-level CPU table load helpers
 - `kernel/keyboard.c` - minimal PS/2 keyboard polling input
-- `kernel/interrupts.asm` - exception stubs and fault entry path
+- `kernel/mouse.c` - PS/2 mouse packet driver exposed to `.Z` programs
+- `kernel/interrupts.asm` - exception stubs and IRQ entry paths
 - `kernel/linker.ld` - kernel linker script
 - `archive/kernel-old/` - superseded ASM implementations kept for reference
 - `Makefile` - build and run helpers
@@ -368,11 +369,13 @@ That is the right basic shape for a real kernel loader.
 
 ## Important caveats
 
-This is now a clean milestone-1 starter: UEFI boot, ELF64 loading, boot info handoff, a C kernel main path, a C console path, visible kernel output, mostly-C descriptor-table setup, and a minimal PS/2 keyboard input path all work.
+This is now a clean milestone-1 starter: UEFI boot, ELF64 loading, boot info handoff, a C kernel main path, a C console path, visible kernel output, mostly-C descriptor-table setup, and minimal PS/2 keyboard plus mouse input paths all work.
 
-Current input path assumes classic QEMU PS/2 keyboard behavior and simple set-1 scancodes.
+Current keyboard input assumes classic QEMU PS/2 keyboard behavior and simple set-1 scancodes.
 It now includes basic Shift and Caps Lock handling plus a simple visible text cursor during line input.
 Keyboard layouts can be switched with `keymap us` or `keymap de`.
+The German layout covers the ASCII keys needed for shell and `.Z` work,
+including AltGr combinations for `@`, `{}`, `[]`, `\`, `~`, and `|`.
 While typing at the shell prompt, `Ctrl+W` enables a two-pane split console and
 then switches focus between the left and right pane. Each pane keeps its own
 shell session state, including the selected drive and current working directory.
@@ -593,11 +596,24 @@ Supported `.Z` subset:
   they document intent but do not yet enforce read-only or volatile access rules
 - enum integer constants, including anonymous enums:
   `enum { Width = 80, Height = 25, Error = -1, };`
+- object-like numeric `#define` constants:
+  `#define WIDTH 80`, `#define FLAGS 0x20u`, `#define ERROR (-1)`
+- simple include guards and header conditionals with `#ifndef`, `#ifdef`,
+  numeric `#if`, `#else`, and `#endif`; `#pragma once` is accepted as a no-op
+- plain struct forward declarations: `struct Node;`
+- typedef aliases for scalar, pointer, function-pointer, and struct types:
+  `typedef uint32_t u32;`, `typedef struct Node Node;`,
+  `typedef struct Pair { u32 left; u32 right; } Pair;`
 - integer and void functions with up to 6 parameters:
   `int add(int a, int b) { return a + b; }`
   `void line(void) { print("\n"); return; }`
 - forward function prototypes before function bodies, including unnamed
   prototype parameters: `int add(int, int);`
+- function pointer declarations, parameters, struct fields, assignments from
+  known function names, and indirect calls:
+  `int (*op)(int); int (*table[4])(int); op = add; value = op(41); ops->draw(7); table[i](9);`
+- function pointer signatures are checked for known prototypes/definitions,
+  including assignment compatibility, argument count, and argument types
 - top-level statements and declarations outside explicit functions; these are
   lowered into the implicit entry routine that `zrun`/`exec` starts from
 - local variables inside functions
@@ -638,6 +654,9 @@ Supported `.Z` subset:
   - declare a local struct variable: `struct Point p;`
   - read a field: `print(p.x);`
   - write a field: `p.y = 42;`
+  - whole-struct assignment for matching struct types: `dst = src;`
+  - struct parameters are copied into local struct values: `int area(struct Size s) { return s.w * s.h; }`
+  - struct returns into a known destination: `size = make_size(80, 25);`
   - pointer-to-struct field access: `p->x`, `p->y = 42;`, `p->count += 1;`
   - nested field chains such as `outer.inner.x`, `outer.ptr->x`, and
     `outer_ptr->inner.y += 1;`
@@ -653,6 +672,8 @@ Supported `.Z` subset:
   - `gfx_draw_rect(x, y, w, h, color);`
   - `gfx_draw_line(x0, y0, x1, y1, color);`
   - `gfx_clear(color);`
+  - `mouse_enabled()`, `mouse_x()`, `mouse_y()`, `mouse_buttons()`
+  - `mouse_dx()` and `mouse_dy()` for the most recent PS/2 packet delta
   - `put_char_at(col, row, ch);`
   - `put_dec_at(col, row, expr);`
   - `set_margin(x, y);` to reserve screen space, for example below a custom status bar
@@ -680,19 +701,30 @@ print("\n");
 return value;
 ```
 
-This is still not full C. Preprocessing, include files, function pointer calls,
-bitfields, and stronger type checking are not implemented yet. Current pointer support is intentionally narrow:
+This is still not full C. Function-like macros, textual macro expansion,
+conditional preprocessing, bitfields, and broad C-style type checking are not
+implemented yet. Current pointer support is intentionally narrow:
 address-of works for compiler-known locals, globals, array elements, and struct
 fields, dereference is scalar-only, and pointer arithmetic is limited to
 `pointer +/- integer` scaling. Current array support is also narrow: arrays are
 fixed-size compiler-backed storage, brace initialization is limited to flat element lists,
 multidimensional arrays currently use chained local-array indexing only, and
 current struct support is still incomplete: structs must be declared at top level,
-there is no struct return or struct-parameter support yet, and whole-struct
-assignment/value passing remains minimal. Mixed-width scalar, pointer, and nested
+and struct return values currently need a known destination such as assignment,
+initialization, or `return make_struct(...)`; they are not general-purpose
+expression values yet. Mixed-width scalar, pointer, and nested
 struct fields now use packed offsets and width-correct memory access, so layouts such as
 `uint8_t` + `uint16_t` + `uint32_t` + `uint64_t` no longer collapse into
 8-byte `int` slots. `.` and `->` can now be chained through nested struct fields.
+Function pointers currently use pointer-sized storage and support calls through
+local/global variables, parameters, struct fields, and indexed pointer tables.
+Known function-pointer signatures are checked, but unprototyped/unknown
+function symbols still fall back to permissive pointer behavior.
+The normal host build now also compiles `kernel/zlink_probe.Z` into a NASM ELF
+object and links it into `kernel.elf`, proving the kernel can contain selected
+`.Z` objects alongside C and ASM objects. That file now contains the
+status-bar CPU busy-percent helper used by C code, so the normal kernel path
+has its first small `.Z` utility in live use.
 Explicit `global` and `static` declarations emit real labels in the generated data section,
 and functions/top-level code can read, write, index, take addresses of, and use
 compound updates on those globals. Global initializers are still intentionally
@@ -702,7 +734,7 @@ Fixed-width scalar support is still partial: `.Z` now preserves truncation
 and sign/zero-extension for scalar locals, parameters, indexed local-array
 elements, mixed-width struct fields, and explicit scalar casts. Basic unsigned
 comparison semantics are now wired into relational operators, but `.Z` still
-does not provide whole-struct assignment, struct parameters, or struct returns.
+does not provide general-purpose struct-return expressions.
 
 The `.zo` object format is a first in-OS toolchain checkpoint, not the final
 kernel object ABI. Version 5 stores one assembled load image, explicit `.text`,

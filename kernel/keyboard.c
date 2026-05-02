@@ -6,8 +6,10 @@
 #define PS2_DATA_PORT 0x60
 #define PS2_STATUS_PORT 0x64
 #define PS2_STATUS_OUTPUT_FULL 0x01
+#define PS2_STATUS_AUX_DATA 0x20
 #define SC_LSHIFT 0x2A
 #define SC_RSHIFT 0x36
+#define SC_RALT 0x38
 #define SC_CAPSLOCK 0x3A
 
 static inline uint8_t inb(uint16_t port) {
@@ -23,6 +25,7 @@ static int ps2_has_data(void) {
 static int shift_down;
 static int caps_lock_on;
 static int ctrl_down;
+static int altgr_down;
 static int extended_scancode; 
 static keyboard_layout_t current_layout;
 
@@ -77,6 +80,20 @@ static char scancode_to_ascii_us(uint8_t sc) {
 }
 
 static char scancode_to_ascii_de(uint8_t sc) {
+    if (altgr_down) {
+        switch (sc) {
+            case 0x08: return '{';
+            case 0x09: return '[';
+            case 0x0A: return ']';
+            case 0x0B: return '}';
+            case 0x0C: return '\\';
+            case 0x10: return '@';
+            case 0x1B: return '~';
+            case 0x56: return '|';
+            default: return 0;
+        }
+    }
+
     switch (sc) {
         case 0x02: return shift_down ? '!' : '1';
         case 0x03: return shift_down ? '"' : '2';
@@ -103,17 +120,18 @@ static char scancode_to_ascii_de(uint8_t sc) {
         case 0x30: return apply_alpha_case('b'); case 0x31: return apply_alpha_case('n');
         case 0x32: return apply_alpha_case('m');
         case 0x39: return ' ';
-        case 0x0C: return shift_down ? '?' : '-';
+        case 0x0C: return shift_down ? '?' : 0;
         case 0x0D: return shift_down ? '`' : '\'';
-        case 0x1A: return shift_down ? '{' : '[';
+        case 0x1A: return 0;
         case 0x1B: return shift_down ? '*' : '+';
-        case 0x27: return shift_down ? ':' : ';';
-        case 0x28: return shift_down ? '"' : '\'';
-        case 0x29: return shift_down ? '^' : '^';
+        case 0x27: return 0;
+        case 0x28: return 0;
+        case 0x29: return '^';
         case 0x2B: return shift_down ? '\'' : '#';
         case 0x33: return shift_down ? ';' : ',';
         case 0x34: return shift_down ? ':' : '.';
         case 0x35: return shift_down ? '_' : '-';
+        case 0x56: return shift_down ? '>' : '<';
         case 0x1C: return '\n';
         case 0x0E: return '\b';
         case 0x0F: return '\t';
@@ -149,6 +167,7 @@ void keyboard_init(void) {
     shift_down = 0;
     caps_lock_on = 0;
     ctrl_down = 0;
+    altgr_down = 0;
     extended_scancode = 0;
     current_layout = KEYBOARD_LAYOUT_US;
     while (ps2_has_data()) {
@@ -255,7 +274,12 @@ key_event_t keyboard_read_key(void) {
             idle = 0;
         }
 
+        uint8_t status = inb(PS2_STATUS_PORT);
         uint8_t sc = inb(PS2_DATA_PORT);
+
+        if ((status & PS2_STATUS_AUX_DATA) != 0) {
+            continue;
+        }
 
         if(sc == 0xE0) {
             extended_scancode = 1;
@@ -267,6 +291,11 @@ key_event_t keyboard_read_key(void) {
 
         int released = (sc & 0x80) != 0;
         uint8_t code = sc & 0x7F;
+
+        if (extended && code == SC_RALT) {
+            altgr_down = !released;
+            continue;
+        }
 
         if (!extended && (code == SC_LSHIFT || code == SC_RSHIFT)) {
             shift_down = !released;

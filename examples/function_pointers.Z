@@ -1,0 +1,34 @@
+struct Ops {
+    int (*run)(int value);
+};
+
+int bump(int value) {
+    return value + 1;
+}
+
+int double_value(int value) {
+    return value + value;
+}
+
+int apply(int (*op)(int value), int value) {
+    return op(value);
+}
+
+int (*pick)(int value) = bump;
+int (*table[2])(int value) = { bump, double_value, };
+struct Ops ops;
+struct Ops *opsp = &ops;
+int result = pick(41);
+
+pick = double_value;
+result += apply(pick, 21);
+result += table[1](5);
+
+ops.run = bump;
+result += ops.run(9);
+
+opsp->run = double_value;
+opsp->run(1);
+result += opsp->run(6);
+
+return result;

@@ -122,7 +122,6 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
     unsigned long long current_idle_ticks;
     unsigned long long delta_ticks;
     unsigned long long delta_idle_ticks;
-    unsigned long long busy_ticks;
 
     if (core != 0) {
         return 0;
@@ -143,16 +142,7 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
     status_cpu_last_ticks = current_ticks;
     status_cpu_last_idle_ticks = current_idle_ticks;
 
-    if (delta_ticks == 0) {
-        return 0;
-    }
-
-    if (delta_idle_ticks > delta_ticks) {
-        delta_idle_ticks = delta_ticks;
-    }
-
-    busy_ticks = delta_ticks - delta_idle_ticks;
-    return (unsigned int)((busy_ticks * 100ull + (delta_ticks / 2ull)) / delta_ticks);
+    return (unsigned int)status_busy_percent_from_ticks(delta_ticks, delta_idle_ticks);
 }
 
 static void statusbar_put_label(unsigned int col, const char *text) {
@@ -281,6 +271,7 @@ void kernel_main(boot_info_t *info) {
     interrupts_init();
     timer_init();
     keyboard_init();
+    mouse_init();
     storage_init();
 
     console_puts("Lain kernel says hi from C :3\n");
@@ -291,7 +282,7 @@ void kernel_main(boot_info_t *info) {
                      info->framebuffer_width,
                      info->framebuffer_height);
     console_kprintf1("Memory map bytes: %u\n", info->memory_map_size);
-    console_puts("GDT, IDT, timer, PS/2 keyboard, and storage loaded.\n");
+    console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, and storage loaded.\n");
     console_puts("\nHave fun hacking on it.\n");
 
     shell_init();

@@ -1,0 +1,37 @@
+struct Point {
+    int x;
+    int y;
+};
+
+struct Box {
+    struct Point origin;
+    struct Point size;
+};
+
+struct Point make_point(int x, int y) {
+    struct Point p;
+    p.x = x;
+    p.y = y;
+    return p;
+}
+
+struct Box make_box(struct Point origin, struct Point size) {
+    struct Box box;
+    box.origin = origin;
+    box.size = size;
+    return box;
+}
+
+int area(struct Point size) {
+    return size.x * size.y;
+}
+
+struct Point origin;
+struct Point size;
+struct Box box;
+
+origin = make_point(2, 3);
+size = make_point(4, 5);
+box = make_box(origin, size);
+
+return box.origin.x + box.origin.y + area(box.size);

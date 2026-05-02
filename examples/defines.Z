@@ -1,0 +1,18 @@
+#ifndef DEFINES_EXAMPLE_Z
+#define DEFINES_EXAMPLE_Z
+
+#define WIDTH 12u
+#define HEIGHT (5)
+#define MASK 0xffUL
+#define NEGATIVE -3
+
+#endif
+
+#ifndef DEFINES_EXAMPLE_Z
+this line should be skipped by the include guard
+#endif
+
+int area = WIDTH * HEIGHT;
+int low = MASK % 16;
+
+return area + low + NEGATIVE;

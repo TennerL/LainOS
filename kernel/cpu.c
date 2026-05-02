@@ -30,6 +30,7 @@ extern void isr_20(void); extern void isr_21(void); extern void isr_22(void); ex
 extern void isr_24(void); extern void isr_25(void); extern void isr_26(void); extern void isr_27(void);
 extern void isr_28(void); extern void isr_29(void); extern void isr_30(void); extern void isr_31(void);
 extern void irq0_timer(void);
+extern void irq12_mouse(void);
 
 extern void cpu_load_gdt_and_segments(const struct gdtr64 *gdtr);
 extern void cpu_load_idt(const struct idtr64 *idtr);
@@ -70,6 +71,7 @@ void cpu_init_tables(void) {
         idt_set_gate(i, isrs[i]);
     }
     idt_set_gate(32, irq0_timer);
+    idt_set_gate(44, irq12_mouse);
 
     struct idtr64 idtr = {
         .limit = (uint16_t)(sizeof(idt64) - 1),
