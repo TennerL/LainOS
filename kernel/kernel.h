@@ -75,5 +75,6 @@ void status_cpu_leave_idle(void);
 void status_cpu_timer_tick(void);
 void statusbar_enable(void);
 void statusbar_update_if_due(void);
+void shell_modules_tick(void);
 
 #endif

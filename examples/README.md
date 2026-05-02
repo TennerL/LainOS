@@ -10,6 +10,7 @@ exec hello.bin
 zrun counter.Z
 zrun defines.Z
 zrun header_controls.Z
+zrun hwinfo.Z
 zrun function_pointers.Z
 zrun typedefs.Z
 zrun struct_values.Z
@@ -27,7 +28,21 @@ exec zreport.bin
 ztest zmake
 zinstall zmake
 exec zmake.bin
+ztest hwinfo
+zinstall hwinfo
+exec hwinfo.bin
 ```
+
+Resident dashboard module:
+
+```text
+zbuild hwdash_module
+zmod hwdash_module.zo
+zmods
+```
+
+If a loaded module exports `zmodule_tick`, the kernel calls it while the shell is
+idle or waiting for keyboard input.
 
 Mouse example:
 

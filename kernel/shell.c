@@ -48,6 +48,7 @@ typedef struct {
 } zmodule_slot_t;
 
 static zmodule_slot_t zmodule_slots[ZMODULE_MAX_MODULES];
+static unsigned long long zmodule_last_tick;
 
 typedef void (*command_handler_t)(const char *args, const boot_info_t *info);
 
@@ -62,6 +63,7 @@ typedef struct {
 
 typedef void (*exec_program_t)(const exec_api_t *api);
 typedef uint64_t (*exec_program_ret_t)(const exec_api_t *api);
+typedef void (*zmodule_tick_t)(void);
 
 typedef struct {
     const char *name;
@@ -4129,6 +4131,28 @@ static int zmodule_collect_exports(zobject_resolved_symbol_t *symbols,
     return 0;
 }
 
+void shell_modules_tick(void) {
+    unsigned long long now = timer_ticks();
+
+    if (now == zmodule_last_tick) {
+        return;
+    }
+    zmodule_last_tick = now;
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+
+        for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+            if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick")) {
+                ((zmodule_tick_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                break;
+            }
+        }
+    }
+}
+
 static void cmd_zmod(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -4576,7 +4600,7 @@ void shell_run_autoexec(const char *name, const boot_info_t *info) {
         return;
     }
 
-    run_script_file(name, info, 1);
+    //run_script_file(name, info, 1);
     current_drive = previous_drive;
 }
 

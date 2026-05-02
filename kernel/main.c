@@ -293,6 +293,7 @@ void kernel_main(boot_info_t *info) {
         unsigned int session = console_active_pane();
 
         statusbar_update_if_due();
+        shell_modules_tick();
         if (session >= SHELL_SESSION_COUNT) {
             session = 0;
         }

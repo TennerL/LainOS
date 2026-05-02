@@ -1,0 +1,97 @@
+extern uint64_t ticks(void);
+extern uint64_t mem_total_kb(void);
+extern uint64_t mem_used_kb(void);
+extern uint32_t cpu_usage(uint32_t core);
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void put_char_at(uint32_t col, uint32_t row, uint32_t ch);
+extern void put_dec_at(uint32_t col, uint32_t row, uint64_t value);
+extern void set_margin(uint32_t x, uint32_t y);
+
+global uint32_t dash_enabled;
+global uint32_t dash_x;
+global uint32_t dash_y;
+global uint32_t dash_w;
+global uint64_t dash_next_tick;
+
+void label_at(uint32_t col, uint32_t row, uint32_t which) {
+    if (which == 0) {
+        put_char_at(col, row, 77);
+        put_char_at(col + 1, row, 69);
+        put_char_at(col + 2, row, 77);
+    } else {
+        put_char_at(col, row, 67);
+        put_char_at(col + 1, row, 80);
+        put_char_at(col + 2, row, 85);
+    }
+}
+
+void draw_bar(uint32_t y, uint32_t color, uint32_t filled) {
+    gfx_fill_rect(dash_x, y, dash_w, 16, 0x101018);
+    gfx_draw_rect(dash_x, y, dash_w, 16, color);
+    if (filled > dash_w - 2) {
+        filled = dash_w - 2;
+    }
+    gfx_fill_rect(dash_x + 1, y + 1, filled, 14, color);
+}
+
+export void zmodule_tick(void) {
+    uint64_t total;
+    uint64_t used;
+    uint32_t cpu;
+    uint32_t mem_w;
+    uint32_t cpu_w;
+    uint64_t now;
+
+    if (dash_enabled == 0) {
+        return;
+    }
+
+    now = ticks();
+    if (now < dash_next_tick) {
+        return;
+    }
+    dash_next_tick = now + 25;
+
+    total = mem_total_kb();
+    used = mem_used_kb();
+    cpu = cpu_usage(0);
+
+    if (total != 0) {
+        mem_w = (used * dash_w) / total;
+    } else {
+        mem_w = 0;
+    }
+    cpu_w = (cpu * dash_w) / 100;
+
+    draw_bar(dash_y, 0x33aaff, mem_w);
+    draw_bar(dash_y + 24, 0xf7d154, cpu_w);
+
+    label_at(4, 6, 0);
+    put_dec_at(8, 6, used / 1024);
+    put_char_at(13, 6, 77);
+
+    label_at(4, 9, 1);
+    put_dec_at(8, 9, cpu);
+    put_char_at(11, 9, 37);
+}
+
+dash_enabled = 0;
+dash_x = 96;
+dash_y = 96;
+dash_w = 220;
+dash_next_tick = 0;
+
+if (gfx_width() >= 360 && gfx_height() >= 180) {
+    dash_w = gfx_width() - 144;
+    set_margin(32, dash_y + 64);
+    dash_enabled = 1;
+    zmodule_tick();
+    print("hwdash module loaded: live bars enabled\n");
+} else {
+    print("hwdash module loaded: screen too small\n");
+}
+
+return 0;

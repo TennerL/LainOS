@@ -1,0 +1,154 @@
+extern uint64_t ticks(void);
+extern uint64_t mem_total_kb(void);
+extern uint64_t mem_free_kb(void);
+extern uint64_t mem_used_kb(void);
+extern uint32_t cpu_count(void);
+extern uint32_t cpu_usage(uint32_t core);
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern uint32_t gfx_pitch(void);
+extern uint32_t gfx_format(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void set_margin(uint32_t x, uint32_t y);
+extern int mouse_enabled(void);
+extern int mouse_x(void);
+extern int mouse_y(void);
+extern int mouse_buttons(void);
+extern int mouse_dx(void);
+extern int mouse_dy(void);
+
+uint64_t total_kb;
+uint64_t free_kb;
+uint64_t used_kb;
+uint32_t width;
+uint32_t height;
+uint32_t pitch;
+uint32_t format;
+uint32_t cores;
+uint32_t cpu0;
+uint64_t now;
+uint32_t sample;
+uint64_t next_tick;
+
+total_kb = mem_total_kb();
+free_kb = mem_free_kb();
+used_kb = mem_used_kb();
+width = gfx_width();
+height = gfx_height();
+pitch = gfx_pitch();
+format = gfx_format();
+cores = cpu_count();
+cpu0 = cpu_usage(0);
+now = ticks();
+
+print("LainOS hwinfo\n");
+print("-------------\n");
+
+print("uptime ticks: ");
+print(now);
+print("\n");
+
+print("memory KiB: used=");
+print(used_kb);
+print(" free=");
+print(free_kb);
+print(" total=");
+print(total_kb);
+print("\n");
+
+print("memory MiB: used=");
+print(used_kb / 1024);
+print(" free=");
+print(free_kb / 1024);
+print(" total=");
+print(total_kb / 1024);
+print("\n");
+
+print("cpu cores: ");
+print(cores);
+print("\n");
+
+print("cpu0 usage: ");
+print(cpu0);
+print("%\n");
+
+print("framebuffer: ");
+print(width);
+print("x");
+print(height);
+print(" pitch=");
+print(pitch);
+print(" format=");
+print(format);
+print("\n");
+
+if (mouse_enabled() != 0) {
+    print("mouse: enabled x=");
+    print(mouse_x());
+    print(" y=");
+    print(mouse_y());
+    print(" buttons=");
+    print(mouse_buttons());
+    print(" dx=");
+    print(mouse_dx());
+    print(" dy=");
+    print(mouse_dy());
+    print("\n");
+} else {
+    print("mouse: not detected\n");
+}
+
+if (width >= 320 && height >= 180) {
+    uint32_t bar_x;
+    uint32_t bar_y;
+    uint32_t bar_w;
+    uint32_t used_w;
+    uint32_t cpu_w;
+
+    bar_x = 32;
+    bar_y = 72;
+    bar_w = width - 64;
+
+    gfx_fill_rect(0, 0, width, 64, 0x102028);
+    gfx_draw_rect(32, 16, width - 64, 32, 0x00ff66);
+
+    set_margin(32, bar_y + 72);
+    print("graphics overlay: live memory bar + cpu bar\n");
+
+    sample = 0;
+    next_tick = ticks();
+
+    while (sample < 10) {
+        while (ticks() < next_tick) {
+        }
+
+        total_kb = mem_total_kb();
+        free_kb = mem_free_kb();
+        used_kb = mem_used_kb();
+        cpu0 = cpu_usage(0);
+
+        if (total_kb != 0) {
+            used_w = (used_kb * bar_w) / total_kb;
+        } else {
+            used_w = 0;
+        }
+
+        cpu_w = (cpu0 * bar_w) / 100;
+
+        gfx_fill_rect(bar_x, bar_y, bar_w, 18, 0x101018);
+        gfx_draw_rect(bar_x, bar_y, bar_w, 18, 0x33aaff);
+        gfx_fill_rect(bar_x + 1, bar_y + 1, used_w, 16, 0x33aaff);
+
+        gfx_fill_rect(bar_x, bar_y + 32, bar_w, 18, 0x101018);
+        gfx_draw_rect(bar_x, bar_y + 32, bar_w, 18, 0xf7d154);
+        gfx_fill_rect(bar_x + 1, bar_y + 33, cpu_w, 16, 0xf7d154);
+
+        sample = sample + 1;
+        next_tick = ticks() + 25;
+    }
+
+    print("graphics overlay: done\n");
+}
+
+return 0;

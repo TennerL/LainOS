@@ -1,0 +1,5 @@
+include .
+output hwinfo.bin
+install-name hwinfo.bin
+test-return 0
+hwinfo.Z hwinfo.zo

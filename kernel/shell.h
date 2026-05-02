@@ -9,6 +9,7 @@ void shell_set_session(unsigned int session);
 void shell_run_autoexec(const char *name, const boot_info_t *info);
 void shell_print_prompt(void);
 void shell_run_command(char *line, const boot_info_t *info);
+void shell_modules_tick(void);
 int shell_api_mkdir(const char *path);
 int shell_api_delete(const char *path);
 int shell_api_write_file(const char *path, const char *text);

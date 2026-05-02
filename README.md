@@ -815,6 +815,17 @@ the current project directory and print build/test logs, then follows the same
 `examples/zmake.Z` is the first self-hosted orchestrator: it calls `os_ztest`
 and `os_zinstall` for `sysstat` and `zreport`, stopping on the first failure.
 
+Resident `.Z` modules can export `zmodule_tick`; after `zmod` loads the module,
+the kernel calls that hook while the shell is idle or waiting for input.
+`examples/hwdash_module.Z` uses this to keep memory and CPU bars updating as a
+resident dashboard module:
+
+```text
+zbuild hwdash_module
+zmod hwdash_module.zo
+zmods
+```
+
 The remaining ABI milestones are real nonzero `.bss` emission from `.Z`,
 dependency-aware unload hooks, and enough relocation/runtime surface for
 kernel-shaped code before `.Z` can build loadable kernel modules or the kernel

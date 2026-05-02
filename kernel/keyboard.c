@@ -267,6 +267,7 @@ key_event_t keyboard_read_key(void) {
             __asm__ __volatile__("pause");
             console_cursor_tick();
             statusbar_update_if_due();
+            shell_modules_tick();
         }
 
         if (idle) {
