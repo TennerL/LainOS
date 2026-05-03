@@ -26,6 +26,8 @@ extern void gfx_draw_line(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, ui
 extern void gfx_clear(uint32_t color);
 extern void put_char_at(uint32_t col, uint32_t row, uint32_t ch);
 extern void put_dec_at(uint32_t col, uint32_t row, uint64_t value);
+extern void put_char_at_screen(uint32_t col, uint32_t row, uint32_t ch);
+extern void put_dec_at_screen(uint32_t col, uint32_t row, uint64_t value);
 extern void set_margin(uint32_t x, uint32_t y);
 extern void statusbar_enable(void);
 extern int os_mkdir(const uint8_t *path);

@@ -6,25 +6,26 @@ extern uint32_t gfx_width(void);
 extern uint32_t gfx_height(void);
 extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
-extern void put_char_at(uint32_t col, uint32_t row, uint32_t ch);
-extern void put_dec_at(uint32_t col, uint32_t row, uint64_t value);
+extern void put_char_at_screen(uint32_t col, uint32_t row, uint32_t ch);
+extern void put_dec_at_screen(uint32_t col, uint32_t row, uint64_t value);
 extern void set_margin(uint32_t x, uint32_t y);
 
 global uint32_t dash_enabled;
 global uint32_t dash_x;
 global uint32_t dash_y;
 global uint32_t dash_w;
+global uint32_t dash_h;
 global uint64_t dash_next_tick;
 
 void label_at(uint32_t col, uint32_t row, uint32_t which) {
     if (which == 0) {
-        put_char_at(col, row, 77);
-        put_char_at(col + 1, row, 69);
-        put_char_at(col + 2, row, 77);
+        put_char_at_screen(col, row, 77);
+        put_char_at_screen(col + 1, row, 69);
+        put_char_at_screen(col + 2, row, 77);
     } else {
-        put_char_at(col, row, 67);
-        put_char_at(col + 1, row, 80);
-        put_char_at(col + 2, row, 85);
+        put_char_at_screen(col, row, 67);
+        put_char_at_screen(col + 1, row, 80);
+        put_char_at_screen(col + 2, row, 85);
     }
 }
 
@@ -35,6 +36,21 @@ void draw_bar(uint32_t y, uint32_t color, uint32_t filled) {
         filled = dash_w - 2;
     }
     gfx_fill_rect(dash_x + 1, y + 1, filled, 14, color);
+}
+
+void draw_dashboard_background(void) {
+    gfx_fill_rect(0, 0, gfx_width(), dash_h, 0x102028);
+    gfx_fill_rect(0, dash_h - 2, gfx_width(), 2, 0x33aaff);
+}
+
+void clear_text_field(uint32_t col, uint32_t row, uint32_t width) {
+    uint32_t i;
+
+    i = 0;
+    while (i < width) {
+        put_char_at_screen(col + i, row, 32);
+        i = i + 1;
+    }
 }
 
 export void zmodule_tick(void) {
@@ -53,7 +69,7 @@ export void zmodule_tick(void) {
     if (now < dash_next_tick) {
         return;
     }
-    dash_next_tick = now + 25;
+    dash_next_tick = now + 100;
 
     total = mem_total_kb();
     used = mem_used_kb();
@@ -69,24 +85,30 @@ export void zmodule_tick(void) {
     draw_bar(dash_y, 0x33aaff, mem_w);
     draw_bar(dash_y + 24, 0xf7d154, cpu_w);
 
-    label_at(4, 6, 0);
-    put_dec_at(8, 6, used / 1024);
-    put_char_at(13, 6, 77);
+    //label_at(4, 2, 0);
+    //clear_text_field(8, 2, 8);
+    //put_dec_at_screen(8, 2, used / 1024);
+    //put_char_at_screen(13, 2, 77);
 
-    label_at(4, 9, 1);
-    put_dec_at(8, 9, cpu);
-    put_char_at(11, 9, 37);
+    //label_at(4, 5, 1);
+    //clear_text_field(8, 5, 5);
+    //put_dec_at_screen(8, 5, cpu);
+    //put_char_at_screen(11, 5, 37);
 }
 
 dash_enabled = 0;
-dash_x = 96;
-dash_y = 96;
+//dash_x = 96;
+dash_x = 32;
+dash_y = 18;
 dash_w = 220;
+dash_h = 72;
 dash_next_tick = 0;
 
 if (gfx_width() >= 360 && gfx_height() >= 180) {
-    dash_w = gfx_width() - 144;
-    set_margin(32, dash_y + 64);
+    //dash_w = gfx_width() - 144;
+    dash_w = gfx_width() - 64;
+    set_margin(32, dash_h + 8);
+    draw_dashboard_background();
     dash_enabled = 1;
     zmodule_tick();
     print("hwdash module loaded: live bars enabled\n");

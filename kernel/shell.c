@@ -3,6 +3,7 @@
 #include "kernel.h"
 #include "ahci.h"
 #include "assembler.h"
+#include "browser.h"
 #include "editor.h"
 #include "keyboard.h"
 #include "lainfs.h"
@@ -10,6 +11,7 @@
 #include "storage.h"
 #include "zobject.h"
 #include "zscript.h"
+#include "ramdisk_seed.h"
 
 #define MAX_DRIVES 26
 #define SCRIPT_BUFFER_SIZE LAINFS_FILE_CAPACITY
@@ -34,6 +36,8 @@ static unsigned char exec_buffer[EXEC_BUFFER_SIZE] __attribute__((aligned(16)));
 static unsigned char asm_output[EXEC_BUFFER_SIZE];
 static char zscript_output[ASM_SOURCE_SIZE + 1];
 static char zinclude_buffers[Z_INCLUDE_MAX_DEPTH][ASM_SOURCE_SIZE + 1];
+static char shell_manifest_buffer[ASM_SOURCE_SIZE + 1];
+static char shell_source_buffer[ASM_SOURCE_SIZE + 1];
 static char zbuild_report[512];
 static char ztest_report[256];
 
@@ -597,6 +601,56 @@ static int resolve_dir_path(char drive_letter,
     }
 }
 
+static int path_drive_prefix(const char **path, int fallback_drive) {
+    const char *s;
+    int drive;
+
+    if (path == 0 || *path == 0) {
+        return -1;
+    }
+
+    s = skip_const_spaces(*path);
+    if (((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z')) && s[1] == ':') {
+        drive = to_upper(s[0]) - 'A';
+        s += 2;
+        *path = s;
+    } else {
+        drive = fallback_drive;
+        *path = s;
+    }
+
+    if (drive < 0 || drive >= MAX_DRIVES || !drives[drive].present) {
+        return -1;
+    }
+
+    return drive;
+}
+
+static int resolve_file_path_with_drive(const char *path,
+                                        int fallback_drive,
+                                        int *out_drive,
+                                        uint32_t *out_parent,
+                                        char *out_name,
+                                        uint32_t out_name_size) {
+    int drive = path_drive_prefix(&path, fallback_drive);
+
+    if (drive < 0 || out_drive == 0) {
+        return -1;
+    }
+
+    if (resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          path,
+                          out_parent,
+                          out_name,
+                          out_name_size) != 0) {
+        return -1;
+    }
+
+    *out_drive = drive;
+    return 0;
+}
+
 static int append_source_bytes(char *out,
                                uint32_t out_capacity,
                                uint32_t *out_size,
@@ -1101,6 +1155,7 @@ static void cmd_cp(const char *args, const boot_info_t *info);
 static void cmd_write(const char *args, const boot_info_t *info);
 static void cmd_cat(const char *args, const boot_info_t *info);
 static void cmd_edit(const char *args, const boot_info_t *info);
+static void cmd_browse(const char *args, const boot_info_t *info);
 static void cmd_ahci(const char *args, const boot_info_t *info);
 static void cmd_ticks(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
@@ -1159,6 +1214,7 @@ static const command_t commands[] = {
     { "write",   "write a text file",         cmd_write },
     { "cat",     "print a text file",         cmd_cat },
     { "edit",    "edit a text file",          cmd_edit },
+    { "browse",  "browse and move lainfs entries", cmd_browse },
     { "keymap",  "set keyboard layout",       cmd_keymap },
     { "ahci",    "show AHCI status",          cmd_ahci },
     { "ticks",   "show timer ticks",          cmd_ticks },
@@ -1558,6 +1614,127 @@ static int has_real_writable_block_device(void) {
     return 0;
 }
 
+static int live_seed_parent_for_path(char drive_letter,
+                                     const char *path,
+                                     uint32_t *out_parent,
+                                     char *out_name,
+                                     uint32_t out_name_size) {
+    uint32_t parent = LAINFS_ROOT_DIR;
+    const char *p = path;
+
+    if (path == 0 || out_parent == 0 || out_name == 0 || out_name_size == 0) {
+        return -1;
+    }
+
+    while (*p == '/' || *p == '\\') {
+        ++p;
+    }
+
+    while (*p) {
+        const char *start = p;
+        uint32_t len;
+        char part[32];
+
+        while (*p && *p != '/' && *p != '\\') {
+            ++p;
+        }
+
+        len = (uint32_t)(p - start);
+        if (copy_path_part_limited(part, sizeof(part), start, len) != 0) {
+            return -1;
+        }
+
+        if (*p == '\0') {
+            copy_text_limited(out_name, out_name_size, part);
+            *out_parent = parent;
+            return 0;
+        }
+
+        {
+            uint32_t next_parent = LAINFS_ROOT_DIR;
+            int status = lainfs_find_dir(drive_letter, parent, part, &next_parent);
+
+            if (status != 0) {
+                status = lainfs_make_dir_in_dir(drive_letter, parent, part);
+                if (status != 0) {
+                    return -1;
+                }
+                if (lainfs_find_dir(drive_letter, parent, part, &next_parent) != 0) {
+                    return -1;
+                }
+            }
+
+            parent = next_parent;
+        }
+
+        while (*p == '/' || *p == '\\') {
+            ++p;
+        }
+    }
+
+    return -1;
+}
+
+static void seed_live_ramdisk(char drive_letter) {
+    uint32_t copied = 0;
+    uint32_t failed = 0;
+
+    for (uint32_t i = 0; i < RAMDISK_SEED_ENTRY_COUNT; ++i) {
+        const ramdisk_seed_entry_t *seed = &ramdisk_seed_entries[i];
+        uint32_t parent = LAINFS_ROOT_DIR;
+        char name[32];
+
+        if (live_seed_parent_for_path(drive_letter,
+                                      seed->path,
+                                      &parent,
+                                      name,
+                                      sizeof(name)) != 0 ||
+            lainfs_save_file_in_dir(drive_letter,
+                                    parent,
+                                    name,
+                                    (const char *)seed->data,
+                                    seed->size) != 0) {
+            ++failed;
+            continue;
+        }
+
+        ++copied;
+    }
+
+    console_puts("seeded live ramdisk files=");
+    console_put_dec64(copied);
+    if (failed != 0) {
+        console_puts(" failed=");
+        console_put_dec64(failed);
+    }
+    console_puts("\n");
+}
+
+static int create_seeded_live_ramdisk(char drive_letter, int make_active) {
+    int saved_drive = current_drive;
+
+    drive_letter = to_upper(drive_letter);
+    if (!storage_find_partition("rd0p1", 0)) {
+        return -1;
+    }
+
+    if (lainfs_format_partition("rd0p1") != 0 || storage_mount(drive_letter, "rd0p1") != 0) {
+        return -1;
+    }
+
+    set_mounted_drive(drive_letter, "LIVE");
+    console_puts("created live ramdisk rd0p1 at ");
+    print_drive_name((int)(drive_letter - 'A'));
+    console_puts("\n");
+    seed_live_ramdisk(drive_letter);
+
+    if (!make_active && saved_drive >= 0 && saved_drive < MAX_DRIVES) {
+        current_drive = saved_drive;
+    }
+
+    return 0;
+}
+
 int shell_mount_first_lainfs(char drive_letter) {
     drive_letter = to_upper(drive_letter);
 
@@ -1574,18 +1751,15 @@ int shell_mount_first_lainfs(char drive_letter) {
             console_puts(" at ");
             print_drive_name((int)(drive_letter - 'A'));
             console_puts("\n");
+            if (drive_letter != 'R') {
+                create_seeded_live_ramdisk('R', 0);
+            }
             return 0;
         }
     }
 
-    if (!has_real_writable_block_device() && storage_find_partition("rd0p1", 0)) {
-        if (lainfs_format_partition("rd0p1") == 0 && storage_mount(drive_letter, "rd0p1") == 0) {
-            set_mounted_drive(drive_letter, "LIVE");
-            console_puts("created live ramdisk rd0p1 at ");
-            print_drive_name((int)(drive_letter - 'A'));
-            console_puts("\n");
-            return 0;
-        }
+    if (!has_real_writable_block_device() && create_seeded_live_ramdisk(drive_letter, 1) == 0) {
+        return 0;
     }
 
     return -1;
@@ -2010,6 +2184,78 @@ static void cmd_edit(const char *args, const boot_info_t *info) {
     }
 }
 
+static void cmd_browse(const char *args, const boot_info_t *info) {
+    (void)info;
+
+    int drive = active_drive();
+    int right_drive = drive;
+    uint32_t right_dir = LAINFS_ROOT_DIR;
+    const char *target = skip_const_spaces(args);
+    const char *right_path = "\\";
+    char right_path_buffer[SHELL_PATH_SIZE];
+    int status;
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example C:\n");
+        return;
+    }
+
+    if (*target != '\0') {
+        right_drive = path_drive_prefix(&target, drive);
+        if (right_drive < 0) {
+            console_puts("browse failed: drive not mounted\n");
+            return;
+        }
+        if (*target == '\0') {
+            right_dir = cwd_dirs[right_drive];
+        }
+    }
+
+    if (*target != '\0' && resolve_dir_arg(right_drive, target, &right_dir) != 0) {
+        console_puts("browse failed: directory not found\n");
+        return;
+    }
+
+    if (*target == '\0' || streq(target, ".")) {
+        right_path = cwd_paths[right_drive];
+    } else if (*target != '\0') {
+        uint32_t len = 0;
+        uint32_t i = 0;
+
+        right_path_buffer[0] = '\0';
+        if (target[0] == '\\' || target[0] == '/') {
+            while (target[i] && i + 1u < sizeof(right_path_buffer)) {
+                right_path_buffer[i] = target[i];
+                ++i;
+            }
+            right_path_buffer[i] = '\0';
+        } else {
+            while (cwd_paths[right_drive][len] && len + 1u < sizeof(right_path_buffer)) {
+                right_path_buffer[len] = cwd_paths[right_drive][len];
+                ++len;
+            }
+            if (len > 1u && len + 1u < sizeof(right_path_buffer)) {
+                right_path_buffer[len++] = '\\';
+            }
+            while (target[i] && len + 1u < sizeof(right_path_buffer)) {
+                right_path_buffer[len++] = target[i++];
+            }
+            right_path_buffer[len] = '\0';
+        }
+        right_path = right_path_buffer;
+    }
+
+    status = browser_run((char)('A' + drive),
+                         cwd_dirs[drive],
+                         cwd_paths[drive],
+                         (char)('A' + right_drive),
+                         right_dir,
+                         right_path);
+    if (status != 0) {
+        console_puts("browse failed\n");
+    }
+}
+
 int shell_api_mkdir(const char *path) {
     int drive = active_drive();
     uint32_t parent = LAINFS_ROOT_DIR;
@@ -2173,6 +2419,8 @@ int shell_api_rename(const char *old_path, const char *new_path) {
 
 int shell_api_copy_file(const char *src_path, const char *dst_path) {
     int drive = active_drive();
+    int src_drive = -1;
+    int dst_drive = -1;
     uint32_t src_parent = LAINFS_ROOT_DIR;
     uint32_t dst_parent = LAINFS_ROOT_DIR;
     uint32_t size = 0;
@@ -2180,22 +2428,22 @@ int shell_api_copy_file(const char *src_path, const char *dst_path) {
     char dst_name[32];
 
     if (drive < 0 || src_path == 0 || dst_path == 0 ||
-        resolve_file_path((char)('A' + drive),
-                          cwd_dirs[drive],
-                          src_path,
-                          &src_parent,
-                          src_name,
-                          sizeof(src_name)) != 0 ||
-        resolve_file_path((char)('A' + drive),
-                          cwd_dirs[drive],
-                          dst_path,
-                          &dst_parent,
-                          dst_name,
-                          sizeof(dst_name)) != 0) {
+        resolve_file_path_with_drive(src_path,
+                                     drive,
+                                     &src_drive,
+                                     &src_parent,
+                                     src_name,
+                                     sizeof(src_name)) != 0 ||
+        resolve_file_path_with_drive(dst_path,
+                                     drive,
+                                     &dst_drive,
+                                     &dst_parent,
+                                     dst_name,
+                                     sizeof(dst_name)) != 0) {
         return -1;
     }
 
-    if (lainfs_load_file_in_dir((char)('A' + drive),
+    if (lainfs_load_file_in_dir((char)('A' + src_drive),
                                 src_parent,
                                 src_name,
                                 zinclude_buffers[0],
@@ -2204,7 +2452,15 @@ int shell_api_copy_file(const char *src_path, const char *dst_path) {
         return -1;
     }
 
-    return lainfs_save_file_in_dir((char)('A' + drive),
+    {
+        uint32_t dst_dir = LAINFS_ROOT_DIR;
+        if (lainfs_find_dir((char)('A' + dst_drive), dst_parent, dst_name, &dst_dir) == 0) {
+            dst_parent = dst_dir;
+            copy_text_limited(dst_name, sizeof(dst_name), src_name);
+        }
+    }
+
+    return lainfs_save_file_in_dir((char)('A' + dst_drive),
                                    dst_parent,
                                    dst_name,
                                    zinclude_buffers[0],
@@ -2374,7 +2630,7 @@ static int copy_command_arg(const char *text, char *command, uint32_t command_si
 }
 
 int shell_api_zbuild(const char *target) {
-    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *manifest = shell_manifest_buffer;
     char command[64];
     char output_name[32];
     uint32_t build_dir = 0;
@@ -2413,7 +2669,7 @@ int shell_api_zbuild(const char *target) {
 }
 
 int shell_api_ztest(const char *target) {
-    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *manifest = shell_manifest_buffer;
     char command[64];
     char output_name[32];
     char testlog_name[32];
@@ -2454,7 +2710,7 @@ int shell_api_ztest(const char *target) {
 }
 
 int shell_api_zinstall(const char *target) {
-    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *manifest = shell_manifest_buffer;
     char command[64];
     char output_name[32];
     char install_name[32];
@@ -2680,7 +2936,7 @@ static void cmd_exec(const char *args, const boot_info_t *info) {
 static void cmd_asm(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char source[ASM_SOURCE_SIZE + 1];
+    char *source = shell_source_buffer;
     uint32_t source_size = 0;
     uint32_t output_size = 0;
     uint32_t error_line = 0;
@@ -2809,7 +3065,7 @@ static int compile_z_source_file(const char *name,
 static void cmd_zc(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char source[ASM_SOURCE_SIZE + 1];
+    char *source = shell_source_buffer;
     uint32_t source_size = 0;
     uint32_t asm_size = 0;
     uint32_t output_size = 0;
@@ -2920,7 +3176,7 @@ static void cmd_zc(const char *args, const boot_info_t *info) {
 static void cmd_zco(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char source[ASM_SOURCE_SIZE + 1];
+    char *source = shell_source_buffer;
     uint32_t source_size = 0;
     uint32_t asm_size = 0;
     uint32_t object_size = 0;
@@ -3154,8 +3410,8 @@ static void cmd_zlink(const char *args, const boot_info_t *info) {
 static void cmd_zbuild(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char manifest[ASM_SOURCE_SIZE + 1];
-    static char source[ASM_SOURCE_SIZE + 1];
+    char *manifest = shell_manifest_buffer;
+    char *source = shell_source_buffer;
     const unsigned char *objects[ZLINK_MAX_OBJECTS];
     uint32_t object_sizes[ZLINK_MAX_OBJECTS];
     uint32_t object_count = 0;
@@ -3547,7 +3803,7 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
 static void cmd_zclean(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *manifest = shell_manifest_buffer;
     uint32_t manifest_size = 0;
     uint32_t build_dir = 0;
     uint32_t removed_count = 0;
@@ -3863,7 +4119,7 @@ static int zbuild_read_layout(int drive,
 static void cmd_ztest(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *manifest = shell_manifest_buffer;
     char *mutable_args = (char *)args;
     char *target_name = 0;
     char *extra = 0;
@@ -3990,7 +4246,7 @@ static void cmd_ztest(const char *args, const boot_info_t *info) {
 static void cmd_zinstall(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char manifest[ASM_SOURCE_SIZE + 1];
+    char *manifest = shell_manifest_buffer;
     char *mutable_args = (char *)args;
     char *target_name = 0;
     char *dest_path = 0;
@@ -4346,7 +4602,7 @@ static void cmd_zmods(const char *args, const boot_info_t *info) {
 static void cmd_zrun(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char source[ASM_SOURCE_SIZE + 1];
+    char *source = shell_source_buffer;
     const char *name = skip_const_spaces(args);
     uint32_t source_size = 0;
     uint32_t asm_size = 0;
@@ -4451,7 +4707,7 @@ static void cmd_zrun(const char *args, const boot_info_t *info) {
 static void cmd_zasm(const char *args, const boot_info_t *info) {
     (void)info;
 
-    static char source[ASM_SOURCE_SIZE + 1];
+    char *source = shell_source_buffer;
     uint32_t source_size = 0;
     uint32_t asm_size = 0;
     uint32_t compile_error_line = 0;
@@ -4600,7 +4856,7 @@ void shell_run_autoexec(const char *name, const boot_info_t *info) {
         return;
     }
 
-    //run_script_file(name, info, 1);
+    run_script_file(name, info, 1);
     current_drive = previous_drive;
 }
 

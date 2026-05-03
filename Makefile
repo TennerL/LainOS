@@ -16,7 +16,10 @@ ISO_DIR := build/image
 EFI_DIR := $(ISO_DIR)/EFI/BOOT
 ISO_STAGING_DIR := build/iso-root
 ISO_BOOT_IMG := efiboot.img
+ISO_STARTUP_NSH := build/startup.nsh
 BUILD_VERSION_H := build/version.h
+RAMDISK_SEED_H := build/ramdisk_seed.h
+RAMDISK_SEED_FILES := $(shell find examples -type f | sort)
 EFI_ARCH ?= x86_64
 EFI_INC ?= /usr/include/efi
 EFI_LIBDIR ?= /usr/lib
@@ -30,6 +33,7 @@ XORRISO ?= xorriso
 MKISOFS ?= mkisofs
 GENISOIMAGE ?= genisoimage
 ESP_SIZE_KB ?= 65536
+ISO_ESP_SIZE_KB ?= 16384
 BOOTDISK_SIZE_KB ?= 131072
 DATA_SIZE_KB ?= 65536
 NTFS_DRIVER ?=
@@ -84,7 +88,11 @@ build/kernel/main.o: kernel/main.c kernel/kernel.h kernel/graphics.h kernel/shel
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/storage.h kernel/lainfs.h kernel/editor.h kernel/ahci.h kernel/zobject.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
+# build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/storage.h kernel/lainfs.h kernel/editor.h kernel/ahci.h kernel/zobject.h boot/shared/bootinfo.h $(BUILD_VERSION_H) | build
+# 	$(MKDIR_P) build/kernel
+# 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+build/kernel/shell.o: kernel/shell.c kernel/shell.h kernel/kernel.h kernel/storage.h kernel/lainfs.h kernel/editor.h kernel/browser.h kernel/ahci.h kernel/zobject.h boot/shared/bootinfo.h $(BUILD_VERSION_H) $(RAMDISK_SEED_H) | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -103,6 +111,17 @@ build/kernel/zscript.o: kernel/zscript.c kernel/zscript.h | build
 build/tools/zcc_host: tools/zcc_host.c kernel/zscript.c kernel/zscript.h | build
 	$(MKDIR_P) build/tools
 	$(CC) $(HOST_CFLAGS) tools/zcc_host.c kernel/zscript.c -o $@
+
+build/tools/lainfs_seed: tools/lainfs_seed.c | build
+	$(MKDIR_P) build/tools
+	$(CC) $(HOST_CFLAGS) tools/lainfs_seed.c -o $@
+
+build/tools/ramdisk_seed_gen: tools/ramdisk_seed_gen.c | build
+	$(MKDIR_P) build/tools
+	$(CC) $(HOST_CFLAGS) tools/ramdisk_seed_gen.c -o $@
+
+$(RAMDISK_SEED_H): build/tools/ramdisk_seed_gen $(RAMDISK_SEED_FILES) | build
+	build/tools/ramdisk_seed_gen $@ $(RAMDISK_SEED_FILES)
 
 build/kernel/zlink_probe.asm: kernel/zlink_probe.Z build/tools/zcc_host | build
 	$(MKDIR_P) build/kernel
@@ -133,6 +152,10 @@ build/kernel/lainfs.o: kernel/lainfs.c kernel/lainfs.h kernel/kernel.h kernel/st
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 build/kernel/editor.o: kernel/editor.c kernel/editor.h kernel/kernel.h kernel/keyboard.h kernel/lainfs.h boot/shared/bootinfo.h | build
+	$(MKDIR_P) build/kernel
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+build/kernel/browser.o: kernel/browser.c kernel/browser.h kernel/kernel.h kernel/keyboard.h kernel/lainfs.h boot/shared/bootinfo.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -168,8 +191,11 @@ build/kernel/interrupts.o: kernel/interrupts.asm | build
 	$(MKDIR_P) build/kernel
 	$(NASM) $(NASMFLAGS) -f elf64 $< -o $@
 
-build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o kernel/linker.ld
-	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o
+# build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o kernel/linker.ld
+# 	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o
+
+build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/browser.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o kernel/linker.ld
+	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/browser.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o
 
 build/$(KERNEL_BIN): build/$(KERNEL_ELF)
 	$(OBJCOPY) -O binary build/$(KERNEL_ELF) $@
@@ -200,26 +226,39 @@ build/$(BOOTDISK_GPT_IMG): build/$(ESP_IMG)
 	$(SGDISK) --clear --new=1:2048:+64M --typecode=1:EF00 --change-name=1:EFI build/$(BOOTDISK_GPT_IMG)
 	dd if=build/$(ESP_IMG) of=build/$(BOOTDISK_GPT_IMG) bs=512 seek=2048 conv=notrunc
 
-build/$(DATA_IMG): | build
+build/$(DATA_IMG): | build build/tools/lainfs_seed
 	dd if=/dev/zero of=build/$(DATA_IMG) bs=1024 count=$(DATA_SIZE_KB)
-	printf '\000\000\002\000\231\377\377\377\000\010\000\000\000\370\001\000' | dd of=build/$(DATA_IMG) bs=1 seek=446 conv=notrunc
-	printf '\125\252' | dd of=build/$(DATA_IMG) bs=1 seek=510 conv=notrunc
+	build/tools/lainfs_seed build/$(DATA_IMG)
 
-build/$(ISO_IMG): build/$(ESP_IMG) | build
+reseed-data: build/tools/lainfs_seed | build
+	dd if=/dev/zero of=build/$(DATA_IMG) bs=1024 count=$(DATA_SIZE_KB)
+	build/tools/lainfs_seed build/$(DATA_IMG)
+
+$(ISO_STARTUP_NSH): | build
+	printf 'FS0:\\EFI\\BOOT\\BOOTX64.EFI\r\nFS1:\\EFI\\BOOT\\BOOTX64.EFI\r\nFS2:\\EFI\\BOOT\\BOOTX64.EFI\r\n' > $@
+
+build/$(ISO_IMG): image $(ISO_STARTUP_NSH) | build
 	rm -rf $(ISO_STAGING_DIR)
 	$(MKDIR_P) $(ISO_STAGING_DIR)
-	cp build/$(ESP_IMG) $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG)
+	dd if=/dev/zero of=$(ISO_STAGING_DIR)/$(ISO_BOOT_IMG) bs=1024 count=$(ISO_ESP_SIZE_KB)
+	$(MKFS_FAT) -F 16 $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG)
+	$(MTOOLS_MMD) -i $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG) ::/EFI ::/EFI/BOOT
+	$(MTOOLS_MCOPY) -i $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG) build/$(BOOTLOADER) ::/EFI/BOOT/BOOTX64.EFI
+	$(MTOOLS_MCOPY) -i $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG) build/$(KERNEL_ELF) ::/kernel.elf
+	$(MTOOLS_MCOPY) -i $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG) $(ISO_STARTUP_NSH) ::/startup.nsh
+	if [ -n "$(NTFS_DRIVER)" ]; then $(MTOOLS_MMD) -i $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG) ::/EFI/BOOT/drivers && $(MTOOLS_MCOPY) -i $(ISO_STAGING_DIR)/$(ISO_BOOT_IMG) "$(NTFS_DRIVER)" ::/EFI/BOOT/drivers/ntfs_x64.efi; fi
 	if [ -d "$(ISO_DIR)" ]; then cp -R $(ISO_DIR)/. $(ISO_STAGING_DIR)/; fi
+	cp $(ISO_STARTUP_NSH) $(ISO_STAGING_DIR)/startup.nsh
 	if command -v $(XORRISO) >/dev/null 2>&1; then \
-		$(XORRISO) -as mkisofs -R -J -V LainOS \
+		$(XORRISO) -as mkisofs -R -J -V LAINOS \
 			-eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
 			-o $@ $(ISO_STAGING_DIR); \
 	elif command -v $(MKISOFS) >/dev/null 2>&1; then \
-		$(MKISOFS) -R -J -V LainOS \
+		$(MKISOFS) -R -J -V LAINOS \
 			-eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
 			-o $@ $(ISO_STAGING_DIR); \
 	elif command -v $(GENISOIMAGE) >/dev/null 2>&1; then \
-		$(GENISOIMAGE) -R -J -V LainOS \
+		$(GENISOIMAGE) -R -J -V LAINOS \
 			-eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
 			-o $@ $(ISO_STAGING_DIR); \
 	else \
@@ -269,10 +308,12 @@ run-bootdisk-gpt: all
 		-device ide-hd,drive=data,bus=ahci.0
 
 run-iso: build/$(ISO_IMG)
+	cp /usr/share/OVMF/OVMF_VARS_4M.fd build/OVMF_VARS.iso.fd
 	qemu-system-x86_64 \
 		-m 256M \
-		-drive if=pflash,format=raw,readonly=on,file=./OVMF_CODE.fd \
-		-drive if=pflash,format=raw,file=./OVMF_VARS.fd \
+		-boot d \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+		-drive if=pflash,format=raw,file=build/OVMF_VARS.iso.fd \
 		-cdrom build/$(ISO_IMG) \
 		-drive format=raw,file=build/$(DATA_IMG),if=ide,index=1
 
@@ -291,4 +332,4 @@ print-efi-config:
 	@echo EFI_LDS=$(EFI_LDS)
 	@echo EFI_ARCH=$(EFI_ARCH)
 
-.PHONY: all build image run run-ahci run-bootdisk run-bootdisk-gpt run-iso clean inspect-efi print-efi-config FORCE
+.PHONY: all build image run run-ahci run-bootdisk run-bootdisk-gpt run-iso reseed-data clean inspect-efi print-efi-config FORCE

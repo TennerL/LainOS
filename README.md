@@ -412,9 +412,13 @@ The kernel console has a tiny command shell:
 - `mkdir name` - create a directory entry
 - `rm name` / `del name` - delete a file or directory entry
 - `rename old new` / `mv old new` - rename or move a file or directory entry
-- `cp source dest` - copy a file
+- `cp source dest` - copy a file; paths may include mounted drive prefixes,
+  such as `cp R:/examples/hwinfo.Z S:/examples`
 - `write name text` - write a text file to the current drive
 - `cat name` - print a text file from the current drive
+- `browse [path-or-drive:]` - open a two-pane browser; each pane can use a
+  different mounted drive, `C` copies the selected file to the other pane, and
+  `M` moves within a drive or moves a file across drives
 - `asm source.asm output.bin` - assemble a tiny x86_64 source file
 - `zc source.Z output.bin` - compile a tiny `.Z` source file into a flat binary
 - `zco source.Z output.zo` - compile a tiny `.Z` source file into a `.zo` object
@@ -438,9 +442,11 @@ mounts
 C:
 ```
 
-If no real writable HDD or AHCI disk is attached, the kernel now auto-formats
-that RAM-backed `rd0p1` partition as `lainfs` and mounts it as a live `S:`
-workspace for the current session.
+The kernel auto-formats that RAM-backed `rd0p1` partition as `lainfs` and
+seeds it with the `examples/` tree. If no real writable HDD or AHCI disk is
+attached, it mounts the live workspace as `S:`. If a real lainfs disk is
+available and mounted as `S:`, the seeded live workspace is still mounted as
+`R:` so the small self-hosting demos are always available.
 
 The kernel also probes storage in two hardware-facing ways:
 - legacy primary-slave ATA/IDE, which appears as `hd1`
@@ -530,7 +536,8 @@ building blocks:
 - exposed kernel symbols come from `kernel/kernel_exports.c` and include `puts`, `put_hex64`,
   `put_dec64`, `ticks`, `mem_total_kb`, `mem_free_kb`, `mem_used_kb`,
   `cpu_count`, `cpu_usage`, `put_pixel`, `put_char_at`, `put_dec_at`,
-  `set_margin`, and `statusbar_enable`
+  `put_char_at_screen`, `put_dec_at_screen`, `set_margin`, and
+  `statusbar_enable`
 
 Memory operands currently support:
 - RIP-relative label forms such as `[counter]` and sized forms such as
@@ -676,6 +683,8 @@ Supported `.Z` subset:
   - `mouse_dx()` and `mouse_dy()` for the most recent PS/2 packet delta
   - `put_char_at(col, row, ch);`
   - `put_dec_at(col, row, expr);`
+  - `put_char_at_screen(col, row, ch);`
+  - `put_dec_at_screen(col, row, expr);`
   - `set_margin(x, y);` to reserve screen space, for example below a custom status bar
   - `statusbar_enable();`
   - `ticks()` inside expressions

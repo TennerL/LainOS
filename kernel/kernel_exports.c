@@ -43,6 +43,8 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("mouse_dy", mouse_dy),
     KERNEL_EXPORT("put_char_at", console_put_char_at),
     KERNEL_EXPORT("put_dec_at", console_put_dec_at),
+    KERNEL_EXPORT("put_char_at_screen", console_put_char_at_screen),
+    KERNEL_EXPORT("put_dec_at_screen", console_put_dec_at_screen),
     KERNEL_EXPORT("set_margin", console_set_margin),
     KERNEL_EXPORT("statusbar_enable", statusbar_enable),
     KERNEL_EXPORT("os_mkdir", shell_api_mkdir),

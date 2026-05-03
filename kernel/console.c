@@ -530,17 +530,36 @@ void console_puts(const char *s) {
 void console_set_margin(uint32_t x, uint32_t y) {
     console_pane_t *pane = active_pane();
     int redraw_cursor = cursor_enabled && cursor_visible;
+    uint32_t right_margin = x == 0 ? 0 : DEFAULT_CONSOLE_MARGIN_X;
+    uint32_t bottom_margin = y == 0 ? 0 : DEFAULT_CONSOLE_MARGIN_Y;
+    uint32_t right = fb_width > right_margin ? fb_width - right_margin : fb_width;
+    uint32_t bottom = fb_height > bottom_margin ? fb_height - bottom_margin : fb_height;
 
     if(redraw_cursor) {
         erase_cursor();
     }
 
+    if (x + FONT_W >= right) {
+        x = right > FONT_W ? right - FONT_W : 0;
+    }
+
+    if (y + FONT_H >= bottom) {
+        y = bottom > FONT_H ? bottom - FONT_H : 0;
+    }
+
     pane->left = x;
     pane->top = y;
+    pane->right = right;
+    pane->bottom = bottom;
     pane->cursor_x = pane->left;
     pane->cursor_y = pane->top;
     cursor_visible = 1;
     last_cursor_blink_tick = timer_ticks();
+
+    clear_pane(pane);
+    if (console_pane_count > 1u) {
+        draw_split_divider();
+    }
 
     if(redraw_cursor){
         draw_cursor();

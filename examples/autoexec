@@ -1,0 +1,12 @@
+# autoexec
+mkdir mods
+cd mods
+cp R:/examples/hwdash_module.Z hwdash_module.Z
+cp R:/examples/hwdash_module.zbuild hwdash_module.zbuild
+zinstall hwdash_module
+zmod hwdash_module.zo
+bgcolor 0x0035063E
+cd ..
+clear
+keymap de
+info
