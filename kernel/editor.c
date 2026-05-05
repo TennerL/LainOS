@@ -4,7 +4,7 @@
 #include "keyboard.h"
 #include "lainfs.h"
 
-#define EDITOR_BUFFER_SIZE LAINFS_FILE_CAPACITY
+#define EDITOR_BUFFER_SIZE 262144u
 #define EDITOR_RENDER_MAX_ROWS 128u
 #define EDITOR_RENDER_MAX_COLS 256u
 

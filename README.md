@@ -774,7 +774,10 @@ otherwise `zbuild kernel` writes `kernel.bin`. `src dir`, `include dir`, and
 `include/`, and `build/`; object files, the linked binary, and a
 `target.buildlog` report are written to the build directory. Every object is
 saved before the final link, so partial build products are inspectable with
-`zmods`, `zlink`, or `exec` workflows. `zclean target` reads the same manifest
+`zmods`, `zlink`, or `exec` workflows. A manifest can include `module` or
+`objects-only` to skip the final executable link; single-object module targets
+can still be installed with `zinstall target`, which copies the generated `.zo`.
+`zclean target` reads the same manifest
 and removes the generated objects, linked output, build log, and test log from
 the build directory. `ztest target` cleans, builds, runs the linked output from the build
 directory, and writes `target.testlog` with the returned value. A manifest can

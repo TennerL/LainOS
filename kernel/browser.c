@@ -8,6 +8,8 @@
 #define BROWSER_NAME_SIZE 32u
 #define BROWSER_PATH_SIZE 128u
 #define BROWSER_RENDER_COLS 256u
+#define BROWSER_RENDER_ROWS 128u
+#define BROWSER_COPY_BUFFER_SIZE 262144u
 
 typedef struct {
     char drive;
@@ -28,7 +30,11 @@ static browser_entry_t entries[2][BROWSER_MAX_ENTRIES];
 static uint32_t entry_counts[2];
 static unsigned int active_pane;
 static const char *status_message;
-static char browser_copy_buffer[LAINFS_FILE_CAPACITY];
+static char browser_copy_buffer[BROWSER_COPY_BUFFER_SIZE];
+static char rendered_cells[BROWSER_RENDER_ROWS][BROWSER_RENDER_COLS];
+static uint8_t rendered_cell_valid[BROWSER_RENDER_ROWS][BROWSER_RENDER_COLS];
+static unsigned int rendered_cols;
+static unsigned int rendered_rows;
 
 static uint32_t str_len(const char *s) {
     uint32_t len = 0;
@@ -135,8 +141,51 @@ static void put_dec(char *line, unsigned int cols, unsigned int *col, uint32_t v
 }
 
 static void draw_line_at(unsigned int x, unsigned int row, const char *line, unsigned int cols) {
+    if (row >= BROWSER_RENDER_ROWS) {
+        return;
+    }
+
     for (unsigned int col = 0; col < cols; ++col) {
-        console_put_char_at(x + col, row, line[col]);
+        unsigned int screen_col = x + col;
+
+        if (screen_col >= BROWSER_RENDER_COLS) {
+            break;
+        }
+
+        if (!rendered_cell_valid[row][screen_col] ||
+            rendered_cells[row][screen_col] != line[col]) {
+            console_put_char_at(screen_col, row, line[col]);
+            rendered_cells[row][screen_col] = line[col];
+            rendered_cell_valid[row][screen_col] = 1;
+        }
+    }
+}
+
+static void draw_char_at(unsigned int col, unsigned int row, char ch) {
+    if (row >= BROWSER_RENDER_ROWS || col >= BROWSER_RENDER_COLS) {
+        return;
+    }
+
+    if (!rendered_cell_valid[row][col] || rendered_cells[row][col] != ch) {
+        console_put_char_at(col, row, ch);
+        rendered_cells[row][col] = ch;
+        rendered_cell_valid[row][col] = 1;
+    }
+}
+
+static void invalidate_render_cache(void) {
+    for (unsigned int row = 0; row < BROWSER_RENDER_ROWS; ++row) {
+        for (unsigned int col = 0; col < BROWSER_RENDER_COLS; ++col) {
+            rendered_cell_valid[row][col] = 0;
+        }
+    }
+}
+
+static void note_browser_geometry(unsigned int cols, unsigned int rows) {
+    if (cols != rendered_cols || rows != rendered_rows) {
+        rendered_cols = cols;
+        rendered_rows = rows;
+        invalidate_render_cache();
     }
 }
 
@@ -281,22 +330,25 @@ static void draw_browser(void) {
     if (cols > BROWSER_RENDER_COLS) {
         cols = BROWSER_RENDER_COLS;
     }
+    if (rows > BROWSER_RENDER_ROWS) {
+        rows = BROWSER_RENDER_ROWS;
+    }
     if (rows < 4u || cols < 20u) {
         return;
     }
 
+    note_browser_geometry(cols, rows);
     left_width = cols / 2u;
     right_x = left_width + 1u;
     right_width = cols - right_x;
     body_rows = rows - 3u;
 
     console_cursor_enable(0);
-    console_clear();
     draw_pane(0, 0, left_width, 2, body_rows);
     draw_pane(1, right_x, right_width, 2, body_rows);
 
     for (unsigned int row = 0; row + 1u < rows; ++row) {
-        console_put_char_at(left_width, row, '|');
+        draw_char_at(left_width, row, '|');
     }
 
     fill_line(line, cols);
@@ -304,22 +356,27 @@ static void draw_browser(void) {
     draw_line_at(0, rows - 1u, line, cols);
 }
 
-static void move_selection(int delta) {
+static int move_selection(int delta) {
     browser_pane_t *pane = &panes[active_pane];
     uint32_t count = entry_counts[active_pane];
+    int had_status = status_message != 0;
 
     status_message = 0;
     if (count == 0u) {
-        return;
+        return had_status;
     }
 
     if (delta < 0) {
         if (pane->selected > 0u) {
             --pane->selected;
+            return 1;
         }
     } else if (pane->selected + 1u < count) {
         ++pane->selected;
+        return 1;
     }
+
+    return had_status;
 }
 
 static void enter_selected(void) {
@@ -502,10 +559,12 @@ int browser_run(char left_drive,
 
     reload_all();
     console_clear();
+    invalidate_render_cache();
     draw_browser();
 
     for (;;) {
         key_event_t key;
+        int changed = 0;
 
         key = keyboard_read_key();
 
@@ -518,20 +577,27 @@ int browser_run(char left_drive,
         if (key.type == KEY_TAB) {
             status_message = 0;
             active_pane = active_pane == 0u ? 1u : 0u;
+            changed = 1;
         } else if (key.type == KEY_UP) {
-            move_selection(-1);
+            changed = move_selection(-1);
         } else if (key.type == KEY_DOWN) {
-            move_selection(1);
+            changed = move_selection(1);
         } else if (key.type == KEY_ENTER || (key.type == KEY_CHAR && key.ch == 'o')) {
             enter_selected();
+            changed = 1;
         } else if (key.type == KEY_BACKSPACE || (key.type == KEY_CHAR && key.ch == 'u')) {
             go_up();
+            changed = 1;
         } else if (key.type == KEY_CHAR && (key.ch == 'm' || key.ch == 'M')) {
             move_to_other_pane();
+            changed = 1;
         } else if (key.type == KEY_CHAR && (key.ch == 'c' || key.ch == 'C')) {
             copy_to_other_pane();
+            changed = 1;
         }
 
-        draw_browser();
+        if (changed) {
+            draw_browser();
+        }
     }
 }

@@ -44,6 +44,18 @@ zmods
 If a loaded module exports `zmodule_tick`, the kernel calls it while the shell is
 idle or waiting for keyboard input.
 
+Resident mouse module:
+
+```text
+zbuild mouse_module
+zmod mouse_module.zo
+```
+
+`mouse_module` calls the kernel `mouse_init` export, then keeps a quiet live
+cursor updated from `zmodule_tick`. It restores the pixels underneath the cursor
+instead of writing status text into the shell. Its `.zbuild` uses `module` so
+the build produces only the `.zo` resident object, not an executable `.bin`.
+
 Mouse example:
 
 ```text

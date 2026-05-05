@@ -6487,6 +6487,16 @@ static int zscript_compile_source_internal(const char *source,
         entry_label_out[i] = '\0';
     }
 
+    if (c.object_mode &&
+        (z_emit_line(&c, "; zo_extern puts") != 0 ||
+         z_emit_line(&c, "; zo_extern put_dec64") != 0 ||
+         z_emit_line(&c, "; zo_extern put_hex64") != 0)) {
+        if (error_line) {
+            *error_line = c.error_line;
+        }
+        return -1;
+    }
+
     if (z_emit_line(&c, "bits 64") != 0 ||
         z_emit_line(&c, "default rel") != 0 ||
         z_emit_line(&c, "section .text") != 0) {

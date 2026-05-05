@@ -3,7 +3,7 @@
 #include "kernel_exports.h"
 
 #define ASM_LINE_SIZE 128u
-#define ASM_MAX_LABELS 96u
+#define ASM_MAX_LABELS 256u
 #define ASM_LABEL_NAME_SIZE 40u
 
 typedef struct {
@@ -651,6 +651,7 @@ static int asm_parse_memory_operand(const char *text, asm_mem_t *out) {
     char *op = 0;
     char reg_name[16];
     unsigned int reg_len = 0;
+    int reg_name_too_long = 0;
     int bits = 0;
 
     s = asm_parse_mem_size_prefix(s, &bits);
@@ -687,7 +688,8 @@ static int asm_parse_memory_operand(const char *text, asm_mem_t *out) {
 
     while (inside[reg_len] && inside + reg_len != op && !char_is_space(inside[reg_len])) {
         if (reg_len + 1u >= sizeof(reg_name)) {
-            return -1;
+            reg_name_too_long = 1;
+            break;
         }
         reg_name[reg_len] = inside[reg_len];
         ++reg_len;
@@ -698,7 +700,7 @@ static int asm_parse_memory_operand(const char *text, asm_mem_t *out) {
         reg_name[--reg_len] = '\0';
     }
 
-    if (asm_register(reg_name, &out->base) == 0 && out->base.bits == 64) {
+    if (!reg_name_too_long && asm_register(reg_name, &out->base) == 0 && out->base.bits == 64) {
         out->is_label = 0;
         out->displacement = 0;
         if (*op == '\0') {

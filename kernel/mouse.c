@@ -17,6 +17,12 @@
 #define MOUSE_CMD_SET_DEFAULTS 0xF6u
 #define MOUSE_CMD_ENABLE_STREAMING 0xF4u
 #define MOUSE_ACK 0xFAu
+#define MOUSE_PACKET_ALWAYS_ONE 0x08u
+#define MOUSE_PACKET_X_SIGN 0x10u
+#define MOUSE_PACKET_Y_SIGN 0x20u
+#define MOUSE_PACKET_X_OVERFLOW 0x40u
+#define MOUSE_PACKET_Y_OVERFLOW 0x80u
+#define MOUSE_MAX_DELTA 96
 #define PIC1_COMMAND 0x20u
 #define PIC1_DATA 0x21u
 #define PIC2_COMMAND 0xA0u
@@ -61,6 +67,23 @@ static int wait_output_full(void) {
     return -1;
 }
 
+static int read_data_with_aux_filter(uint8_t *value, int want_aux) {
+    for (unsigned int i = 0; i < PS2_WAIT_LIMIT; ++i) {
+        uint8_t status = inb(PS2_STATUS_PORT);
+
+        if ((status & PS2_STATUS_OUTPUT_FULL) == 0) {
+            continue;
+        }
+
+        *value = inb(PS2_DATA_PORT);
+        if (want_aux < 0 || (((status & PS2_STATUS_AUX_DATA) != 0) == (want_aux != 0))) {
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 static int write_controller(uint8_t command) {
     if (wait_input_empty() != 0) {
         return -1;
@@ -92,7 +115,7 @@ static int write_mouse(uint8_t command) {
         return -1;
     }
 
-    if (read_data(&response) != 0 || response != MOUSE_ACK) {
+    if (read_data_with_aux_filter(&response, 1) != 0 || response != MOUSE_ACK) {
         return -1;
     }
 
@@ -140,8 +163,12 @@ static int sign_extend_byte(uint8_t value, uint8_t sign_bit) {
     return result;
 }
 
-static void receive_packet_byte(uint8_t value) {
-    if (packet_index == 0 && (value & 0x08u) == 0) {
+static int abs_int(int value) {
+    return value < 0 ? -value : value;
+}
+
+void mouse_handle_byte(uint8_t value) {
+    if (packet_index == 0 && (value & MOUSE_PACKET_ALWAYS_ONE) == 0) {
         return;
     }
 
@@ -150,8 +177,22 @@ static void receive_packet_byte(uint8_t value) {
         return;
     }
 
-    int dx = sign_extend_byte(packet[1], packet[0] & 0x10u);
-    int dy = sign_extend_byte(packet[2], packet[0] & 0x20u);
+    if ((packet[0] & (MOUSE_PACKET_X_OVERFLOW | MOUSE_PACKET_Y_OVERFLOW)) != 0) {
+        packet_index = 0;
+        last_dx = 0;
+        last_dy = 0;
+        return;
+    }
+
+    int dx = sign_extend_byte(packet[1], packet[0] & MOUSE_PACKET_X_SIGN);
+    int dy = sign_extend_byte(packet[2], packet[0] & MOUSE_PACKET_Y_SIGN);
+
+    if (abs_int(dx) > MOUSE_MAX_DELTA || abs_int(dy) > MOUSE_MAX_DELTA) {
+        packet_index = 0;
+        last_dx = 0;
+        last_dy = 0;
+        return;
+    }
 
     buttons = packet[0] & 0x07u;
     last_dx = dx;
@@ -161,7 +202,7 @@ static void receive_packet_byte(uint8_t value) {
     packet_index = 0;
 }
 
-void mouse_init(void) {
+int mouse_init(void) {
     uint8_t config;
 
     enabled = 0;
@@ -174,34 +215,42 @@ void mouse_init(void) {
 
     flush_output();
     if (write_controller(PS2_COMMAND_ENABLE_AUX) != 0) {
-        return;
+        return -1;
     }
 
     if (write_controller(PS2_COMMAND_READ_CONFIG) != 0 || read_data(&config) != 0) {
-        return;
+        return -1;
     }
 
     config |= PS2_CONFIG_ENABLE_IRQ12;
     config &= (uint8_t)~PS2_CONFIG_DISABLE_AUX_CLOCK;
     if (write_controller(PS2_COMMAND_WRITE_CONFIG) != 0 || write_data(config) != 0) {
-        return;
+        return -1;
     }
 
     if (write_mouse(MOUSE_CMD_SET_DEFAULTS) != 0 || write_mouse(MOUSE_CMD_ENABLE_STREAMING) != 0) {
-        return;
+        return -1;
     }
 
     enabled = 1;
     unmask_mouse_irq();
+    return 0;
 }
 
 void mouse_irq_handler(void) {
-    uint8_t status = inb(PS2_STATUS_PORT);
+    for (unsigned int i = 0; i < 16u; ++i) {
+        uint8_t status = inb(PS2_STATUS_PORT);
 
-    if ((status & PS2_STATUS_OUTPUT_FULL) != 0) {
-        uint8_t value = inb(PS2_DATA_PORT);
-        if ((status & PS2_STATUS_AUX_DATA) != 0 && enabled) {
-            receive_packet_byte(value);
+        if ((status & PS2_STATUS_OUTPUT_FULL) == 0 ||
+            (status & PS2_STATUS_AUX_DATA) == 0) {
+            break;
+        }
+
+        {
+            uint8_t value = inb(PS2_DATA_PORT);
+            if (enabled) {
+                mouse_handle_byte(value);
+            }
         }
     }
 

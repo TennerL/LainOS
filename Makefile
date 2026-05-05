@@ -175,7 +175,7 @@ build/kernel/console_c.o: kernel/console.c kernel/kernel.h kernel/graphics.h boo
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-build/kernel/keyboard.o: kernel/keyboard.c kernel/kernel.h kernel/keyboard.h boot/shared/bootinfo.h | build
+build/kernel/keyboard.o: kernel/keyboard.c kernel/kernel.h kernel/keyboard.h kernel/mouse.h boot/shared/bootinfo.h | build
 	$(MKDIR_P) build/kernel
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -196,6 +196,11 @@ build/kernel/interrupts.o: kernel/interrupts.asm | build
 
 build/$(KERNEL_ELF): build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/browser.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o kernel/linker.ld
 	$(LD) -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/$(KERNEL_ELF) build/kernel/entry.o build/kernel/main.o build/kernel/shell.o build/kernel/kernel_exports.o build/kernel/assembler.o build/kernel/zscript.o build/kernel/zobject.o build/kernel/storage.o build/kernel/pci.o build/kernel/ahci.o build/kernel/lainfs.o build/kernel/editor.o build/kernel/browser.o build/kernel/timer.o build/kernel/cpu_c.o build/kernel/cpu_low.o build/kernel/graphics.o build/kernel/console_c.o build/kernel/keyboard.o build/kernel/mouse.o build/kernel/zlink_probe.o build/kernel/interrupts.o
+	@bss=$$(size build/$(KERNEL_ELF) | awk 'NR == 2 { print $$3 }'); \
+	if [ "$$bss" -gt 8388608 ]; then \
+		echo "kernel bss is too large for reliable ISO boot: $$bss bytes" >&2; \
+		exit 1; \
+	fi
 
 build/$(KERNEL_BIN): build/$(KERNEL_ELF)
 	$(OBJCOPY) -O binary build/$(KERNEL_ELF) $@
@@ -307,7 +312,7 @@ run-bootdisk-gpt: all
 		-drive if=none,id=data,format=raw,file=build/$(DATA_IMG) \
 		-device ide-hd,drive=data,bus=ahci.0
 
-run-iso: build/$(ISO_IMG)
+run-iso: build/$(ISO_IMG) build/$(DATA_IMG)
 	cp /usr/share/OVMF/OVMF_VARS_4M.fd build/OVMF_VARS.iso.fd
 	qemu-system-x86_64 \
 		-m 256M \

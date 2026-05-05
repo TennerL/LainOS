@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "lainfs.h"
 #include "keyboard.h"
+#include "mouse.h"
 
 #define PS2_DATA_PORT 0x60
 #define PS2_STATUS_PORT 0x64
@@ -18,8 +19,33 @@ static inline uint8_t inb(uint16_t port) {
     return value;
 }
 
+static inline unsigned long irq_save(void) {
+    unsigned long flags;
+    __asm__ __volatile__("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+static inline void irq_restore(unsigned long flags) {
+    __asm__ __volatile__("push %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
 static int ps2_has_data(void) {
     return (inb(PS2_STATUS_PORT) & PS2_STATUS_OUTPUT_FULL) != 0;
+}
+
+static int ps2_read_data_atomic(uint8_t *status, uint8_t *value) {
+    unsigned long flags = irq_save();
+    uint8_t local_status = inb(PS2_STATUS_PORT);
+
+    if ((local_status & PS2_STATUS_OUTPUT_FULL) == 0) {
+        irq_restore(flags);
+        return 0;
+    }
+
+    *status = local_status;
+    *value = inb(PS2_DATA_PORT);
+    irq_restore(flags);
+    return 1;
 }
 
 static int shift_down;
@@ -275,10 +301,17 @@ key_event_t keyboard_read_key(void) {
             idle = 0;
         }
 
-        uint8_t status = inb(PS2_STATUS_PORT);
-        uint8_t sc = inb(PS2_DATA_PORT);
+        uint8_t status = 0;
+        uint8_t sc = 0;
+
+        if (!ps2_read_data_atomic(&status, &sc)) {
+            continue;
+        }
 
         if ((status & PS2_STATUS_AUX_DATA) != 0) {
+            if (mouse_enabled()) {
+                mouse_handle_byte(sc);
+            }
             continue;
         }
 

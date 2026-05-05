@@ -18,7 +18,7 @@
 #define ZOBJECT_V5_HEADER_SIZE 36u
 #define ZOBJECT_LINK_ASM_SIZE 65536u
 #define ZOBJECT_MAX_SYMBOLS 64u
-#define ZOBJECT_MAX_RELOCATIONS 128u
+#define ZOBJECT_MAX_RELOCATIONS 512u
 #define ZOBJECT_MAX_OBJECTS 16u
 #define ZOBJECT_MAX_SECTIONS 3u
 
@@ -620,11 +620,14 @@ int zobject_from_asm(const char *asm_source,
     uint32_t data_size = 0;
     assembler_symbol_t external_symbols[ZOBJECT_MAX_SYMBOLS];
     uint32_t external_symbol_count = 0;
+    assembler_symbol_t measure_symbols[ZOBJECT_MAX_SYMBOLS];
+    uint32_t measure_symbol_count = 0;
     const char *export_names[ZOBJECT_MAX_SYMBOLS + 1u];
     uint64_t export_values[ZOBJECT_MAX_SYMBOLS + 1u];
     uint32_t export_name_count = 0;
     assembler_relocation_t relocations[ZOBJECT_MAX_RELOCATIONS];
     uint32_t relocation_count = 0;
+    uint32_t asm_error_line = 0;
     uint32_t image_size = 0;
     uint64_t entry_value = 0;
 
@@ -633,19 +636,19 @@ int zobject_from_asm(const char *asm_source,
     }
 
     if (zo_collect_metadata_symbols(asm_source, asm_size, symbols, &symbol_count) != 0) {
-        return -1;
+        return -10;
     }
 
     export_names[export_name_count++] = entry_label;
     for (i = 0; i < symbol_count; ++i) {
         if (symbols[i].type == ZOBJECT_SYMBOL_EXPORT) {
             if (export_name_count >= ZOBJECT_MAX_SYMBOLS + 1u) {
-                return -1;
+                return -11;
             }
             export_names[export_name_count++] = symbols[i].name;
         } else if (symbols[i].type == ZOBJECT_SYMBOL_EXTERN) {
             if (external_symbol_count >= ZOBJECT_MAX_SYMBOLS) {
-                return -1;
+                return -12;
             }
             external_symbols[external_symbol_count].name = symbols[i].name;
             external_symbols[external_symbol_count].value = 0;
@@ -653,14 +656,27 @@ int zobject_from_asm(const char *asm_source,
         }
     }
 
-    if (zo_find_data_section_source_offset(asm_source, asm_size, &data_source_offset) < 0 ||
-        assembler_measure_source_ex_symbols(asm_source,
+    for (i = 0; i < external_symbol_count; ++i) {
+        measure_symbols[measure_symbol_count++] = external_symbols[i];
+    }
+    for (i = 0; i < symbol_count && measure_symbol_count < ZOBJECT_MAX_SYMBOLS; ++i) {
+        if (symbols[i].type == ZOBJECT_SYMBOL_EXPORT) {
+            measure_symbols[measure_symbol_count].name = symbols[i].name;
+            measure_symbols[measure_symbol_count].value = 0;
+            ++measure_symbol_count;
+        }
+    }
+
+    if (zo_find_data_section_source_offset(asm_source, asm_size, &data_source_offset) < 0) {
+        return -20;
+    }
+    if (assembler_measure_source_ex_symbols(asm_source,
                                             data_source_offset,
                                             &text_size,
                                             0,
-                                            external_symbols,
-                                            external_symbol_count) != 0) {
-        return -1;
+                                            measure_symbols,
+                                            measure_symbol_count) != 0) {
+        return -21;
     }
 
     if (assembler_assemble_source_ex_relocs(asm_source,
@@ -669,7 +685,7 @@ int zobject_from_asm(const char *asm_source,
                                             sizeof(zo_image),
                                             0,
                                             &image_size,
-                                            0,
+                                            &asm_error_line,
                                             external_symbols,
                                             external_symbol_count,
                                             export_names,
@@ -678,17 +694,17 @@ int zobject_from_asm(const char *asm_source,
                                             relocations,
                                             ZOBJECT_MAX_RELOCATIONS,
                                             &relocation_count) != 0) {
-        return -1;
+        return asm_error_line != 0 ? -(int)(3000u + asm_error_line) : -30;
     }
 
     if (text_size > image_size) {
-        return -1;
+        return -31;
     }
     data_size = image_size - text_size;
 
     entry_value = export_values[0];
     if (entry_value > 0xFFFFFFFFull) {
-        return -1;
+        return -40;
     }
 
     for (i = 0; i < symbol_count; ++i) {
@@ -701,7 +717,7 @@ int zobject_from_asm(const char *asm_source,
             }
 
             if (export_index >= export_name_count) {
-                return -1;
+                return -50;
             }
             symbols[i].value = export_values[export_index];
         }
@@ -718,7 +734,7 @@ int zobject_from_asm(const char *asm_source,
         section_bytes > out_capacity - symbol_bytes - reloc_bytes ||
         image_size > out_capacity - symbol_bytes - reloc_bytes - section_bytes ||
         ZOBJECT_V5_HEADER_SIZE > out_capacity - symbol_bytes - reloc_bytes - section_bytes - image_size) {
-        return -1;
+        return -60;
     }
 
     zo_write_u32(out + 0, ZOBJECT_MAGIC);

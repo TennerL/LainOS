@@ -1,0 +1,160 @@
+extern int mouse_init(void);
+extern int mouse_enabled(void);
+extern int mouse_x(void);
+extern int mouse_y(void);
+extern int mouse_buttons(void);
+extern uint64_t ticks(void);
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern uint32_t gfx_get_pixel(uint32_t x, uint32_t y);
+extern void put_pixel(uint32_t x, uint32_t y, uint32_t color);
+
+static uint32_t mouse_module_enabled;
+static uint32_t mouse_module_seen;
+static uint32_t mouse_module_drawn;
+static int mouse_module_last_x;
+static int mouse_module_last_y;
+static int mouse_module_last_buttons;
+static uint64_t mouse_module_next_tick;
+static uint32_t mouse_module_saved0;
+static uint32_t mouse_module_saved1;
+static uint32_t mouse_module_saved2;
+static uint32_t mouse_module_saved3;
+static uint32_t mouse_module_saved4;
+static uint32_t mouse_module_saved5;
+static uint32_t mouse_module_saved6;
+static uint32_t mouse_module_saved7;
+static uint32_t mouse_module_saved8;
+
+void restore_pointer(void) {
+    int x;
+    int y;
+
+    if (mouse_module_drawn == 0) {
+        return;
+    }
+
+    x = mouse_module_last_x;
+    y = mouse_module_last_y;
+
+    put_pixel(x - 1, y - 1, mouse_module_saved0);
+    put_pixel(x, y - 1, mouse_module_saved1);
+    put_pixel(x + 1, y - 1, mouse_module_saved2);
+    put_pixel(x - 1, y, mouse_module_saved3);
+    put_pixel(x, y, mouse_module_saved4);
+    put_pixel(x + 1, y, mouse_module_saved5);
+    put_pixel(x - 1, y + 1, mouse_module_saved6);
+    put_pixel(x, y + 1, mouse_module_saved7);
+    put_pixel(x + 1, y + 1, mouse_module_saved8);
+
+    mouse_module_drawn = 0;
+}
+
+void draw_pointer(int x, int y, uint32_t color) {
+    uint32_t w;
+    uint32_t h;
+
+    w = gfx_width();
+    h = gfx_height();
+
+    if (x < 1 || y < 1 || x + 1 >= w || y + 1 >= h) {
+        return;
+    }
+
+    mouse_module_saved0 = gfx_get_pixel(x - 1, y - 1);
+    mouse_module_saved1 = gfx_get_pixel(x, y - 1);
+    mouse_module_saved2 = gfx_get_pixel(x + 1, y - 1);
+    mouse_module_saved3 = gfx_get_pixel(x - 1, y);
+    mouse_module_saved4 = gfx_get_pixel(x, y);
+    mouse_module_saved5 = gfx_get_pixel(x + 1, y);
+    mouse_module_saved6 = gfx_get_pixel(x - 1, y + 1);
+    mouse_module_saved7 = gfx_get_pixel(x, y + 1);
+    mouse_module_saved8 = gfx_get_pixel(x + 1, y + 1);
+
+    put_pixel(x - 1, y - 1, 0x000000);
+    put_pixel(x, y - 1, color);
+    put_pixel(x + 1, y - 1, 0x000000);
+    put_pixel(x - 1, y, color);
+    put_pixel(x, y, 0xffffff);
+    put_pixel(x + 1, y, color);
+    put_pixel(x - 1, y + 1, 0x000000);
+    put_pixel(x, y + 1, color);
+    put_pixel(x + 1, y + 1, 0x000000);
+
+    mouse_module_drawn = 1;
+}
+
+export void zmodule_tick(void) {
+    uint64_t now;
+    int x;
+    int y;
+    int buttons;
+    uint32_t color;
+
+    if (mouse_module_enabled == 0) {
+        return;
+    }
+
+    now = ticks();
+    if (now < mouse_module_next_tick) {
+        return;
+    }
+    mouse_module_next_tick = now + 2;
+
+    if (mouse_enabled() == 0) {
+        restore_pointer();
+        if (mouse_init() != 0) {
+            mouse_module_next_tick = now + 500;
+            return;
+        }
+    }
+
+    x = mouse_x();
+    y = mouse_y();
+    buttons = mouse_buttons();
+
+    if (mouse_module_seen != 0 &&
+        x == mouse_module_last_x &&
+        y == mouse_module_last_y &&
+        buttons == mouse_module_last_buttons) {
+        return;
+    }
+
+    restore_pointer();
+
+    color = 0x00ff66;
+    if (buttons == 1) {
+        color = 0xff3355;
+    }
+    if (buttons == 2) {
+        color = 0x33aaff;
+    }
+
+    draw_pointer(x, y, color);
+
+    mouse_module_last_x = x;
+    mouse_module_last_y = y;
+    mouse_module_last_buttons = buttons;
+    mouse_module_seen = 1;
+}
+
+mouse_module_enabled = 1;
+mouse_module_seen = 0;
+mouse_module_drawn = 0;
+mouse_module_last_x = 0;
+mouse_module_last_y = 0;
+mouse_module_last_buttons = 0;
+mouse_module_next_tick = 0;
+
+if (mouse_enabled() == 0) {
+    mouse_init();
+}
+
+if (mouse_enabled() != 0) {
+    print("mouse module loaded: quiet cursor enabled\n");
+    zmodule_tick();
+} else {
+    print("mouse module loaded: mouse not detected yet\n");
+}
+
+return 0;
