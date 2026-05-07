@@ -4,11 +4,13 @@
 #include "ahci.h"
 #include "assembler.h"
 #include "browser.h"
+#include "desktop.h"
 #include "editor.h"
 #include "keyboard.h"
 #include "lainfs.h"
 #include "shell.h"
 #include "storage.h"
+#include "usb.h"
 #include "zobject.h"
 #include "zscript.h"
 #include "ramdisk_seed.h"
@@ -1158,7 +1160,9 @@ static void cmd_write(const char *args, const boot_info_t *info);
 static void cmd_cat(const char *args, const boot_info_t *info);
 static void cmd_edit(const char *args, const boot_info_t *info);
 static void cmd_browse(const char *args, const boot_info_t *info);
+static void cmd_desktop(const char *args, const boot_info_t *info);
 static void cmd_ahci(const char *args, const boot_info_t *info);
+static void cmd_usb(const char *args, const boot_info_t *info);
 static void cmd_ticks(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
 static void cmd_exec(const char *args, const boot_info_t *info);
@@ -1219,8 +1223,10 @@ static const command_t commands[] = {
     { "cat",     "print a text file",         cmd_cat },
     { "edit",    "edit a text file",          cmd_edit },
     { "browse",  "browse and move lainfs entries", cmd_browse },
+    { "desktop", "enter framebuffer desktop", cmd_desktop },
     { "keymap",  "set keyboard layout",       cmd_keymap },
     { "ahci",    "show AHCI status",          cmd_ahci },
+    { "usb",     "show USB controllers",      cmd_usb },
     { "ticks",   "show timer ticks",          cmd_ticks },
     { "run",     "run a script file",         cmd_run },
     { "exec",    "run a flat binary file",     cmd_exec },
@@ -2796,6 +2802,74 @@ static void cmd_ahci(const char *args, const boot_info_t *info) {
     console_puts(" disks=");
     console_put_dec64(ahci_disk_count());
     console_puts("\n");
+}
+
+static void cmd_desktop(const char *args, const boot_info_t *info) {
+    (void)args;
+    desktop_run(info);
+}
+
+static void cmd_usb(const char *args, const boot_info_t *info) {
+    (void)args;
+    (void)info;
+
+    console_puts("USB controllers=");
+    console_put_dec64(usb_controller_count());
+    console_puts(" xhci=");
+    console_put_dec64(usb_xhci_controller_count());
+    console_puts("\n");
+
+    for (uint32_t i = 0; i < usb_controller_count(); ++i) {
+        const usb_controller_info_t *ctrl = usb_controller_info(i);
+        if (ctrl == 0) {
+            continue;
+        }
+
+        console_puts("  ");
+        console_puts(usb_controller_type_name(ctrl->type));
+        console_puts(" pci=");
+        console_put_dec64(ctrl->bus);
+        console_puts(":");
+        console_put_dec64(ctrl->device);
+        console_puts(".");
+        console_put_dec64(ctrl->function);
+        console_puts(" vendor=0x");
+        console_put_hex64(ctrl->vendor_id);
+        console_puts(" device=0x");
+        console_put_hex64(ctrl->device_id);
+        console_puts(" bar0=0x");
+        console_put_hex64(ctrl->bar0);
+        if (ctrl->bar0_is_io) {
+            console_puts(" io");
+        }
+        if (ctrl->type == USB_CONTROLLER_XHCI) {
+            console_puts(" hci=0x");
+            console_put_hex64(ctrl->hci_version);
+            console_puts(" slots=");
+            console_put_dec64(ctrl->max_slots);
+            console_puts(" intrs=");
+            console_put_dec64(ctrl->interrupter_count);
+            console_puts(" ports=");
+            console_put_dec64(ctrl->port_count);
+            console_puts(" init=");
+            console_put_dec64(ctrl->initialized);
+            console_puts(" run=");
+            console_put_dec64(ctrl->running);
+            console_puts(" connected=");
+            console_put_dec64(ctrl->connected_port_count);
+            console_puts(" reset=");
+            console_put_dec64(ctrl->reset_port_count);
+            console_puts(" slots-enabled=");
+            console_put_dec64(ctrl->enabled_slot_count);
+            console_puts(" addressed=");
+            console_put_dec64(ctrl->addressed_device_count);
+            console_puts(" desc=");
+            console_put_dec64(ctrl->descriptor_count);
+            console_puts(" cc=");
+            console_put_dec64(ctrl->last_completion_code);
+        }
+        console_puts("\n");
+    }
 }
 
 static void cmd_ticks(const char *args, const boot_info_t *info) {

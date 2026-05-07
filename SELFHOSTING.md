@@ -16,7 +16,7 @@ The OS already has the first self-hosting rung:
 - `.Z` programs can orchestrate other builds through `os_zbuild`,
   `os_ztest`, and `os_zinstall`.
 - `examples/selfhost_project/` demonstrates a tiny source/include/build layout.
-- The host build already compiles `kernel/zlink_probe.Z` into a NASM ELF object
+- The host build already compiles `kernel/z/zlink_probe.Z` into a NASM ELF object
   and links it into `kernel.elf`, proving that selected `.Z` code can live in
   the booted kernel.
 
@@ -90,7 +90,7 @@ one at a time.
 
 Acceptance criteria:
 
-- More files like `kernel/zlink_probe.Z` are compiled by the host build and
+- More files like `kernel/z/zlink_probe.Z` are compiled by the host build and
   linked into `kernel.elf`.
 - `.Z` can express the needed kernel-facing declarations in shared headers.
 - C callers and `.Z` functions agree on the x86_64 SysV ABI.

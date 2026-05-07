@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../kernel/zscript.h"
+#include "zscript.h"
 
 static int write_nasm_globals(FILE *out, const char *asm_output, uint32_t asm_size) {
     const char *cursor = asm_output;

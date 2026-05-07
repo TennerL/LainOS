@@ -31,6 +31,7 @@ typedef enum {
 void keyboard_set_layout(keyboard_layout_t layout);
 keyboard_layout_t keyboard_get_layout(void);
 const char *keyboard_layout_name(keyboard_layout_t layout);
+int keyboard_poll_key(key_event_t *out);
 key_event_t keyboard_read_key(void);
 
 #endif

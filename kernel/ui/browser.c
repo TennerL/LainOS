@@ -3,6 +3,7 @@
 #include "kernel.h"
 #include "keyboard.h"
 #include "lainfs.h"
+#include "mouse.h"
 
 #define BROWSER_MAX_ENTRIES 512u
 #define BROWSER_NAME_SIZE 32u
@@ -35,6 +36,9 @@ static char rendered_cells[BROWSER_RENDER_ROWS][BROWSER_RENDER_COLS];
 static uint8_t rendered_cell_valid[BROWSER_RENDER_ROWS][BROWSER_RENDER_COLS];
 static unsigned int rendered_cols;
 static unsigned int rendered_rows;
+
+static void enter_selected(void);
+static void go_up(void);
 
 static uint32_t str_len(const char *s) {
     uint32_t len = 0;
@@ -356,6 +360,86 @@ static void draw_browser(void) {
     draw_line_at(0, rows - 1u, line, cols);
 }
 
+static int browser_click(uint32_t mouse_x, uint32_t mouse_y, int buttons) {
+    unsigned int rows = console_rows();
+    unsigned int cols = console_columns();
+    unsigned int col = 0;
+    unsigned int row = 0;
+    unsigned int left_width;
+    unsigned int right_x;
+    unsigned int pane_index;
+    unsigned int pane_col;
+    unsigned int body_rows;
+    uint32_t index;
+
+    if (!console_point_to_cell(mouse_x, mouse_y, &col, &row)) {
+        return 0;
+    }
+    if (cols > BROWSER_RENDER_COLS) {
+        cols = BROWSER_RENDER_COLS;
+    }
+    if (rows > BROWSER_RENDER_ROWS) {
+        rows = BROWSER_RENDER_ROWS;
+    }
+    if (rows < 4u || cols < 20u) {
+        return 0;
+    }
+
+    left_width = cols / 2u;
+    right_x = left_width + 1u;
+    body_rows = rows - 3u;
+
+    if (row + 1u == rows) {
+        return 0;
+    }
+    if (col < left_width) {
+        pane_index = 0;
+        pane_col = col;
+    } else if (col >= right_x) {
+        pane_index = 1;
+        pane_col = col - right_x;
+    } else {
+        return 0;
+    }
+    (void)pane_col;
+
+    if ((buttons & MOUSE_RIGHT) != 0) {
+        active_pane = pane_index;
+        go_up();
+        return 1;
+    }
+
+    if ((buttons & MOUSE_LEFT) == 0) {
+        return 0;
+    }
+
+    if (row < 2u) {
+        status_message = 0;
+        active_pane = pane_index;
+        return 1;
+    }
+
+    row -= 2u;
+    if (row >= body_rows) {
+        return 0;
+    }
+
+    active_pane = pane_index;
+    index = panes[pane_index].top + row;
+    if (index >= entry_counts[pane_index]) {
+        return 1;
+    }
+
+    if (panes[pane_index].selected == index) {
+        enter_selected();
+    } else {
+        status_message = 0;
+        panes[pane_index].selected = index;
+    }
+
+    return 1;
+}
+
 static int move_selection(int delta) {
     browser_pane_t *pane = &panes[active_pane];
     uint32_t count = entry_counts[active_pane];
@@ -562,42 +646,52 @@ int browser_run(char left_drive,
     invalidate_render_cache();
     draw_browser();
 
+    int last_buttons = mouse_buttons();
     for (;;) {
         key_event_t key;
         int changed = 0;
 
-        key = keyboard_read_key();
+        while (keyboard_poll_key(&key)) {
+            if (key.type == KEY_ESC || key.type == KEY_CTRL_Q) {
+                console_cursor_enable(0);
+                console_clear();
+                return 0;
+            }
 
-        if (key.type == KEY_ESC || key.type == KEY_CTRL_Q) {
-            console_cursor_enable(0);
-            console_clear();
-            return 0;
+            if (key.type == KEY_TAB) {
+                status_message = 0;
+                active_pane = active_pane == 0u ? 1u : 0u;
+                changed = 1;
+            } else if (key.type == KEY_UP) {
+                changed = move_selection(-1) || changed;
+            } else if (key.type == KEY_DOWN) {
+                changed = move_selection(1) || changed;
+            } else if (key.type == KEY_ENTER || (key.type == KEY_CHAR && key.ch == 'o')) {
+                enter_selected();
+                changed = 1;
+            } else if (key.type == KEY_BACKSPACE || (key.type == KEY_CHAR && key.ch == 'u')) {
+                go_up();
+                changed = 1;
+            } else if (key.type == KEY_CHAR && (key.ch == 'm' || key.ch == 'M')) {
+                move_to_other_pane();
+                changed = 1;
+            } else if (key.type == KEY_CHAR && (key.ch == 'c' || key.ch == 'C')) {
+                copy_to_other_pane();
+                changed = 1;
+            }
         }
 
-        if (key.type == KEY_TAB) {
-            status_message = 0;
-            active_pane = active_pane == 0u ? 1u : 0u;
-            changed = 1;
-        } else if (key.type == KEY_UP) {
-            changed = move_selection(-1);
-        } else if (key.type == KEY_DOWN) {
-            changed = move_selection(1);
-        } else if (key.type == KEY_ENTER || (key.type == KEY_CHAR && key.ch == 'o')) {
-            enter_selected();
-            changed = 1;
-        } else if (key.type == KEY_BACKSPACE || (key.type == KEY_CHAR && key.ch == 'u')) {
-            go_up();
-            changed = 1;
-        } else if (key.type == KEY_CHAR && (key.ch == 'm' || key.ch == 'M')) {
-            move_to_other_pane();
-            changed = 1;
-        } else if (key.type == KEY_CHAR && (key.ch == 'c' || key.ch == 'C')) {
-            copy_to_other_pane();
-            changed = 1;
+        int buttons = mouse_buttons();
+        int pressed = buttons & ~last_buttons;
+        if ((pressed & (MOUSE_LEFT | MOUSE_RIGHT)) != 0) {
+            changed = browser_click((uint32_t)mouse_x(), (uint32_t)mouse_y(), buttons) || changed;
         }
+        last_buttons = buttons;
 
         if (changed) {
             draw_browser();
         }
+
+        __asm__ __volatile__("pause");
     }
 }

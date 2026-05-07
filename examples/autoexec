@@ -11,4 +11,4 @@ bgcolor 0x0035063E
 cd ..
 clear
 keymap de
-info
+desktop

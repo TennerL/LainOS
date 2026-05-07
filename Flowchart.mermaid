@@ -29,7 +29,7 @@ flowchart TD
     O -->|failed after retries| OFail[Print error and return]
     O -->|success| P[jump_to_kernel entry, boot_info in RDI]
 
-    P --> Q[_start in kernel/entry.asm]
+    P --> Q[_start in kernel/arch/x86_64/entry.asm]
     Q --> R{boot_info pointer valid?}
 
     R -->|no| RPanic[console_panic: boot_info pointer was null]

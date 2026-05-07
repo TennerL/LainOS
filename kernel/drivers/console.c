@@ -389,7 +389,11 @@ void console_set_cursor(unsigned int col, unsigned int row) {
     draw_cursor();
 }
 
-static void console_put_char_at_pixel(uint32_t x, uint32_t y, char ch) {
+static void console_put_char_at_pixel_colors(uint32_t x,
+                                             uint32_t y,
+                                             char ch,
+                                             uint32_t fg,
+                                             uint32_t bg) {
     if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT){
         ch = ' ';
     }
@@ -401,10 +405,14 @@ static void console_put_char_at_pixel(uint32_t x, uint32_t y, char ch) {
 
         for (uint32_t glyph_col = 0; glyph_col < FONT_W; ++glyph_col) {
             uint32_t color =
-                (bits & (1u << (7u - glyph_col))) ? current_fg_color : current_bg_color;
+                (bits & (1u << (7u - glyph_col))) ? fg : bg;
             put_pixel(x + glyph_col, y + glyph_row, color);
         }
     }
+}
+
+static void console_put_char_at_pixel(uint32_t x, uint32_t y, char ch) {
+    console_put_char_at_pixel_colors(x, y, ch, current_fg_color, current_bg_color);
 }
 
 void console_put_char_at(unsigned int col, unsigned int row, char ch){
@@ -456,6 +464,23 @@ void console_put_dec_at_screen(unsigned int col, unsigned int row, unsigned long
 
     while (count > 0) {
         console_put_char_at_screen(col++, row, digits[--count]);
+    }
+}
+
+void console_draw_text_at_pixel(unsigned int x,
+                                unsigned int y,
+                                const char *text,
+                                unsigned int fg,
+                                unsigned int bg) {
+    uint32_t px = x;
+
+    if (text == 0) {
+        return;
+    }
+
+    while (*text) {
+        console_put_char_at_pixel_colors(px, y, *text++, fg, bg);
+        px += FONT_W;
     }
 }
 
@@ -564,6 +589,65 @@ void console_set_margin(uint32_t x, uint32_t y) {
     if(redraw_cursor){
         draw_cursor();
     }
+}
+
+void console_set_region(uint32_t left, uint32_t top, uint32_t right, uint32_t bottom) {
+    console_pane_t *pane;
+    int redraw_cursor = cursor_enabled && cursor_visible;
+
+    if(redraw_cursor) {
+        erase_cursor();
+    }
+
+    if (right > fb_width) {
+        right = fb_width;
+    }
+    if (bottom > fb_height) {
+        bottom = fb_height;
+    }
+    if (left + FONT_W >= right) {
+        left = right > FONT_W ? right - FONT_W : 0;
+    }
+    if (top + FONT_H >= bottom) {
+        top = bottom > FONT_H ? bottom - FONT_H : 0;
+    }
+
+    console_split_disable();
+    active_console_pane = 0;
+    console_pane_count = 1;
+    pane = active_pane();
+    console_init_pane(pane, left, top, right, bottom);
+    cursor_visible = 1;
+    last_cursor_blink_tick = timer_ticks();
+
+    clear_pane(pane);
+    if(redraw_cursor) {
+        draw_cursor();
+    }
+}
+
+void console_reset_region(void) {
+    console_set_region(DEFAULT_CONSOLE_MARGIN_X,
+                       DEFAULT_CONSOLE_MARGIN_Y,
+                       fb_width > DEFAULT_CONSOLE_MARGIN_X ? fb_width - DEFAULT_CONSOLE_MARGIN_X : fb_width,
+                       fb_height > DEFAULT_CONSOLE_MARGIN_Y ? fb_height - DEFAULT_CONSOLE_MARGIN_Y : fb_height);
+}
+
+int console_point_to_cell(uint32_t x, uint32_t y, uint32_t *col, uint32_t *row) {
+    const console_pane_t *pane = active_pane_const();
+
+    if (x < pane->left || y < pane->top || x >= pane->right || y >= pane->bottom) {
+        return 0;
+    }
+
+    if (col != 0) {
+        *col = (x - pane->left) / FONT_W;
+    }
+    if (row != 0) {
+        *row = (y - pane->top) / CONSOLE_ROW_ADVANCE;
+    }
+
+    return 1;
 }
 
 int console_split_enabled(void) {

@@ -12,17 +12,13 @@ Minimal starter project for:
 ## Project layout
 
 - `bootloader/main.c` - UEFI loader entry point and ELF64 loader
-- `kernel/entry.asm` - tiny assembly kernel entry stub
-- `kernel/main.c` - main kernel logic in C
-- `kernel/kernel.h` - shared kernel-side API declarations
-- `kernel/assembler.c` - tiny in-kernel assembler used by the `asm` shell command
-- `kernel/zscript.c` - tiny `.Z` compiler that lowers a C-like subset into that assembler
-- `kernel/console.c` - framebuffer console, formatting, and panic screen in C
-- `kernel/cpu.c` - GDT/IDT table construction in C
-- `kernel/cpu_low.asm` - tiny low-level CPU table load helpers
-- `kernel/keyboard.c` - minimal PS/2 keyboard polling input
-- `kernel/mouse.c` - PS/2 mouse packet driver exposed to `.Z` programs
-- `kernel/interrupts.asm` - exception stubs and IRQ entry paths
+- `kernel/include/` - shared kernel-side API declarations
+- `kernel/arch/x86_64/` - entry, interrupt stubs, and low-level CPU helpers
+- `kernel/core/` - kernel entry path, CPU tables, timer, and export table
+- `kernel/drivers/` - framebuffer, console, PS/2 input, PCI, AHCI, USB, storage
+- `kernel/fs/` - lainfs filesystem support
+- `kernel/ui/` - shell, editor, browser, and desktop UI
+- `kernel/z/` - in-kernel assembler, `.Z` compiler/object support, and `.Z` probe
 - `kernel/linker.ld` - kernel linker script
 - `archive/kernel-old/` - superseded ASM implementations kept for reference
 - `Makefile` - build and run helpers
@@ -326,6 +322,7 @@ Once the kernel console appears, check storage:
 
 ```text
 ahci
+usb
 blk
 part
 ```
@@ -402,6 +399,14 @@ The kernel console has a tiny command shell:
 - `mount C: rd0p1` - mount a partition at a drive letter
 - `mounts` - list mounted filesystems
 - `ahci` - show detected AHCI controllers and disks
+- `usb` - show detected USB host controllers
+- `desktop` - enter the framebuffer desktop UI; press `Esc`/`Ctrl+Q` or hold
+  left+right mouse buttons to return. A real Terminal window opens on the
+  desktop and runs shell commands directly; its close box hides it and the
+  `Terminal` launcher brings it back. Click `Browse` to launch the file browser.
+  In Browse, click a pane or item to focus/select it, click the selected
+  directory again to open it, and right-click a pane to go up.
+  Put it at the end of `autoexec` to boot straight into the UI.
 - `ticks` - show PIT timer ticks
 - `format C:` - format a mounted drive as `lainfs`
 - `format hd1p1` - format a discovered partition without mounting it first
@@ -482,6 +487,12 @@ To test the AHCI path in QEMU instead of the legacy IDE path:
 
 ```bash
 make run-ahci
+```
+
+To exercise the early xHCI path with a USB keyboard and tablet attached:
+
+```bash
+make run-usb
 ```
 
 Then use the same flow with the AHCI partition name:
@@ -729,7 +740,7 @@ Function pointers currently use pointer-sized storage and support calls through
 local/global variables, parameters, struct fields, and indexed pointer tables.
 Known function-pointer signatures are checked, but unprototyped/unknown
 function symbols still fall back to permissive pointer behavior.
-The normal host build now also compiles `kernel/zlink_probe.Z` into a NASM ELF
+The normal host build now also compiles `kernel/z/zlink_probe.Z` into a NASM ELF
 object and links it into `kernel.elf`, proving the kernel can contain selected
 `.Z` objects alongside C and ASM objects. That file now contains the
 status-bar CPU busy-percent helper used by C code, so the normal kernel path

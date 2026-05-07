@@ -18,6 +18,7 @@ void console_put_char_at(unsigned int col, unsigned int row, char ch);
 void console_put_dec_at(unsigned int col, unsigned int row, unsigned long long value);
 void console_put_char_at_screen(unsigned int col, unsigned int row, char ch);
 void console_put_dec_at_screen(unsigned int col, unsigned int row, unsigned long long value);
+void console_draw_text_at_pixel(unsigned int x, unsigned int y, const char *text, unsigned int fg, unsigned int bg);
 unsigned int console_rows(void);
 unsigned int console_columns(void);
 void console_clear_line(unsigned int row);
@@ -43,6 +44,12 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int width, unsi
 void graphics_draw_line(unsigned int x0, unsigned int y0, unsigned int x1, unsigned int y1, unsigned int color);
 void graphics_clear(unsigned int color);
 void console_set_margin(unsigned int x, unsigned int y);
+void console_set_region(unsigned int left, unsigned int top, unsigned int right, unsigned int bottom);
+void console_reset_region(void);
+int console_point_to_cell(unsigned int x,
+                          unsigned int y,
+                          unsigned int *col,
+                          unsigned int *row);
 int console_split_enable(void);
 void console_split_disable(void);
 void console_split_focus_next(void);

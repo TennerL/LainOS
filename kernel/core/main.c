@@ -2,6 +2,7 @@
 #include "graphics.h"
 #include "shell.h"
 #include "storage.h"
+#include "usb.h"
 
 #define INPUT_BUFFER_SIZE 128
 #define SHELL_SESSION_COUNT 2u
@@ -273,6 +274,7 @@ void kernel_main(boot_info_t *info) {
     keyboard_init();
     mouse_init();
     storage_init();
+    usb_init();
 
     console_puts("Lain kernel says hi from C :3\n");
     console_kprintf2("Kernel base: 0x%x, framebuffer: 0x%x\n",
@@ -282,7 +284,7 @@ void kernel_main(boot_info_t *info) {
                      info->framebuffer_width,
                      info->framebuffer_height);
     console_kprintf1("Memory map bytes: %u\n", info->memory_map_size);
-    console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, and storage loaded.\n");
+    console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, storage, and USB scan loaded.\n");
     console_puts("\nHave fun hacking on it.\n");
 
     shell_init();
