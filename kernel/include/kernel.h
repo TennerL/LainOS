@@ -23,6 +23,7 @@ unsigned int console_rows(void);
 unsigned int console_columns(void);
 void console_clear_line(unsigned int row);
 void console_puts(const char *s);
+void console_set_output_hook(void (*hook)(char ch));
 void console_newline(void);
 void console_cursor_enable(int enabled);
 void console_cursor_tick(void);

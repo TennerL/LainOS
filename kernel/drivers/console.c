@@ -39,6 +39,7 @@ static uint32_t fb_pitch;
 static uint32_t current_fg_color = DEFAULT_FG_COLOR;
 static uint32_t current_bg_color = DEFAULT_BG_COLOR;
 static char dec_buffer[32];
+static void (*console_output_hook)(char ch);
 
 static console_pane_t *active_pane(void) {
     return &console_panes[active_console_pane];
@@ -248,6 +249,9 @@ static void putc_raw(char ch) {
 
     erase_cursor();
     if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT) return;
+    if (console_output_hook != 0) {
+        console_output_hook(ch);
+    }
     uint32_t glyph = (uint8_t)ch - ASCII_FIRST;
 
     if (pane->cursor_x + FONT_W > console_text_right()) console_newline();
@@ -541,15 +545,25 @@ void console_puts(const char *s) {
     while (*s) {
         char ch = *s++;
         if (ch == '\n') {
+            if (console_output_hook != 0) {
+                console_output_hook('\n');
+            }
             console_newline();
         } else if (ch == '\t') {
             for (int i = 0; i < 4; ++i) putc_raw(' ');
         } else if (ch == '\b') {
+            if (console_output_hook != 0) {
+                console_output_hook('\b');
+            }
             backspace();
         } else {
             putc_raw(ch);
         }
     }
+}
+
+void console_set_output_hook(void (*hook)(char ch)) {
+    console_output_hook = hook;
 }
 
 void console_set_margin(uint32_t x, uint32_t y) {

@@ -402,10 +402,13 @@ The kernel console has a tiny command shell:
 - `usb` - show detected USB host controllers
 - `desktop` - enter the framebuffer desktop UI; press `Esc`/`Ctrl+Q` or hold
   left+right mouse buttons to return. A real Terminal window opens on the
-  desktop and runs shell commands directly; its close box hides it and the
-  `Terminal` launcher brings it back. Click `Browse` to launch the file browser.
-  In Browse, click a pane or item to focus/select it, click the selected
-  directory again to open it, and right-click a pane to go up.
+  desktop and runs shell commands directly; drag its title bar to move it,
+  resize from the bottom-right corner, and use its close box to hide it. Drag
+  and resize use a lightweight outline preview, and terminal text is repainted
+  from a backing buffer after geometry changes. The `Terminal` launcher brings
+  it back. Click `Files` or open the Start menu for a native file browser with
+  clickable directories and an Up button. The Start menu also lists resident
+  modules, and the `Modules` window can run a module's `zmodule_tick` entry.
   Put it at the end of `autoexec` to boot straight into the UI.
 - `ticks` - show PIT timer ticks
 - `format C:` - format a mounted drive as `lainfs`

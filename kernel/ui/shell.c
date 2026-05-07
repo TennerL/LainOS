@@ -4610,6 +4610,56 @@ void shell_modules_tick(void) {
     }
 }
 
+uint32_t shell_module_count(void) {
+    uint32_t count = 0;
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (zmodule_slots[i].loaded) {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+const char *shell_module_name(uint32_t index) {
+    uint32_t seen = 0;
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            return zmodule_slots[i].name;
+        }
+        ++seen;
+    }
+
+    return 0;
+}
+
+int shell_module_tick(uint32_t index) {
+    uint32_t seen = 0;
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+                if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick")) {
+                    ((zmodule_tick_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                    return 0;
+                }
+            }
+            return -1;
+        }
+        ++seen;
+    }
+
+    return -1;
+}
+
 static void cmd_zmod(const char *args, const boot_info_t *info) {
     (void)info;
 
