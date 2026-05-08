@@ -26,6 +26,7 @@ int shell_api_strcmp(const char *a, const char *b);
 int shell_api_starts_with(const char *text, const char *prefix);
 int shell_api_atoi(const char *text);
 int shell_api_list_dir(const char *path);
+int shell_api_chdir(const char *path);
 int shell_api_dir_count(const char *path);
 int shell_api_dir_name(const char *path, uint32_t index, char *buffer, uint32_t capacity);
 int shell_api_dir_type(const char *path, uint32_t index);
@@ -33,5 +34,8 @@ int shell_api_dir_size(const char *path, uint32_t index);
 int shell_api_zbuild(const char *target);
 int shell_api_ztest(const char *target);
 int shell_api_zinstall(const char *target);
+int shell_api_zmod(const char *target);
+int shell_api_zunload(const char *target);
+int shell_api_zreload(const char *target);
 
 #endif

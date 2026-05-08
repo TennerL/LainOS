@@ -62,6 +62,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("os_starts_with", shell_api_starts_with),
     KERNEL_EXPORT("os_atoi", shell_api_atoi),
     KERNEL_EXPORT("os_list_dir", shell_api_list_dir),
+    KERNEL_EXPORT("os_chdir", shell_api_chdir),
     KERNEL_EXPORT("os_dir_count", shell_api_dir_count),
     KERNEL_EXPORT("os_dir_name", shell_api_dir_name),
     KERNEL_EXPORT("os_dir_type", shell_api_dir_type),
@@ -69,6 +70,9 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("os_zbuild", shell_api_zbuild),
     KERNEL_EXPORT("os_ztest", shell_api_ztest),
     KERNEL_EXPORT("os_zinstall", shell_api_zinstall),
+    KERNEL_EXPORT("os_zmod", shell_api_zmod),
+    KERNEL_EXPORT("os_zunload", shell_api_zunload),
+    KERNEL_EXPORT("os_zreload", shell_api_zreload),
 };
 
 #undef KERNEL_EXPORT

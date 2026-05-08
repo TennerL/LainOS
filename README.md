@@ -274,6 +274,7 @@ After rebuilding and copying the new artifacts to Windows, boot the ESP image di
 ```powershell
 qemu-system-x86_64 `
   -m 256M `
+  -smp 4 `
   -drive if=pflash,format=raw,readonly=on,file="C:/Users/j.klaus/Downloads/OVMF_CODE_4M.fd" `
   -drive if=pflash,format=raw,file="C:/Users/j.klaus/Downloads/OVMF_VARS_4M.fd" `
   -drive format=raw,file="C:/Users/j.klaus/Desktop/uefi-starter/build/esp.img" `
@@ -391,6 +392,7 @@ The kernel console has a tiny command shell:
 - `clear` - clear the screen
 - `echo text` - print text
 - `info` - show boot/kernel info
+- `cpus` - show ACPI MADT CPU topology and local APIC ids
 - `mkdrive C:` - create a virtual `C:` drive
 - `drives` - list virtual drives
 - `C:` - switch to an existing virtual `C:` drive
@@ -408,7 +410,10 @@ The kernel console has a tiny command shell:
   from a backing buffer after geometry changes. The `Terminal` launcher brings
   it back. Click `Files` or open the Start menu for a native file browser with
   clickable directories and an Up button. The Start menu also lists resident
-  modules, and the `Modules` window can run a module's `zmodule_tick` entry.
+  modules. Clicking a resident module opens a draggable module window; while
+  it ticks, framebuffer drawing is clipped and translated into that window's
+  content area. In desktop mode, `edit name.Z` opens a native syntax-highlighted
+  editor window; `Ctrl+S` saves and `Esc`/`Ctrl+Q` closes it.
   Put it at the end of `autoexec` to boot straight into the UI.
 - `ticks` - show PIT timer ticks
 - `format C:` - format a mounted drive as `lainfs`
@@ -432,6 +437,10 @@ The kernel console has a tiny command shell:
 - `zco source.Z output.zo` - compile a tiny `.Z` source file into a `.zo` object
 - `zlink input.zo [more.zo ...] output.bin` - link `.zo` objects into a flat binary
 - `zmod input.zo [more.zo ...]` - link `.zo` objects in memory and run the module initializer
+- `zunload module` - unload a resident `.zo` module by name and call
+  `zmodule_unload` if the module exports it
+- `zreload module` - unload an existing resident module by name, then run
+  `zmod module`
 - `zmods` - list resident `.zo` modules and their exported symbols
 - `zrun source.Z` - compile and run a tiny `.Z` source file directly
 - `zasm source.Z [output.asm]` - print or save the generated asm for a `.Z` source file
@@ -824,14 +833,17 @@ surface to `.Z`: `os_mkdir(path)`, `os_delete(path)`,
 `os_copy_file(src_path, dst_path)`,
 `os_strlen(text)`, `os_strcmp(a, b)`, `os_starts_with(text, prefix)`,
 `os_atoi(text)`,
-`os_list_dir(path)`, `os_dir_count(path)`,
+`os_list_dir(path)`, `os_chdir(path)`, `os_dir_count(path)`,
 `os_dir_name(path, index, buffer, capacity)`, `os_dir_type(path, index)`,
 `os_dir_size(path, index)`,
-`os_zbuild(target)`, `os_ztest(target)`, and `os_zinstall(target)`.
+`os_zbuild(target)`, `os_ztest(target)`, `os_zinstall(target)`,
+`os_zmod(target)`, `os_zunload(target)`, and `os_zreload(target)`.
 These operate on the shell's active lainfs drive and current directory, and
 paths can include the same simple relative path forms used by `zbuild`.
 The build/test/install API calls return `0` only after verifying their expected
-artifact or `status ok` test log, so `.Z` tools can branch on failures.
+artifact or `status ok` test log, while the module API calls return `0` only
+after the resident module table changed as expected, so `.Z` tools can branch
+on failures.
 `examples/sysstat.Z` is the first small leaf tool in this flow: copy
 `examples/kernel_api.Z`, `examples/sysstat.Z`, and `examples/sysstat.zbuild`
 into lainfs, then run `ztest sysstat`, `zinstall sysstat`, and
@@ -851,6 +863,12 @@ zbuild hwdash_module
 zmod hwdash_module.zo
 zmods
 ```
+
+In desktop mode, the native `.Z` editor has Save, Build, Inst, and Load buttons.
+Build derives the target from the open `.Z` or `.zbuild` filename and runs
+`zbuild target`; Inst runs `zinstall target`; Load runs `zinstall target`
+followed by `zreload target`, making the edit-build-load loop usable without
+leaving the desktop.
 
 The remaining ABI milestones are real nonzero `.bss` emission from `.Z`,
 dependency-aware unload hooks, and enough relocation/runtime surface for

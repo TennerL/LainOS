@@ -38,8 +38,13 @@ Resident dashboard module:
 ```text
 zbuild hwdash_module
 zmod hwdash_module.zo
+zreload hwdash_module
 zmods
 ```
+
+In the desktop editor, open `hwdash_module.Z` or `hwdash_module.zbuild`, edit it,
+then use Save, Build, Inst, or Load. Load saves the editor buffer, installs the
+module object, and reloads it as a resident module.
 
 If a loaded module exports `zmodule_tick`, the kernel calls it while the shell is
 idle or waiting for keyboard input.

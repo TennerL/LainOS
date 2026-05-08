@@ -44,6 +44,8 @@ void graphics_fill_rect(unsigned int x, unsigned int y, unsigned int width, unsi
 void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned int color);
 void graphics_draw_line(unsigned int x0, unsigned int y0, unsigned int x1, unsigned int y1, unsigned int color);
 void graphics_clear(unsigned int color);
+void graphics_viewport_push(unsigned int x, unsigned int y, unsigned int width, unsigned int height);
+void graphics_viewport_pop(void);
 void console_set_margin(unsigned int x, unsigned int y);
 void console_set_region(unsigned int left, unsigned int top, unsigned int right, unsigned int bottom);
 void console_reset_region(void);
@@ -58,6 +60,10 @@ int console_split_enabled(void);
 unsigned int console_active_pane(void);
 
 void cpu_init_tables(void);
+void cpu_detect_topology(const boot_info_t *info);
+unsigned int cpu_core_count(void);
+unsigned int cpu_lapic_id(unsigned int index);
+unsigned long long cpu_lapic_base(void);
 void interrupts_init(void);
 void keyboard_init(void);
 int mouse_init(void);

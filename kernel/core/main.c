@@ -99,7 +99,7 @@ unsigned long long status_memory_used_kb(void) {
 }
 
 unsigned int status_cpu_core_count(void) {
-    return 1;
+    return cpu_core_count();
 }
 
 void status_cpu_enter_idle(void) {
@@ -269,6 +269,7 @@ void kernel_main(boot_info_t *info) {
 
     console_clear();
     cpu_init_tables();
+    cpu_detect_topology(info);
     interrupts_init();
     timer_init();
     keyboard_init();
@@ -284,6 +285,7 @@ void kernel_main(boot_info_t *info) {
                      info->framebuffer_width,
                      info->framebuffer_height);
     console_kprintf1("Memory map bytes: %u\n", info->memory_map_size);
+    console_kprintf1("CPU cores detected: %u\n", status_cpu_core_count());
     console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, storage, and USB scan loaded.\n");
     console_puts("\nHave fun hacking on it.\n");
 

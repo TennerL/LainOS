@@ -2,3 +2,4 @@ build/
 boot/.DS_Store
 .vscode/
 .DS_Store
+out/

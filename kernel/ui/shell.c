@@ -33,6 +33,7 @@
 #define ZMODULE_MAX_MODULES 4u
 #define ZMODULE_MAX_EXPORTS 16u
 #define ZMODULE_NAME_SIZE 32u
+#define ZMODULE_TICK_HZ 20u
 
 static int script_depth;
 static char script_buffers[SCRIPT_MAX_DEPTH][SCRIPT_BUFFER_SIZE + 1];
@@ -72,6 +73,7 @@ typedef struct {
 typedef void (*exec_program_t)(const exec_api_t *api);
 typedef uint64_t (*exec_program_ret_t)(const exec_api_t *api);
 typedef void (*zmodule_tick_t)(void);
+typedef void (*zmodule_unload_t)(void);
 
 typedef struct {
     const char *name;
@@ -1142,6 +1144,7 @@ static void cmd_resolution(const char *args, const boot_info_t *info);
 static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
+static void cmd_cpus(const char *args, const boot_info_t *info);
 static void cmd_mkdrive(const char *args, const boot_info_t *info);
 static void cmd_drives(const char *args, const boot_info_t *info);
 static void cmd_blk(const char *args, const boot_info_t *info);
@@ -1189,7 +1192,10 @@ static int zbuild_read_layout(int drive,
                               int *objects_only,
                               uint32_t *object_count);
 static void cmd_zmod(const char *args, const boot_info_t *info);
+static void cmd_zunload(const char *args, const boot_info_t *info);
+static void cmd_zreload(const char *args, const boot_info_t *info);
 static void cmd_zmods(const char *args, const boot_info_t *info);
+static int zmodule_find_slot_by_name(const char *name);
 static void cmd_zrun(const char *args, const boot_info_t *info);
 static void cmd_zasm(const char *args, const boot_info_t *info);
 static void cmd_keymap(const char *args, const boot_info_t *info);
@@ -1203,6 +1209,7 @@ static const command_t commands[] = {
     { "clear",   "clear screen",              cmd_clear },
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
+    { "cpus",    "show CPU topology",         cmd_cpus },
     { "mkdrive", "create a virtual drive",    cmd_mkdrive },
     { "drives",  "list virtual drives",       cmd_drives },
     { "blk",     "list block devices",        cmd_blk },
@@ -1239,6 +1246,8 @@ static const command_t commands[] = {
     { "ztest",   "build and run a zbuild target", cmd_ztest },
     { "zinstall", "build and install a zbuild target", cmd_zinstall },
     { "zmod",    "load and run .zo module(s)",  cmd_zmod },
+    { "zunload", "unload a resident .zo module", cmd_zunload },
+    { "zreload", "unload then load a .zo module", cmd_zreload },
     { "zmods",   "list loaded .zo modules",     cmd_zmods },
     { "zrun",    "compile and run a .Z file",  cmd_zrun },
     { "zasm",    "dump generated asm for a .Z file", cmd_zasm },
@@ -1367,6 +1376,33 @@ static void cmd_info(const char *args, const boot_info_t *info) {
                      info->framebuffer_width,
                      info->framebuffer_height);
     console_kprintf1("Memory map bytes: %u\n", info->memory_map_size);
+    console_kprintf1("RSDP: 0x%x\n", info->rsdp);
+    console_kprintf1("CPU cores: %u\n", status_cpu_core_count());
+}
+
+static void cmd_cpus(const char *args, const boot_info_t *info) {
+    unsigned int count = status_cpu_core_count();
+
+    (void)args;
+    (void)info;
+
+    console_puts("CPU topology from ACPI MADT\n");
+    console_puts("local APIC base: 0x");
+    console_put_hex64(cpu_lapic_base());
+    console_puts("\ncores: ");
+    console_put_dec64(count);
+    console_puts("\n");
+
+    for (unsigned int i = 0; i < count; ++i) {
+        console_puts("  cpu ");
+        console_put_dec64(i);
+        console_puts(": local APIC id ");
+        console_put_dec64(cpu_lapic_id(i));
+        if (i == 0) {
+            console_puts(" (bootstrap)");
+        }
+        console_puts("\n");
+    }
 }
 
 static void cmd_mkdrive(const char *args, const boot_info_t *info) {
@@ -2560,6 +2596,19 @@ int shell_api_list_dir(const char *path) {
     return lainfs_list_dir((char)('A' + drive), dir);
 }
 
+int shell_api_chdir(const char *path) {
+    int drive = active_drive();
+    uint32_t dir = LAINFS_ROOT_DIR;
+
+    if (drive < 0 || path == 0 ||
+        resolve_dir_path((char)('A' + drive), cwd_dirs[drive], path, &dir) != 0) {
+        return -1;
+    }
+
+    cwd_dirs[drive] = dir;
+    return 0;
+}
+
 int shell_api_dir_count(const char *path) {
     int drive = active_drive();
     uint32_t dir = LAINFS_ROOT_DIR;
@@ -2765,6 +2814,48 @@ int shell_api_zinstall(const char *target) {
     }
 
     return 0;
+}
+
+int shell_api_zmod(const char *target) {
+    char command[64];
+    uint32_t before = shell_module_count();
+
+    if (active_drive() < 0 || copy_command_arg(target, command, sizeof(command)) != 0) {
+        return -1;
+    }
+
+    cmd_zmod(command, 0);
+    return shell_module_count() > before ? 0 : -1;
+}
+
+int shell_api_zunload(const char *target) {
+    char command[64];
+    uint32_t before = shell_module_count();
+
+    if (copy_command_arg(target, command, sizeof(command)) != 0) {
+        return -1;
+    }
+
+    cmd_zunload(command, 0);
+    return shell_module_count() < before ? 0 : -1;
+}
+
+int shell_api_zreload(const char *target) {
+    char command[64];
+    uint32_t before;
+    int had_old;
+
+    if (active_drive() < 0 || copy_command_arg(target, command, sizeof(command)) != 0) {
+        return -1;
+    }
+
+    before = shell_module_count();
+    had_old = zmodule_find_slot_by_name(command) >= 0;
+    cmd_zreload(command, 0);
+    if (had_old) {
+        return shell_module_count() == before ? 0 : -1;
+    }
+    return shell_module_count() > before ? 0 : -1;
 }
 
 static void cmd_keymap(const char *args, const boot_info_t *info) {
@@ -4590,8 +4681,18 @@ static int zmodule_collect_exports(zobject_resolved_symbol_t *symbols,
 
 void shell_modules_tick(void) {
     unsigned long long now = timer_ticks();
+    unsigned int hz = timer_frequency();
+    unsigned long long interval;
 
-    if (now == zmodule_last_tick) {
+    if (hz == 0u) {
+        hz = 100u;
+    }
+    interval = hz / ZMODULE_TICK_HZ;
+    if (interval == 0ull) {
+        interval = 1ull;
+    }
+
+    if (now - zmodule_last_tick < interval) {
         return;
     }
     zmodule_last_tick = now;
@@ -4658,6 +4759,100 @@ int shell_module_tick(uint32_t index) {
     }
 
     return -1;
+}
+
+static uint32_t zmodule_name_len(const char *name) {
+    uint32_t len = 0;
+
+    while (name != 0 && name[len] != '\0') {
+        ++len;
+    }
+
+    return len;
+}
+
+static int zmodule_name_has_zo_suffix(const char *name) {
+    uint32_t len = zmodule_name_len(name);
+
+    return len > 3u &&
+           name[len - 3u] == '.' &&
+           name[len - 2u] == 'z' &&
+           name[len - 1u] == 'o';
+}
+
+static int zmodule_name_matches(const char *loaded_name, const char *query) {
+    uint32_t loaded_len;
+    uint32_t query_len;
+
+    if (loaded_name == 0 || query == 0 || *query == '\0') {
+        return 0;
+    }
+    if (streq(loaded_name, query)) {
+        return 1;
+    }
+
+    loaded_len = zmodule_name_len(loaded_name);
+    query_len = zmodule_name_len(query);
+
+    if (zmodule_name_has_zo_suffix(loaded_name) &&
+        loaded_len == query_len + 3u) {
+        for (uint32_t i = 0; i < query_len; ++i) {
+            if (loaded_name[i] != query[i]) {
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    if (zmodule_name_has_zo_suffix(query) &&
+        query_len == loaded_len + 3u) {
+        for (uint32_t i = 0; i < loaded_len; ++i) {
+            if (loaded_name[i] != query[i]) {
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
+static int zmodule_find_slot_by_name(const char *name) {
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (zmodule_slots[i].loaded && zmodule_name_matches(zmodule_slots[i].name, name)) {
+            return (int)i;
+        }
+    }
+
+    return -1;
+}
+
+static void zmodule_call_unload_hook(zmodule_slot_t *slot) {
+    if (slot == 0 || !slot->loaded) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < slot->export_count; ++i) {
+        if (streq(slot->exports[i].name, "zmodule_unload")) {
+            ((zmodule_unload_t)(uintptr_t)slot->exports[i].value)();
+            return;
+        }
+    }
+}
+
+static void zmodule_clear_slot(uint32_t slot_index) {
+    if (slot_index >= ZMODULE_MAX_MODULES || !zmodule_slots[slot_index].loaded) {
+        return;
+    }
+
+    zmodule_call_unload_hook(&zmodule_slots[slot_index]);
+    zero_memory(zmodule_slots[slot_index].image, ZMODULE_IMAGE_SIZE);
+    zero_memory(zmodule_slots[slot_index].exports, sizeof(zmodule_slots[slot_index].exports));
+    zmodule_slots[slot_index].loaded = 0;
+    zmodule_slots[slot_index].name[0] = '\0';
+    zmodule_slots[slot_index].image_size = 0;
+    zmodule_slots[slot_index].object_count = 0;
+    zmodule_slots[slot_index].export_count = 0;
 }
 
 static void cmd_zmod(const char *args, const boot_info_t *info) {
@@ -4828,6 +5023,66 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
     ((exec_program_t)(uintptr_t)zmodule_slots[slot_index].image)(&api);
 
     console_puts("\nmodule resident\n");
+}
+
+static void cmd_zunload(const char *args, const boot_info_t *info) {
+    char *mutable_args = (char *)args;
+    char *name = 0;
+    char *extra = 0;
+    int slot_index;
+
+    (void)info;
+
+    split_first_arg(mutable_args, &name, &extra);
+    if (*name == '\0' || *extra != '\0') {
+        console_puts("usage: zunload module\n");
+        return;
+    }
+
+    slot_index = zmodule_find_slot_by_name(name);
+    if (slot_index < 0) {
+        console_puts("zunload failed: module not resident: ");
+        console_puts(name);
+        console_puts("\n");
+        return;
+    }
+
+    zmodule_clear_slot((uint32_t)slot_index);
+    console_puts("zunload: unloaded ");
+    console_puts(name);
+    console_puts("\n");
+}
+
+static void cmd_zreload(const char *args, const boot_info_t *info) {
+    char command[64];
+    char *mutable_command = command;
+    char *name = 0;
+    char *extra = 0;
+
+    (void)info;
+
+    if (copy_command_arg(args, command, sizeof(command)) != 0) {
+        console_puts("usage: zreload module\n");
+        return;
+    }
+
+    split_first_arg(mutable_command, &name, &extra);
+    if (*name == '\0' || *extra != '\0') {
+        console_puts("usage: zreload module\n");
+        return;
+    }
+
+    {
+        int slot_index = zmodule_find_slot_by_name(name);
+        if (slot_index >= 0) {
+            zmodule_clear_slot((uint32_t)slot_index);
+            console_puts("zreload: unloaded old ");
+            console_puts(name);
+            console_puts("\n");
+        }
+    }
+
+    cmd_zmod(name, 0);
 }
 
 static void cmd_zmods(const char *args, const boot_info_t *info) {

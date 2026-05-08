@@ -1,1 +1,1 @@
-qemu-system-x86_64.exe -accel whpx -m 256M -vga std -drive if=pflash,format=raw,readonly=on,file="OVMF_CODE.fd" -drive if=pflash,format=raw,file=./OVMF_VARS.fd -cdrom build/boot.iso -drive format=raw,file="build\data.img",if=ide,index=1
+qemu-system-x86_64.exe -accel whpx -m 256M -smp 4 -vga std -drive if=pflash,format=raw,readonly=on,file="OVMF_CODE.fd" -drive if=pflash,format=raw,file=./OVMF_VARS.fd -cdrom build/boot.iso -drive format=raw,file="build\data.img",if=ide,index=1

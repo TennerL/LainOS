@@ -138,6 +138,11 @@ export void zmodule_tick(void) {
     mouse_module_seen = 1;
 }
 
+export void zmodule_unload(void) {
+    mouse_module_enabled = 0;
+    restore_pointer();
+}
+
 mouse_module_enabled = 1;
 mouse_module_seen = 0;
 mouse_module_drawn = 0;

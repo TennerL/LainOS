@@ -60,6 +60,7 @@ export void zmodule_tick(void) {
     uint32_t mem_w;
     uint32_t cpu_w;
     uint64_t now;
+    uint32_t width;
 
     if (dash_enabled == 0) {
         return;
@@ -74,6 +75,11 @@ export void zmodule_tick(void) {
     total = mem_total_kb();
     used = mem_used_kb();
     cpu = cpu_usage(0);
+    width = gfx_width();
+
+    if (width > 80) {
+        dash_w = width - 64;
+    }
 
     if (total != 0) {
         mem_w = (used * dash_w) / total;
@@ -94,6 +100,12 @@ export void zmodule_tick(void) {
     //clear_text_field(8, 5, 5);
     //put_dec_at_screen(8, 5, cpu);
     //put_char_at_screen(11, 5, 37);
+}
+
+export void zmodule_unload(void) {
+    dash_enabled = 0;
+    set_margin(0, 0);
+    gfx_fill_rect(0, 0, gfx_width(), dash_h, 0x000000);
 }
 
 dash_enabled = 0;
