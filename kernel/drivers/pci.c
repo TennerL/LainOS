@@ -7,6 +7,10 @@ static void outl(uint16_t port, uint32_t value) {
     __asm__ __volatile__("outl %0, %1" : : "a"(value), "Nd"(port));
 }
 
+static void outw(uint16_t port, uint16_t value) {
+    __asm__ __volatile__("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
 static uint32_t inl(uint16_t port) {
     uint32_t value;
     __asm__ __volatile__("inl %1, %0" : "=a"(value) : "Nd"(port));
@@ -39,6 +43,11 @@ uint8_t pci_read_config8(uint8_t bus, uint8_t device, uint8_t function, uint8_t 
 void pci_write_config32(uint8_t bus, uint8_t device, uint8_t function, uint8_t offset, uint32_t value) {
     outl(PCI_CONFIG_ADDRESS, pci_address(bus, device, function, offset));
     outl(PCI_CONFIG_DATA, value);
+}
+
+void pci_write_config16(uint8_t bus, uint8_t device, uint8_t function, uint8_t offset, uint16_t value) {
+    outl(PCI_CONFIG_ADDRESS, pci_address(bus, device, function, offset));
+    outw((uint16_t)(PCI_CONFIG_DATA + (offset & 2u)), value);
 }
 
 void pci_scan(pci_visit_t visitor, void *ctx) {

@@ -328,6 +328,14 @@ blk
 part
 ```
 
+Boot-time USB probing is intentionally conservative on real hardware: `usb`
+lists PCI host controllers, not attached devices. `usb scan 0` reads xHCI port
+connect bits without resetting the controller. `usb init 0` only probes xHCI
+capabilities. `usb handoff 0` requests xHCI BIOS/OS ownership handoff.
+`usb start 0` resets/starts the xHCI controller without resetting ports.
+`usb enum 0` runs the experimental port reset/device enumeration path for
+controller index 0.
+
 If AHCI works, the data disk should appear as `sd0` or `sd1`. Mount whichever
 partition appears in `part`, for example:
 
@@ -401,7 +409,10 @@ The kernel console has a tiny command shell:
 - `mount C: rd0p1` - mount a partition at a drive letter
 - `mounts` - list mounted filesystems
 - `ahci` - show detected AHCI controllers and disks
-- `usb` - show detected USB host controllers
+- `usb` - show detected USB host controllers; `usb scan N` reads xHCI port
+  connect state; `usb init N` probes xHCI capabilities; `usb handoff N`
+  requests BIOS/OS handoff; `usb start N` starts xHCI without port enumeration;
+  `usb enum N` manually starts experimental device enumeration for controller `N`
 - `desktop` - enter the framebuffer desktop UI; press `Esc`/`Ctrl+Q` or hold
   left+right mouse buttons to return. A real Terminal window opens on the
   desktop and runs shell commands directly; drag its title bar to move it,
@@ -698,6 +709,7 @@ Supported `.Z` subset:
   - `print_hex(expr);`
   - `put_pixel(x, y, color);`
   - `gfx_width()`, `gfx_height()`, `gfx_pitch()`, `gfx_format()`
+  - `gfx_viewport_active()` to detect a desktop module window viewport
   - `gfx_fill_rect(x, y, w, h, color);`
   - `gfx_draw_rect(x, y, w, h, color);`
   - `gfx_draw_line(x0, y0, x1, y1, color);`
@@ -864,11 +876,30 @@ zmod hwdash_module.zo
 zmods
 ```
 
-In desktop mode, the native `.Z` editor has Save, Build, Inst, and Load buttons.
-Build derives the target from the open `.Z` or `.zbuild` filename and runs
-`zbuild target`; Inst runs `zinstall target`; Load runs `zinstall target`
-followed by `zreload target`, making the edit-build-load loop usable without
-leaving the desktop.
+`examples/taskmgr_module.Z` is a resident task-manager-style module. It draws
+only while the desktop Modules window has opened it inside a viewport, so it
+behaves like a windowed app instead of a global screen overlay:
+
+```text
+zbuild taskmgr_module
+zmod taskmgr_module.zo
+```
+
+The example `autoexec` preloads it, which makes it available from the desktop
+Modules list and Start menu right after boot.
+
+In desktop mode, the native `.Z` editor has Save, Build, Inst, Load, and Log
+buttons plus a small output pane. Build derives the target from the open `.Z` or
+`.zbuild` filename and runs `zbuild target`; Inst runs `zinstall target`; Load
+runs `zinstall target` followed by `zreload target`; Log opens
+`target.buildlog`, making the edit-build-load loop usable without leaving the
+desktop.
+The Files window is project-aware too: source, manifest, object, binary, and log
+files are badged as `SRC`, `BUILD`, `OBJ`, `BIN`, and `LOG`. Selecting a source
+or manifest offers Build/Inst/Load actions, selecting a `.zo` offers Load, and
+selecting a `.bin` offers Run.
+The editor text area now supports mouse cursor placement, and its scrollbar can
+be dragged to move through larger files without repainting the whole desktop.
 
 The remaining ABI milestones are real nonzero `.bss` emission from `.Z`,
 dependency-aware unload hooks, and enough relocation/runtime surface for

@@ -4,6 +4,7 @@
 #include "keyboard.h"
 #include "lainfs.h"
 #include "mouse.h"
+#include "usb.h"
 
 #define BROWSER_MAX_ENTRIES 512u
 #define BROWSER_NAME_SIZE 32u
@@ -648,6 +649,7 @@ int browser_run(char left_drive,
 
     int last_buttons = mouse_buttons();
     for (;;) {
+        usb_poll();
         key_event_t key;
         int changed = 0;
 

@@ -17,6 +17,8 @@ EFI_DIR := $(ISO_DIR)/EFI/BOOT
 ISO_STAGING_DIR := build/iso-root
 ISO_BOOT_IMG := efiboot.img
 ISO_STARTUP_NSH := build/startup.nsh
+PXE_DIR := build/pxe
+PXE_BOOTLOADER := BOOTX64.EFI
 BUILD_VERSION_H := build/version.h
 RAMDISK_SEED_H := build/ramdisk_seed.h
 RAMDISK_SEED_FILES := $(shell find examples -type f | sort)
@@ -55,6 +57,7 @@ KERNEL_C_SOURCES := \
 	kernel/core/kernel_exports.c \
 	kernel/core/timer.c \
 	kernel/core/cpu.c \
+	kernel/core/power.c \
 	kernel/drivers/graphics.c \
 	kernel/drivers/console.c \
 	kernel/drivers/keyboard.c \
@@ -109,6 +112,22 @@ build/bootloader.so: build/bootloader/main.o
 
 build/$(BOOTLOADER): build/bootloader.so
 	$(OBJCOPY) $(OBJCOPY_EFI_FLAGS) $< $@
+
+build/kernel_elf.o: build/$(KERNEL_ELF)
+	$(LD) -r -b binary -o $@ $<
+
+build/bootloader-pxe/main.o: bootloader/main.c build/$(KERNEL_ELF) | build
+	$(MKDIR_P) build/bootloader-pxe
+	$(CC) $(CFLAGS) -DEMBED_KERNEL -c bootloader/main.c -o $@
+
+build/bootloader-pxe.so: build/bootloader-pxe/main.o build/kernel_elf.o
+	$(LD) $(LDFLAGS_EFI) -o $@ build/bootloader-pxe/main.o build/kernel_elf.o $(LDLIBS_EFI)
+
+build/pxe/$(PXE_BOOTLOADER): build/bootloader-pxe.so
+	$(MKDIR_P) $(PXE_DIR)
+	$(OBJCOPY) $(OBJCOPY_EFI_FLAGS) $< $@
+
+pxe: build/pxe/$(PXE_BOOTLOADER)
 
 build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED_H) | build
 	$(MKDIR_P) $(@D)
@@ -203,7 +222,8 @@ build/$(ISO_IMG): image $(ISO_STARTUP_NSH) | build
 	cp $(ISO_STARTUP_NSH) $(ISO_STAGING_DIR)/startup.nsh
 	if command -v $(XORRISO) >/dev/null 2>&1; then \
 		$(XORRISO) -as mkisofs -R -J -V LAINOS \
-			-eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
+			-eltorito-platform efi -eltorito-alt-boot -e $(ISO_BOOT_IMG) -no-emul-boot \
+			-isohybrid-gpt-basdat \
 			-o $@ $(ISO_STAGING_DIR); \
 	elif command -v $(MKISOFS) >/dev/null 2>&1; then \
 		$(MKISOFS) -R -J -V LAINOS \
@@ -296,4 +316,4 @@ print-efi-config:
 	@echo EFI_LDS=$(EFI_LDS)
 	@echo EFI_ARCH=$(EFI_ARCH)
 
-.PHONY: all build image run run-ahci run-usb run-bootdisk run-bootdisk-gpt run-iso reseed-data clean inspect-efi print-efi-config FORCE
+.PHONY: all build image pxe run run-ahci run-usb run-bootdisk run-bootdisk-gpt run-iso reseed-data clean inspect-efi print-efi-config FORCE

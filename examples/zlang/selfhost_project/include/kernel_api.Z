@@ -20,6 +20,7 @@ extern uint32_t gfx_width(void);
 extern uint32_t gfx_height(void);
 extern uint32_t gfx_pitch(void);
 extern uint32_t gfx_format(void);
+extern uint32_t gfx_viewport_active(void);
 extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void gfx_draw_line(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t color);

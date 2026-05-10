@@ -44,6 +44,17 @@ typedef struct {
     UINTN size;
 } kernel_file_t;
 
+typedef struct {
+    void *entry_point;
+    UINT64 kernel_base;
+    UINT64 kernel_end;
+} elf_load_plan_t;
+
+#ifdef EMBED_KERNEL
+extern UINT8 _binary_build_kernel_elf_start[];
+extern UINT8 _binary_build_kernel_elf_end[];
+#endif
+
 typedef struct __attribute__((packed)) {
     UINT32 magic0;
     UINT32 magic1;
@@ -208,25 +219,30 @@ static EFI_STATUS read_kernel_file(EFI_SYSTEM_TABLE *SystemTable, kernel_file_t 
     EFI_STATUS status;
     void *file_buffer = NULL;
     UINTN file_size = kernel->size;
+    UINTN pages = EFI_SIZE_TO_PAGES(file_size);
+    EFI_PHYSICAL_ADDRESS file_buffer_addr = 0xFFFFFFFFULL;
 
-    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
-        EfiLoaderData, file_size, &file_buffer);
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePages, 4,
+        AllocateMaxAddress, EfiLoaderData, pages, &file_buffer_addr);
     if (EFI_ERROR(status)) return status;
+
+    file_buffer = (void*)(UINTN)file_buffer_addr;
 
     status = uefi_call_wrapper(kernel->handle->SetPosition, 2, kernel->handle, 0);
     if (EFI_ERROR(status)) return status;
 
     status = uefi_call_wrapper(kernel->handle->Read, 3, kernel->handle, &file_size, file_buffer);
     if (EFI_ERROR(status)) return status;
+    if (file_size != kernel->size) return EFI_LOAD_ERROR;
 
     *buffer = file_buffer;
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS load_elf_kernel(EFI_SYSTEM_TABLE *SystemTable, void *file_buffer, UINTN file_size, void **entry_point, UINT64 *kernel_base, UINT64 *kernel_end) {
-    if (file_size < sizeof(Elf64_Ehdr)) return EFI_LOAD_ERROR;
-
-    Elf64_Ehdr *ehdr = (Elf64_Ehdr*)file_buffer;
+static EFI_STATUS plan_elf_kernel_from_headers(const Elf64_Ehdr *ehdr,
+                                               const Elf64_Phdr *phdrs,
+                                               UINTN file_size,
+                                               elf_load_plan_t *plan) {
     if (ehdr->e_ident[EI_MAG0] != ELFMAG0 ||
         ehdr->e_ident[EI_MAG1] != ELFMAG1 ||
         ehdr->e_ident[EI_MAG2] != ELFMAG2 ||
@@ -242,14 +258,14 @@ static EFI_STATUS load_elf_kernel(EFI_SYSTEM_TABLE *SystemTable, void *file_buff
         return EFI_LOAD_ERROR;
     }
 
-    Elf64_Phdr *phdrs = (Elf64_Phdr*)((UINT8*)file_buffer + ehdr->e_phoff);
     UINT64 min_addr = ~0ULL;
     UINT64 max_addr = 0;
 
     for (UINT16 i = 0; i < ehdr->e_phnum; ++i) {
-        Elf64_Phdr *ph = &phdrs[i];
+        const Elf64_Phdr *ph = &phdrs[i];
         if (ph->p_type != PT_LOAD) continue;
         if (ph->p_memsz == 0) continue;
+        if (ph->p_offset + ph->p_filesz > file_size) return EFI_LOAD_ERROR;
 
         if (ph->p_paddr < min_addr) min_addr = ph->p_paddr;
         if (ph->p_paddr + ph->p_memsz > max_addr) max_addr = ph->p_paddr + ph->p_memsz;
@@ -259,15 +275,110 @@ static EFI_STATUS load_elf_kernel(EFI_SYSTEM_TABLE *SystemTable, void *file_buff
         return EFI_LOAD_ERROR;
     }
 
-    UINT64 alloc_base = min_addr & ~0xFFFULL;
-    UINT64 alloc_end = (max_addr + 0xFFFULL) & ~0xFFFULL;
-    EFI_PHYSICAL_ADDRESS load_addr = alloc_base;
-    UINTN pages = EFI_SIZE_TO_PAGES(alloc_end - alloc_base);
-    EFI_STATUS status = uefi_call_wrapper(SystemTable->BootServices->AllocatePages, 4,
-        AllocateAddress, EfiLoaderData, pages, &load_addr);
+    plan->entry_point = (void*)(UINTN)ehdr->e_entry;
+    plan->kernel_base = min_addr;
+    plan->kernel_end = max_addr;
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS plan_elf_kernel_from_buffer(void *file_buffer, UINTN file_size, elf_load_plan_t *plan) {
+    if (file_size < sizeof(Elf64_Ehdr)) return EFI_LOAD_ERROR;
+
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr*)file_buffer;
+    if (ehdr->e_phoff > file_size ||
+        ehdr->e_phentsize != sizeof(Elf64_Phdr) ||
+        ehdr->e_phnum > (file_size - ehdr->e_phoff) / sizeof(Elf64_Phdr)) {
+        return EFI_LOAD_ERROR;
+    }
+
+    return plan_elf_kernel_from_headers(ehdr,
+                                        (Elf64_Phdr*)((UINT8*)file_buffer + ehdr->e_phoff),
+                                        file_size,
+                                        plan);
+}
+
+static EFI_STATUS plan_elf_kernel_from_file(EFI_SYSTEM_TABLE *SystemTable, kernel_file_t *kernel, elf_load_plan_t *plan) {
+    EFI_STATUS status;
+    Elf64_Ehdr ehdr;
+    Elf64_Phdr *phdrs = NULL;
+    UINTN read_size = sizeof(ehdr);
+    UINTN phdr_size;
+
+    if (kernel->size < sizeof(ehdr)) return EFI_LOAD_ERROR;
+
+    status = uefi_call_wrapper(kernel->handle->SetPosition, 2, kernel->handle, 0);
     if (EFI_ERROR(status)) return status;
 
-    for (UINT64 p = alloc_base; p < alloc_end; ++p) {
+    status = uefi_call_wrapper(kernel->handle->Read, 3, kernel->handle, &read_size, &ehdr);
+    if (EFI_ERROR(status)) return status;
+    if (read_size != sizeof(ehdr)) return EFI_LOAD_ERROR;
+
+    if (ehdr.e_phoff > kernel->size ||
+        ehdr.e_phentsize != sizeof(Elf64_Phdr) ||
+        ehdr.e_phnum == 0 ||
+        ehdr.e_phnum > (kernel->size - ehdr.e_phoff) / sizeof(Elf64_Phdr)) {
+        return EFI_LOAD_ERROR;
+    }
+
+    phdr_size = (UINTN)ehdr.e_phnum * sizeof(Elf64_Phdr);
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+        EfiLoaderData, phdr_size, (void**)&phdrs);
+    if (EFI_ERROR(status)) return status;
+
+    status = uefi_call_wrapper(kernel->handle->SetPosition, 2, kernel->handle, ehdr.e_phoff);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, phdrs);
+        return status;
+    }
+
+    read_size = phdr_size;
+    status = uefi_call_wrapper(kernel->handle->Read, 3, kernel->handle, &read_size, phdrs);
+    if (EFI_ERROR(status) || read_size != phdr_size) {
+        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, phdrs);
+        return EFI_ERROR(status) ? status : EFI_LOAD_ERROR;
+    }
+
+    status = plan_elf_kernel_from_headers(&ehdr, phdrs, kernel->size, plan);
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, phdrs);
+    return status;
+}
+
+static EFI_STATUS reserve_kernel_pages(EFI_SYSTEM_TABLE *SystemTable, const elf_load_plan_t *plan) {
+    UINT64 alloc_base = plan->kernel_base & ~0xFFFULL;
+    UINT64 alloc_end = (plan->kernel_end + 0xFFFULL) & ~0xFFFULL;
+    EFI_PHYSICAL_ADDRESS load_addr = alloc_base;
+    UINTN pages = EFI_SIZE_TO_PAGES(alloc_end - alloc_base);
+    EFI_STATUS status;
+
+    status = uefi_call_wrapper(SystemTable->BootServices->AllocatePages, 4,
+        AllocateAddress, EfiLoaderData, pages, &load_addr);
+    if (EFI_ERROR(status)) {
+        Print(L"Failed to reserve kernel pages: base=0x%lx end=0x%lx pages=%lu: %r\r\n",
+              alloc_base,
+              alloc_end,
+              pages,
+              status);
+    }
+
+    return status;
+}
+
+static EFI_STATUS load_elf_kernel(void *file_buffer, UINTN file_size, const elf_load_plan_t *plan) {
+    EFI_STATUS status;
+    elf_load_plan_t check_plan;
+
+    status = plan_elf_kernel_from_buffer(file_buffer, file_size, &check_plan);
+    if (EFI_ERROR(status)) return status;
+    if (check_plan.entry_point != plan->entry_point ||
+        check_plan.kernel_base != plan->kernel_base ||
+        check_plan.kernel_end != plan->kernel_end) {
+        return EFI_LOAD_ERROR;
+    }
+
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr*)file_buffer;
+    Elf64_Phdr *phdrs = (Elf64_Phdr*)((UINT8*)file_buffer + ehdr->e_phoff);
+
+    for (UINT64 p = plan->kernel_base & ~0xFFFULL; p < ((plan->kernel_end + 0xFFFULL) & ~0xFFFULL); ++p) {
         ((volatile UINT8*)p)[0] = 0;
     }
 
@@ -282,9 +393,6 @@ static EFI_STATUS load_elf_kernel(EFI_SYSTEM_TABLE *SystemTable, void *file_buff
         }
     }
 
-    *entry_point = (void*)(UINTN)ehdr->e_entry;
-    *kernel_base = min_addr;
-    *kernel_end = max_addr;
     return EFI_SUCCESS;
 }
 
@@ -620,8 +728,11 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
 
     kernel_file_t kernel_file = {0};
     void *kernel_file_buffer = NULL;
+    UINTN kernel_file_size = 0;
     void *kernel_entry_addr = NULL;
+    elf_load_plan_t kernel_plan = {0};
     UINT64 kernel_end = 0;
+    UINT64 kernel_base = 0;
 
     status = load_optional_driver_from_boot_volume(image, SystemTable, NTFS_DRIVER_PATH);
     if (EFI_ERROR(status)) {
@@ -637,22 +748,54 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
 
     status = open_kernel(image, SystemTable, &kernel_file);
     if (EFI_ERROR(status)) {
+#ifdef EMBED_KERNEL
+        kernel_file_buffer = _binary_build_kernel_elf_start;
+        kernel_file_size = (UINTN)(_binary_build_kernel_elf_end - _binary_build_kernel_elf_start);
+        Print(L"Using embedded kernel.elf (%lu bytes); filesystem open failed: %r\r\n",
+              kernel_file_size,
+              status);
+#else
         Print(L"Failed to open kernel.elf: %r\r\n", status);
         return status;
+#endif
+    } else {
+        kernel_file_size = kernel_file.size;
+        status = plan_elf_kernel_from_file(SystemTable, &kernel_file, &kernel_plan);
+        if (EFI_ERROR(status)) {
+            Print(L"Failed to read ELF kernel headers: %r\r\n", status);
+            return status;
+        }
+        status = reserve_kernel_pages(SystemTable, &kernel_plan);
+        if (EFI_ERROR(status)) {
+            return status;
+        }
+        status = read_kernel_file(SystemTable, &kernel_file, &kernel_file_buffer);
+        if (EFI_ERROR(status)) {
+            Print(L"Failed to read kernel.elf: %r\r\n", status);
+            return status;
+        }
     }
 
-    status = read_kernel_file(SystemTable, &kernel_file, &kernel_file_buffer);
-    if (EFI_ERROR(status)) {
-        Print(L"Failed to read kernel.elf: %r\r\n", status);
-        return status;
+    if (kernel_plan.entry_point == NULL) {
+        status = plan_elf_kernel_from_buffer(kernel_file_buffer, kernel_file_size, &kernel_plan);
+        if (EFI_ERROR(status)) {
+            Print(L"Failed to read ELF kernel headers: %r\r\n", status);
+            return status;
+        }
+        status = reserve_kernel_pages(SystemTable, &kernel_plan);
+        if (EFI_ERROR(status)) {
+            return status;
+        }
     }
 
-    UINT64 kernel_base = 0;
-    status = load_elf_kernel(SystemTable, kernel_file_buffer, kernel_file.size, &kernel_entry_addr, &kernel_base, &kernel_end);
+    status = load_elf_kernel(kernel_file_buffer, kernel_file_size, &kernel_plan);
     if (EFI_ERROR(status)) {
         Print(L"Failed to load ELF kernel: %r\r\n", status);
         return status;
     }
+    kernel_entry_addr = kernel_plan.entry_point;
+    kernel_base = kernel_plan.kernel_base;
+    kernel_end = kernel_plan.kernel_end;
 
     status = uefi_call_wrapper(bs->AllocatePages, 4, AllocateAnyPages, EfiLoaderData,
         EFI_SIZE_TO_PAGES(sizeof(boot_info_t)), &bootinfo_addr);

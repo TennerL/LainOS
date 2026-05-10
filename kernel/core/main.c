@@ -45,6 +45,12 @@ typedef struct {
     uint64_t attribute;
 } efi_memory_descriptor_t;
 
+static void boot_stage(const char *name) {
+    console_puts("[boot] ");
+    console_puts(name);
+    console_puts("\n");
+}
+
 static void memory_totals_kb(unsigned long long *total_kb, unsigned long long *free_kb) {
     unsigned long long total = 0;
     unsigned long long free = 0;
@@ -268,13 +274,23 @@ void kernel_main(boot_info_t *info) {
                  info->framebuffer_pixels_per_scanline);
 
     console_clear();
+    console_cursor_enable(0);
+    boot_stage("console ready");
+    boot_stage("cpu tables");
     cpu_init_tables();
+    boot_stage("cpu topology");
     cpu_detect_topology(info);
+    boot_stage("interrupt vectors");
     interrupts_init();
+    boot_stage("timer");
     timer_init();
+    boot_stage("keyboard");
     keyboard_init();
+    boot_stage("mouse");
     mouse_init();
+    boot_stage("storage");
     storage_init();
+    boot_stage("usb");
     usb_init();
 
     console_puts("Lain kernel says hi from C :3\n");

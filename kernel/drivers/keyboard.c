@@ -3,6 +3,7 @@
 #include "lainfs.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "usb.h"
 
 #define PS2_DATA_PORT 0x60
 #define PS2_STATUS_PORT 0x64
@@ -396,6 +397,7 @@ key_event_t keyboard_read_key(void) {
             console_cursor_tick();
             statusbar_update_if_due();
             shell_modules_tick();
+            usb_poll();
         }
 
         if (idle) {

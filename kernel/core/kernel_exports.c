@@ -31,6 +31,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("gfx_height", graphics_height),
     KERNEL_EXPORT("gfx_pitch", graphics_pitch),
     KERNEL_EXPORT("gfx_format", graphics_format),
+    KERNEL_EXPORT("gfx_viewport_active", graphics_viewport_active),
     KERNEL_EXPORT("gfx_get_pixel", graphics_get_pixel),
     KERNEL_EXPORT("gfx_fill_rect", graphics_fill_rect),
     KERNEL_EXPORT("gfx_draw_rect", graphics_draw_rect),

@@ -5,10 +5,12 @@ cp R:/examples/hwdash_module.Z hwdash_module.Z
 cp R:/examples/hwdash_module.zbuild hwdash_module.zbuild
 cp R:/examples/mouse_module.Z mouse_module.Z
 cp R:/examples/mouse_module.zbuild mouse_module.zbuild
+cp R:/examples/taskmgr_module.Z taskmgr_module.Z
+cp R:/examples/taskmgr_module.zbuild taskmgr_module.zbuild
 zinstall hwdash_module
 zmod hwdash_module.zo
+zinstall taskmgr_module
+zmod taskmgr_module.zo
 bgcolor 0x0035063E
 cd ..
-clear
 keymap de
-desktop

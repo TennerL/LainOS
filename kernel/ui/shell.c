@@ -1145,6 +1145,8 @@ static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
 static void cmd_cpus(const char *args, const boot_info_t *info);
+static void cmd_reboot(const char *args, const boot_info_t *info);
+static void cmd_poweroff(const char *args, const boot_info_t *info);
 static void cmd_mkdrive(const char *args, const boot_info_t *info);
 static void cmd_drives(const char *args, const boot_info_t *info);
 static void cmd_blk(const char *args, const boot_info_t *info);
@@ -1210,6 +1212,9 @@ static const command_t commands[] = {
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
     { "cpus",    "show CPU topology",         cmd_cpus },
+    { "reboot",  "restart the machine",       cmd_reboot },
+    { "poweroff", "power off the machine",     cmd_poweroff },
+    { "shutdown", "power off the machine",     cmd_poweroff },
     { "mkdrive", "create a virtual drive",    cmd_mkdrive },
     { "drives",  "list virtual drives",       cmd_drives },
     { "blk",     "list block devices",        cmd_blk },
@@ -1402,6 +1407,23 @@ static void cmd_cpus(const char *args, const boot_info_t *info) {
             console_puts(" (bootstrap)");
         }
         console_puts("\n");
+    }
+}
+
+static void cmd_reboot(const char *args, const boot_info_t *info) {
+    (void)args;
+    (void)info;
+
+    console_puts("rebooting...\n");
+    power_reboot();
+}
+
+static void cmd_poweroff(const char *args, const boot_info_t *info) {
+    (void)args;
+
+    console_puts("powering off...\n");
+    if (power_poweroff(info) != 0) {
+        console_puts("poweroff: ACPI S5 shutdown is not available\n");
     }
 }
 
@@ -2901,10 +2923,169 @@ static void cmd_desktop(const char *args, const boot_info_t *info) {
 }
 
 static void cmd_usb(const char *args, const boot_info_t *info) {
-    (void)args;
+    char *mutable_args = (char *)args;
+    char *command = 0;
+    char *index_text = 0;
+    char *extra = 0;
+    uint64_t index = 0;
+
     (void)info;
 
-    console_puts("USB controllers=");
+    split_first_arg(mutable_args, &command, &index_text);
+    if (*command != '\0') {
+        split_first_arg(index_text, &index_text, &extra);
+        if ((!streq(command, "init") &&
+             !streq(command, "handoff") &&
+             !streq(command, "halt") &&
+             !streq(command, "reset") &&
+             !streq(command, "rings") &&
+             !streq(command, "bm") &&
+             !streq(command, "nobm") &&
+             !streq(command, "run") &&
+             !streq(command, "poke") &&
+             !streq(command, "pokenodma") &&
+             !streq(command, "status") &&
+             !streq(command, "start") &&
+             !streq(command, "scan") &&
+             !streq(command, "enum")) ||
+            *index_text == '\0' ||
+            *extra != '\0' ||
+            parse_u64_arg(index_text, &index) != 0) {
+            console_puts("usage: usb [scan|init|handoff|halt|reset|rings|bm|nobm|poke|pokenodma|run|status|start|enum] index\n");
+            return;
+        }
+
+        if (streq(command, "scan")) {
+            console_puts("usb: scanning xHCI ports on controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_scan_ports((uint32_t)index) != 0) {
+                console_puts("usb: xHCI port scan failed\n");
+            }
+        } else if (streq(command, "init")) {
+            console_puts("usb: probing xHCI controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_init_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI probe failed\n");
+            } else {
+                console_puts("usb: xHCI probe ok\n");
+            }
+        } else if (streq(command, "handoff")) {
+            console_puts("usb: requesting xHCI BIOS handoff for controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_handoff_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI handoff failed\n");
+            } else {
+                console_puts("usb: xHCI handoff ok\n");
+            }
+        } else if (streq(command, "halt")) {
+            console_puts("usb: halting xHCI controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_halt_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI halt failed or timed out\n");
+            } else {
+                console_puts("usb: xHCI halt ok\n");
+            }
+        } else if (streq(command, "reset")) {
+            console_puts("usb: resetting xHCI controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_reset_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI reset failed or timed out\n");
+            } else {
+                console_puts("usb: xHCI reset ok\n");
+            }
+        } else if (streq(command, "rings")) {
+            console_puts("usb: setting up xHCI rings for controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_setup_rings((uint32_t)index) != 0) {
+                console_puts("usb: xHCI ring setup failed\n");
+            } else {
+                console_puts("usb: xHCI ring setup ok\n");
+            }
+        } else if (streq(command, "bm")) {
+            console_puts("usb: enabling xHCI bus mastering for controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_busmaster_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI bus mastering failed\n");
+            } else {
+                console_puts("usb: xHCI bus mastering ok\n");
+            }
+        } else if (streq(command, "nobm")) {
+            console_puts("usb: disabling xHCI bus mastering for controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_no_busmaster_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI bus mastering disable failed\n");
+            } else {
+                console_puts("usb: xHCI bus mastering disabled\n");
+            }
+        } else if (streq(command, "run")) {
+            console_puts("usb: setting xHCI run bit for controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_run_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI run failed or timed out\n");
+            } else {
+                console_puts("usb: xHCI run ok\n");
+            }
+        } else if (streq(command, "poke")) {
+            console_puts("usb: poking xHCI run bit for controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_poke_run_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI run poke failed\n");
+            } else {
+                console_puts("usb: xHCI run poke returned\n");
+            }
+        } else if (streq(command, "pokenodma")) {
+            console_puts("usb: poking xHCI run bit without bus mastering for controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_poke_no_dma_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI no-DMA run poke failed\n");
+            } else {
+                console_puts("usb: xHCI no-DMA run poke returned\n");
+            }
+        } else if (streq(command, "status")) {
+            uint32_t usbcmd = 0;
+            uint32_t usbsts = 0;
+            if (usb_xhci_status_controller((uint32_t)index, &usbcmd, &usbsts) != 0) {
+                console_puts("usb: xHCI status failed\n");
+            } else {
+                console_puts("usb: USBCMD=0x");
+                console_put_hex32(usbcmd);
+                console_puts(" USBSTS=0x");
+                console_put_hex32(usbsts);
+                console_puts("\n");
+            }
+        } else if (streq(command, "start")) {
+            console_puts("usb: starting xHCI controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_start_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI start failed or timed out\n");
+            } else {
+                console_puts("usb: xHCI start ok\n");
+            }
+        } else {
+            console_puts("usb: enumerating xHCI ports on controller ");
+            console_put_dec64(index);
+            console_puts("\n");
+            if (usb_xhci_enumerate_controller((uint32_t)index) != 0) {
+                console_puts("usb: xHCI enumeration failed or timed out\n");
+            } else {
+                console_puts("usb: xHCI enumeration returned\n");
+            }
+        }
+    }
+
+    console_puts("USB host controllers=");
     console_put_dec64(usb_controller_count());
     console_puts(" xhci=");
     console_put_dec64(usb_xhci_controller_count());
@@ -2942,6 +3123,14 @@ static void cmd_usb(const char *args, const boot_info_t *info) {
             console_put_dec64(ctrl->interrupter_count);
             console_puts(" ports=");
             console_put_dec64(ctrl->port_count);
+            console_puts(" scratch=");
+            console_put_dec64(ctrl->scratchpad_count);
+            console_puts(" page=");
+            console_put_dec64(ctrl->page_size);
+            console_puts(" hcs2=0x");
+            console_put_hex32(ctrl->hcsparams2);
+            console_puts(" hcc1=0x");
+            console_put_hex32(ctrl->hccparams1);
             console_puts(" init=");
             console_put_dec64(ctrl->initialized);
             console_puts(" run=");
@@ -2958,6 +3147,48 @@ static void cmd_usb(const char *args, const boot_info_t *info) {
             console_put_dec64(ctrl->descriptor_count);
             console_puts(" cc=");
             console_put_dec64(ctrl->last_completion_code);
+            console_puts(" mouse=");
+            console_put_dec64(ctrl->mouse_configured);
+            console_puts(" mslot=");
+            console_put_dec64(ctrl->mouse_slot);
+            console_puts(" mdci=");
+            console_put_dec64(ctrl->mouse_dci);
+            console_puts(" msize=");
+            console_put_dec64(ctrl->mouse_report_size);
+            console_puts(" mpending=");
+            console_put_dec64(ctrl->mouse_pending);
+            console_puts(" mreps=");
+            console_put_dec64(ctrl->mouse_report_count);
+            console_puts(" mcc=");
+            console_put_dec64(ctrl->mouse_last_completion_code);
+            console_puts(" mstage=");
+            console_put_dec64(ctrl->mouse_stage);
+            console_puts(" mif=");
+            console_put_dec64(ctrl->mouse_interface);
+            console_puts(" mep=0x");
+            console_put_hex32(ctrl->mouse_endpoint);
+            console_puts(" mint=");
+            console_put_dec64(ctrl->mouse_interval);
+            console_puts(" estage=");
+            console_put_dec64(ctrl->enum_stage);
+            console_puts(" eport=");
+            console_put_dec64(ctrl->enum_port);
+            console_puts(" eportsc=0x");
+            console_put_hex32(ctrl->enum_portsc);
+            console_puts(" espd=");
+            console_put_dec64(ctrl->enum_speed);
+            console_puts(" eslot=");
+            console_put_dec64(ctrl->enum_slot);
+            console_puts(" ecc=");
+            console_put_dec64(ctrl->enum_completion_code);
+            console_puts("\n    dma dcbaa=0x");
+            console_put_hex64(ctrl->dcbaa_phys);
+            console_puts(" cr=0x");
+            console_put_hex64(ctrl->command_ring_phys);
+            console_puts(" er=0x");
+            console_put_hex64(ctrl->event_ring_phys);
+            console_puts(" erst=0x");
+            console_put_hex64(ctrl->erst_phys);
         }
         console_puts("\n");
     }

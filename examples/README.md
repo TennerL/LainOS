@@ -42,9 +42,26 @@ zreload hwdash_module
 zmods
 ```
 
+Resident task manager module:
+
+```text
+zbuild taskmgr_module
+zmod taskmgr_module.zo
+```
+
+Unlike `hwdash_module`, the task manager only draws while it is opened from the
+desktop Modules window, so it behaves more like an app window than a desktop
+overlay. The default `autoexec` preloads it so it appears in the desktop module
+list immediately after boot.
+
 In the desktop editor, open `hwdash_module.Z` or `hwdash_module.zbuild`, edit it,
-then use Save, Build, Inst, or Load. Load saves the editor buffer, installs the
-module object, and reloads it as a resident module.
+then use Save, Build, Inst, Load, or Log. The output pane shows command output
+and build logs. Load saves the editor buffer, installs the module object, and
+reloads it as a resident module.
+The Files window also recognizes `.Z`, `.zbuild`, `.zo`, `.bin`, and log files
+and shows matching project actions when one is selected.
+Inside the desktop editor, click the text area to move the cursor or drag the
+scrollbar to move through the file.
 
 If a loaded module exports `zmodule_tick`, the kernel calls it while the shell is
 idle or waiting for keyboard input.

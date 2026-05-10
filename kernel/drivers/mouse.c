@@ -202,6 +202,21 @@ void mouse_handle_byte(uint8_t value) {
     packet_index = 0;
 }
 
+void mouse_apply_usb_report(uint8_t report_buttons, int dx, int dy) {
+    if (abs_int(dx) > MOUSE_MAX_DELTA || abs_int(dy) > MOUSE_MAX_DELTA) {
+        last_dx = 0;
+        last_dy = 0;
+        return;
+    }
+
+    buttons = report_buttons & 0x07u;
+    last_dx = dx;
+    last_dy = dy;
+    pos_x = clamp_coord(pos_x + dx, graphics_width());
+    pos_y = clamp_coord(pos_y + dy, graphics_height());
+    enabled = 1;
+}
+
 int mouse_init(void) {
     uint8_t config;
 

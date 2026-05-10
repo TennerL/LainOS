@@ -9,7 +9,7 @@
 #define PIT_COMMAND 0x43u
 #define PIT_CHANNEL0 0x40u
 #define PIT_BASE_HZ 1193182u
-#define TIMER_HZ 100u
+#define TIMER_HZ 250u
 
 static volatile uint64_t ticks;
 

@@ -10,6 +10,7 @@
 int mouse_init(void);
 void mouse_irq_handler(void);
 void mouse_handle_byte(uint8_t value);
+void mouse_apply_usb_report(uint8_t report_buttons, int dx, int dy);
 int mouse_enabled(void);
 int mouse_x(void);
 int mouse_y(void);

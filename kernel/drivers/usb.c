@@ -1,13 +1,23 @@
 #include "usb.h"
+#include "kernel.h"
+#include "mouse.h"
 #include "pci.h"
 
 #define USB_MAX_CONTROLLERS 8u
 #define USB_MAX_XHCI_SLOTS 32u
+#define USB_MAX_XHCI_SCRATCHPADS 128u
 #define XHCI_COMMAND_RING_TRBS 64u
 #define XHCI_EVENT_RING_TRBS 64u
 #define XHCI_TRANSFER_RING_TRBS 32u
 #define XHCI_CONTEXT_BYTES 64u
+#define XHCI_PAGE_SIZE 4096u
 #define USB_DEVICE_DESCRIPTOR_SIZE 18u
+#define USB_CONFIG_DESCRIPTOR_CAPACITY 1024u
+#define USB_MOUSE_REPORT_SIZE 8u
+#define USB_ENDPOINT_MAX_PACKET_MASK 0x07FFu
+#define USB_LATE_ENUM_INITIAL_DELAY_SECONDS 8u
+#define USB_LATE_ENUM_RETRY_SECONDS 10u
+#define USB_LATE_ENUM_MAX_ATTEMPTS 6u
 
 #define PCI_CLASS_SERIAL_BUS 0x0Cu
 #define PCI_SUBCLASS_USB 0x03u
@@ -19,6 +29,7 @@
 #define PCI_COMMAND_IO_SPACE 0x0001u
 #define PCI_COMMAND_MEMORY_SPACE 0x0002u
 #define PCI_COMMAND_BUS_MASTER 0x0004u
+#define PCI_COMMAND_INTERRUPT_DISABLE 0x0400u
 
 #define PCI_BAR_IO 0x00000001u
 #define PCI_BAR_MEM_TYPE_MASK 0x00000006u
@@ -26,33 +37,47 @@
 
 #define XHCI_USBCMD 0x00u
 #define XHCI_USBSTS 0x04u
+#define XHCI_PAGESIZE 0x08u
 #define XHCI_CRCR 0x18u
 #define XHCI_DCBAAP 0x30u
 #define XHCI_CONFIG 0x38u
 #define XHCI_PORT_REGS 0x400u
 #define XHCI_PORT_STRIDE 0x10u
+#define XHCI_HCCPARAMS1 0x10u
 
 #define XHCI_USBCMD_RUN 0x00000001u
 #define XHCI_USBCMD_RESET 0x00000002u
+#define XHCI_USBCMD_INTE 0x00000004u
 #define XHCI_USBSTS_HALTED 0x00000001u
+#define XHCI_USBSTS_HSE 0x00000004u
+#define XHCI_USBSTS_EINT 0x00000008u
+#define XHCI_USBSTS_PCD 0x00000010u
+#define XHCI_USBSTS_SRE 0x00000400u
 #define XHCI_USBSTS_CNR 0x00000800u
+#define XHCI_USBSTS_CLEAR_BITS (XHCI_USBSTS_HSE | XHCI_USBSTS_EINT | XHCI_USBSTS_PCD | XHCI_USBSTS_SRE)
 
 #define XHCI_PORTSC_CCS 0x00000001u
+#define XHCI_PORTSC_PED 0x00000002u
 #define XHCI_PORTSC_RESET 0x00000010u
 #define XHCI_PORTSC_POWER 0x00000200u
 #define XHCI_PORTSC_CHANGE_BITS 0x00FE0000u
+#define XHCI_PORTSC_WRITE_1_CLEAR_BITS (XHCI_PORTSC_PED | XHCI_PORTSC_CHANGE_BITS)
 
 #define XHCI_INTR_IMAN 0x00u
 #define XHCI_INTR_ERSTSZ 0x08u
 #define XHCI_INTR_ERSTBA 0x10u
 #define XHCI_INTR_ERDP 0x18u
+#define XHCI_INTR_IMAN_IP 0x00000001u
+#define XHCI_INTR_IMAN_IE 0x00000002u
 #define XHCI_ERDP_EHB 0x00000008ull
 
 #define XHCI_TRB_CYCLE 0x00000001u
 #define XHCI_TRB_TYPE_SHIFT 10u
+#define XHCI_TRB_TYPE_NORMAL 1u
 #define XHCI_TRB_TYPE_LINK 6u
 #define XHCI_TRB_TYPE_ENABLE_SLOT 9u
 #define XHCI_TRB_TYPE_ADDRESS_DEVICE 11u
+#define XHCI_TRB_TYPE_CONFIGURE_ENDPOINT 12u
 #define XHCI_TRB_TYPE_TRANSFER_EVENT 32u
 #define XHCI_TRB_TYPE_COMMAND_COMPLETION 33u
 #define XHCI_TRB_TYPE_SETUP_STAGE 2u
@@ -60,9 +85,16 @@
 #define XHCI_TRB_TYPE_STATUS_STAGE 4u
 #define XHCI_TRB_LINK_TOGGLE_CYCLE 0x00000002u
 #define XHCI_TRB_COMPLETION_SUCCESS 1u
+#define XHCI_TRB_COMPLETION_SHORT_PACKET 13u
+#define XHCI_TRB_TRANSFER_LENGTH_MASK 0x00FFFFFFu
 #define XHCI_TRB_IOC 0x00000020u
+#define XHCI_TRB_IDT 0x00000040u
 #define XHCI_TRB_DIR_IN 0x00010000u
 #define XHCI_ENDPOINT_CONTROL 4u
+#define XHCI_ENDPOINT_INTERRUPT_IN 7u
+#define XHCI_EXT_CAP_ID_LEGACY 1u
+#define XHCI_LEGSUP_BIOS_OWNED 0x00010000u
+#define XHCI_LEGSUP_OS_OWNED 0x01000000u
 
 typedef struct {
     uint64_t parameter;
@@ -81,6 +113,8 @@ static uint32_t controller_count;
 static uint32_t xhci_count;
 
 static uint64_t xhci_dcbaa[USB_MAX_XHCI_SLOTS + 1u] __attribute__((aligned(64)));
+static uint64_t xhci_scratchpad_array[USB_MAX_XHCI_SCRATCHPADS] __attribute__((aligned(XHCI_PAGE_SIZE)));
+static uint8_t xhci_scratchpad_buffers[USB_MAX_XHCI_SCRATCHPADS][XHCI_PAGE_SIZE] __attribute__((aligned(XHCI_PAGE_SIZE)));
 static xhci_trb_t xhci_command_ring[XHCI_COMMAND_RING_TRBS] __attribute__((aligned(64)));
 static xhci_trb_t xhci_event_ring[XHCI_EVENT_RING_TRBS] __attribute__((aligned(64)));
 static xhci_erst_entry_t xhci_erst[1] __attribute__((aligned(64)));
@@ -88,13 +122,27 @@ static uint8_t xhci_input_contexts[USB_MAX_XHCI_SLOTS + 1u][XHCI_CONTEXT_BYTES *
 static uint8_t xhci_device_contexts[USB_MAX_XHCI_SLOTS + 1u][XHCI_CONTEXT_BYTES * 32u] __attribute__((aligned(64)));
 static xhci_trb_t xhci_transfer_rings[USB_MAX_XHCI_SLOTS + 1u][XHCI_TRANSFER_RING_TRBS] __attribute__((aligned(64)));
 static uint8_t xhci_device_descriptors[USB_MAX_XHCI_SLOTS + 1u][USB_DEVICE_DESCRIPTOR_SIZE] __attribute__((aligned(64)));
+static uint8_t xhci_config_descriptor[USB_CONFIG_DESCRIPTOR_CAPACITY] __attribute__((aligned(64)));
+static uint8_t xhci_mouse_report[USB_MOUSE_REPORT_SIZE] __attribute__((aligned(64)));
 static uint32_t xhci_transfer_enqueue[USB_MAX_XHCI_SLOTS + 1u];
 static uint32_t xhci_transfer_cycle[USB_MAX_XHCI_SLOTS + 1u];
+static uint32_t xhci_transfer_link_update_pending[USB_MAX_XHCI_SLOTS + 1u];
 static uint32_t xhci_command_enqueue;
 static uint32_t xhci_command_cycle;
+static uint32_t xhci_command_link_update_pending;
 static uint32_t xhci_event_dequeue;
 static uint32_t xhci_event_cycle;
 static uint32_t xhci_context_size = 32u;
+static usb_controller_info_t *xhci_mouse_controller;
+static uint32_t xhci_mouse_slot;
+static uint32_t xhci_mouse_dci;
+static uint32_t xhci_mouse_report_size;
+static uint32_t xhci_mouse_pending;
+static uint32_t xhci_late_enum_attempts;
+static unsigned long long xhci_next_late_enum_tick;
+
+static uint64_t xhci_operational_base(const usb_controller_info_t *info);
+static uint64_t xhci_doorbell_base(const usb_controller_info_t *info);
 
 static uint8_t mmio_read8(uint64_t base, uint32_t offset) {
     volatile uint8_t *ptr = (volatile uint8_t *)(uintptr_t)(base + offset);
@@ -121,6 +169,12 @@ static void mmio_write64(uint64_t base, uint32_t offset, uint64_t value) {
     mmio_write32(base, offset + 4u, (uint32_t)(value >> 32));
 }
 
+static uint64_t mmio_read64(uint64_t base, uint32_t offset) {
+    uint64_t lo = mmio_read32(base, offset);
+    uint64_t hi = mmio_read32(base, offset + 4u);
+    return lo | (hi << 32);
+}
+
 static uint64_t phys_addr(const void *ptr) {
     return (uint64_t)(uintptr_t)ptr;
 }
@@ -132,8 +186,44 @@ static void zero_bytes(void *ptr, uint32_t size) {
     }
 }
 
+static void dma_write_barrier(void) {
+    __asm__ __volatile__("mfence" ::: "memory");
+}
+
+static void xhci_ring_doorbell(const usb_controller_info_t *info, uint32_t slot_id, uint32_t target) {
+    uint64_t dbbase = xhci_doorbell_base(info);
+
+    dma_write_barrier();
+    mmio_write32(dbbase, slot_id * 4u, target);
+    (void)mmio_read32(dbbase, slot_id * 4u);
+}
+
 static void xhci_wait(uint32_t iterations) {
     for (uint32_t i = 0; i < iterations; ++i) {
+        __asm__ __volatile__("pause");
+    }
+}
+
+static void xhci_wait_ms(uint32_t milliseconds) {
+    unsigned int hz = timer_frequency();
+    unsigned long long start;
+    unsigned long long ticks;
+
+    if (milliseconds == 0u) {
+        return;
+    }
+    if (hz == 0u) {
+        xhci_wait(milliseconds * 100000u);
+        return;
+    }
+
+    ticks = ((unsigned long long)milliseconds * hz + 999ull) / 1000ull;
+    if (ticks == 0ull) {
+        ticks = 1ull;
+    }
+
+    start = timer_ticks();
+    while (timer_ticks() - start < ticks) {
         __asm__ __volatile__("pause");
     }
 }
@@ -203,7 +293,9 @@ static uint64_t read_bar0(uint8_t bus,
 
 static void probe_xhci(usb_controller_info_t *info) {
     uint32_t hcsparams1;
+    uint32_t hcsparams2;
     uint32_t hccparams1;
+    uint32_t page_size_bits;
 
     if (info->bar0 == 0 || info->bar0_is_io) {
         return;
@@ -218,16 +310,79 @@ static void probe_xhci(usb_controller_info_t *info) {
     info->max_slots = hcsparams1 & 0xFFu;
     info->interrupter_count = (hcsparams1 >> 8) & 0x7FFu;
     info->port_count = (hcsparams1 >> 24) & 0xFFu;
+    hcsparams2 = mmio_read32(info->bar0, 0x08);
+    info->hcsparams2 = hcsparams2;
+    info->scratchpad_count = (((hcsparams2 >> 21) & 0x1Fu) << 5) |
+                             ((hcsparams2 >> 27) & 0x1Fu);
     hccparams1 = mmio_read32(info->bar0, 0x10);
+    info->hccparams1 = hccparams1;
     xhci_context_size = (hccparams1 & 0x04u) ? 64u : 32u;
+
+    page_size_bits = mmio_read32(xhci_operational_base(info), XHCI_PAGESIZE);
+    info->page_size = 0;
+    for (uint32_t i = 0; i < 16u; ++i) {
+        if ((page_size_bits & (1u << i)) != 0u) {
+            info->page_size = XHCI_PAGE_SIZE << i;
+            break;
+        }
+    }
+    if (info->page_size == 0u) {
+        info->page_size = XHCI_PAGE_SIZE;
+    }
+}
+
+static uint32_t xhci_first_extended_capability(const usb_controller_info_t *info) {
+    return ((mmio_read32(info->bar0, XHCI_HCCPARAMS1) >> 16) & 0xFFFFu) * 4u;
+}
+
+static uint32_t xhci_next_extended_capability(const usb_controller_info_t *info, uint32_t offset) {
+    uint32_t next = ((mmio_read32(info->bar0, offset) >> 8) & 0xFFu) * 4u;
+
+    return next == 0u ? 0u : offset + next;
+}
+
+static int xhci_legacy_handoff(usb_controller_info_t *info) {
+    uint32_t offset;
+
+    if (info == 0 || info->type != USB_CONTROLLER_XHCI || info->bar0 == 0 || info->bar0_is_io) {
+        return -1;
+    }
+
+    offset = xhci_first_extended_capability(info);
+    for (uint32_t guard = 0; offset != 0u && guard < 64u; ++guard) {
+        uint32_t cap = mmio_read32(info->bar0, offset);
+        uint32_t cap_id = cap & 0xFFu;
+
+        if (cap_id == XHCI_EXT_CAP_ID_LEGACY) {
+            uint32_t legsup = cap;
+
+            if ((legsup & XHCI_LEGSUP_BIOS_OWNED) != 0u) {
+                mmio_write32(info->bar0, offset, legsup | XHCI_LEGSUP_OS_OWNED);
+                for (uint32_t i = 0; i < 1000000u; ++i) {
+                    legsup = mmio_read32(info->bar0, offset);
+                    if ((legsup & XHCI_LEGSUP_BIOS_OWNED) == 0u &&
+                        (legsup & XHCI_LEGSUP_OS_OWNED) != 0u) {
+                        break;
+                    }
+                }
+            } else if ((legsup & XHCI_LEGSUP_OS_OWNED) == 0u) {
+                mmio_write32(info->bar0, offset, legsup | XHCI_LEGSUP_OS_OWNED);
+            }
+
+            mmio_write32(info->bar0, offset + 4u, 0u);
+            legsup = mmio_read32(info->bar0, offset);
+            info->last_completion_code = (legsup >> 16) & 0xFFFFu;
+            return ((legsup & XHCI_LEGSUP_BIOS_OWNED) == 0u) ? 0 : -1;
+        }
+
+        offset = xhci_next_extended_capability(info, offset);
+    }
+
+    return 0;
 }
 
 static uint32_t trb_type(const xhci_trb_t *trb) {
     return (trb->control >> XHCI_TRB_TYPE_SHIFT) & 0x3Fu;
-}
-
-static uint32_t trb_cycle(const xhci_trb_t *trb) {
-    return trb->control & XHCI_TRB_CYCLE;
 }
 
 static uint64_t xhci_runtime_base(const usb_controller_info_t *info) {
@@ -242,19 +397,24 @@ static uint64_t xhci_operational_base(const usb_controller_info_t *info) {
     return info->bar0 + (uint64_t)mmio_read8(info->bar0, 0x00);
 }
 
+static uint32_t xhci_link_trb_control(uint32_t cycle) {
+    return (XHCI_TRB_TYPE_LINK << XHCI_TRB_TYPE_SHIFT) |
+           XHCI_TRB_LINK_TOGGLE_CYCLE |
+           (cycle ? XHCI_TRB_CYCLE : 0u);
+}
+
 static void xhci_setup_command_ring(uint64_t opbase) {
     zero_bytes(xhci_command_ring, sizeof(xhci_command_ring));
     xhci_command_enqueue = 0;
     xhci_command_cycle = 1;
+    xhci_command_link_update_pending = 0;
 
     xhci_command_ring[XHCI_COMMAND_RING_TRBS - 1u].parameter = phys_addr(xhci_command_ring);
     xhci_command_ring[XHCI_COMMAND_RING_TRBS - 1u].status = 0;
-    xhci_command_ring[XHCI_COMMAND_RING_TRBS - 1u].control =
-        (XHCI_TRB_TYPE_LINK << XHCI_TRB_TYPE_SHIFT) |
-        XHCI_TRB_LINK_TOGGLE_CYCLE |
-        XHCI_TRB_CYCLE;
+    xhci_command_ring[XHCI_COMMAND_RING_TRBS - 1u].control = xhci_link_trb_control(xhci_command_cycle);
 
     mmio_write64(opbase, XHCI_CRCR, phys_addr(xhci_command_ring) | 1ull);
+    (void)mmio_read64(opbase, XHCI_CRCR);
 }
 
 static void xhci_setup_event_ring(const usb_controller_info_t *info) {
@@ -274,17 +434,22 @@ static void xhci_setup_event_ring(const usb_controller_info_t *info) {
     mmio_write32(intr0, XHCI_INTR_ERSTSZ, 1);
     mmio_write64(intr0, XHCI_INTR_ERSTBA, phys_addr(xhci_erst));
     mmio_write64(intr0, XHCI_INTR_ERDP, phys_addr(xhci_event_ring) | XHCI_ERDP_EHB);
-    mmio_write32(intr0, XHCI_INTR_IMAN, 0x00000002u);
+    mmio_write32(intr0, XHCI_INTR_IMAN, XHCI_INTR_IMAN_IP);
+    (void)mmio_read64(intr0, XHCI_INTR_ERSTBA);
+    (void)mmio_read64(intr0, XHCI_INTR_ERDP);
 }
 
 static int xhci_next_event(xhci_trb_t *out) {
-    xhci_trb_t *event = &xhci_event_ring[xhci_event_dequeue];
+    volatile xhci_trb_t *event = &xhci_event_ring[xhci_event_dequeue];
+    uint32_t control = event->control;
 
-    if (trb_cycle(event) != xhci_event_cycle) {
+    if ((control & XHCI_TRB_CYCLE) != xhci_event_cycle) {
         return 0;
     }
 
-    *out = *event;
+    out->parameter = event->parameter;
+    out->status = event->status;
+    out->control = control;
     ++xhci_event_dequeue;
     if (xhci_event_dequeue >= XHCI_EVENT_RING_TRBS) {
         xhci_event_dequeue = 0;
@@ -308,11 +473,11 @@ static int xhci_ring_command(const usb_controller_info_t *info,
                              uint32_t *slot_id,
                              uint32_t *completion_code) {
     xhci_trb_t *cmd;
-    uint64_t dbbase;
 
     if (xhci_command_enqueue >= XHCI_COMMAND_RING_TRBS - 1u) {
         xhci_command_enqueue = 0;
         xhci_command_cycle ^= 1u;
+        xhci_command_link_update_pending = 1;
     }
 
     cmd = &xhci_command_ring[xhci_command_enqueue++];
@@ -320,8 +485,7 @@ static int xhci_ring_command(const usb_controller_info_t *info,
     cmd->status = status;
     cmd->control = control | (xhci_command_cycle ? XHCI_TRB_CYCLE : 0u);
 
-    dbbase = xhci_doorbell_base(info);
-    mmio_write32(dbbase, 0, 0);
+    xhci_ring_doorbell(info, 0, 0);
 
     for (uint32_t i = 0; i < 10000000u; ++i) {
         xhci_trb_t event;
@@ -338,12 +502,21 @@ static int xhci_ring_command(const usb_controller_info_t *info,
         if (completion_code) {
             *completion_code = event.status >> 24;
         }
+        if (xhci_command_link_update_pending &&
+            event.parameter >= phys_addr(xhci_command_ring) &&
+            event.parameter < phys_addr(&xhci_command_ring[XHCI_COMMAND_RING_TRBS - 1u])) {
+            xhci_command_ring[XHCI_COMMAND_RING_TRBS - 1u].control = xhci_link_trb_control(xhci_command_cycle);
+            xhci_command_link_update_pending = 0;
+        }
         if (slot_id) {
             *slot_id = event.control >> 24;
         }
         return ((event.status >> 24) == XHCI_TRB_COMPLETION_SUCCESS) ? 0 : -1;
     }
 
+    if (completion_code) {
+        *completion_code = 0xFFFFFFFFu;
+    }
     return -1;
 }
 
@@ -353,6 +526,98 @@ static uint32_t *xhci_context_dword(uint8_t *base, uint32_t context_index, uint3
 
 static uint32_t xhci_port_speed(uint32_t portsc) {
     return (portsc >> 10) & 0x0Fu;
+}
+
+static uint32_t xhci_portsc_write_value(uint32_t portsc, uint32_t set_bits, uint32_t clear_change_bits);
+
+static uint32_t xhci_wait_port_ready(uint64_t opbase, uint32_t offset) {
+    uint32_t portsc = mmio_read32(opbase, offset);
+
+    for (uint32_t i = 0; i < 10000000u; ++i) {
+        uint32_t speed = xhci_port_speed(portsc);
+
+        if ((portsc & XHCI_PORTSC_RESET) == 0u &&
+            (portsc & XHCI_PORTSC_CCS) != 0u &&
+            (portsc & XHCI_PORTSC_PED) != 0u &&
+            speed != 0u) {
+            return portsc;
+        }
+        portsc = mmio_read32(opbase, offset);
+    }
+
+    return portsc;
+}
+
+static int xhci_reset_port(uint64_t opbase, uint32_t offset, uint32_t *out_portsc) {
+    uint32_t portsc = mmio_read32(opbase, offset);
+
+    mmio_write32(opbase,
+                 offset,
+                 xhci_portsc_write_value(portsc,
+                                         XHCI_PORTSC_POWER | XHCI_PORTSC_RESET,
+                                         0));
+    if (wait_bits_clear(opbase, offset, XHCI_PORTSC_RESET, 10000000u) != 0) {
+        if (out_portsc) {
+            *out_portsc = mmio_read32(opbase, offset);
+        }
+        return -1;
+    }
+
+    xhci_wait_ms(120u);
+    portsc = mmio_read32(opbase, offset);
+    mmio_write32(opbase,
+                 offset,
+                 xhci_portsc_write_value(portsc, XHCI_PORTSC_POWER, 1));
+    portsc = xhci_wait_port_ready(opbase, offset);
+    if (out_portsc) {
+        *out_portsc = portsc;
+    }
+    return ((portsc & XHCI_PORTSC_PED) != 0u && xhci_port_speed(portsc) != 0u) ? 0 : -1;
+}
+
+static uint32_t ilog2_ceil_u32(uint32_t value) {
+    uint32_t result = 0;
+    uint32_t power = 1;
+
+    if (value <= 1u) {
+        return 0;
+    }
+    while (power < value && result < 31u) {
+        power <<= 1;
+        ++result;
+    }
+    return result;
+}
+
+static uint32_t xhci_interval_from_usb_interval(uint32_t speed, uint8_t interval) {
+    uint32_t value = interval == 0u ? 1u : interval;
+
+    if (speed >= 3u) {
+        if (value > 16u) {
+            value = 16u;
+        }
+        return value - 1u;
+    }
+
+    value = ilog2_ceil_u32(value) + 3u;
+    if (value < 3u) {
+        value = 3u;
+    }
+    if (value > 10u) {
+        value = 10u;
+    }
+    return value;
+}
+
+static uint32_t xhci_portsc_write_value(uint32_t portsc, uint32_t set_bits, uint32_t clear_change_bits) {
+    uint32_t value = portsc & ~XHCI_PORTSC_WRITE_1_CLEAR_BITS;
+
+    value &= ~XHCI_PORTSC_RESET;
+    value |= set_bits;
+    if (clear_change_bits) {
+        value |= XHCI_PORTSC_CHANGE_BITS;
+    }
+    return value;
 }
 
 static uint32_t xhci_default_control_packet_size(uint32_t speed) {
@@ -365,19 +630,80 @@ static uint32_t xhci_default_control_packet_size(uint32_t speed) {
     return 8u;
 }
 
+static uint64_t usb_setup_packet(uint8_t request_type,
+                                 uint8_t request,
+                                 uint16_t value,
+                                 uint16_t index,
+                                 uint16_t length) {
+    return (uint64_t)request_type |
+           ((uint64_t)request << 8) |
+           ((uint64_t)value << 16) |
+           ((uint64_t)index << 32) |
+           ((uint64_t)length << 48);
+}
+
+static void xhci_enqueue_transfer_trb(uint32_t slot_id,
+                                      uint64_t parameter,
+                                      uint32_t status,
+                                      uint32_t control);
+static int xhci_wait_transfer_event(const usb_controller_info_t *info,
+                                    uint32_t slot_id,
+                                    uint32_t *completion_code);
+
 static void xhci_setup_transfer_ring(uint32_t slot_id) {
     xhci_trb_t *ring = xhci_transfer_rings[slot_id];
 
     zero_bytes(ring, sizeof(xhci_transfer_rings[slot_id]));
     xhci_transfer_enqueue[slot_id] = 0;
     xhci_transfer_cycle[slot_id] = 1;
+    xhci_transfer_link_update_pending[slot_id] = 0;
 
     ring[XHCI_TRANSFER_RING_TRBS - 1u].parameter = phys_addr(ring);
     ring[XHCI_TRANSFER_RING_TRBS - 1u].status = 0;
-    ring[XHCI_TRANSFER_RING_TRBS - 1u].control =
-        (XHCI_TRB_TYPE_LINK << XHCI_TRB_TYPE_SHIFT) |
-        XHCI_TRB_LINK_TOGGLE_CYCLE |
-        XHCI_TRB_CYCLE;
+    ring[XHCI_TRANSFER_RING_TRBS - 1u].control = xhci_link_trb_control(xhci_transfer_cycle[slot_id]);
+}
+
+static int xhci_control_transfer(usb_controller_info_t *info,
+                                 uint32_t slot_id,
+                                 uint64_t setup,
+                                 void *data,
+                                 uint32_t length,
+                                 int data_in) {
+    uint32_t completion = 0;
+    uint32_t setup_control = XHCI_TRB_TYPE_SETUP_STAGE << XHCI_TRB_TYPE_SHIFT;
+    uint32_t status_control = (XHCI_TRB_TYPE_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC;
+
+    if (slot_id == 0 || slot_id > USB_MAX_XHCI_SLOTS) {
+        return -1;
+    }
+
+    if (length != 0) {
+        setup_control |= (data_in ? 3u : 2u) << 16;
+    }
+    xhci_enqueue_transfer_trb(slot_id,
+                              setup,
+                              8u,
+                              setup_control | XHCI_TRB_IDT);
+    if (length != 0) {
+        xhci_enqueue_transfer_trb(slot_id,
+                                  phys_addr(data),
+                                  length,
+                                  (XHCI_TRB_TYPE_DATA_STAGE << XHCI_TRB_TYPE_SHIFT) |
+                                  (data_in ? XHCI_TRB_DIR_IN : 0u));
+    }
+    if (!data_in) {
+        status_control |= XHCI_TRB_DIR_IN;
+    }
+    xhci_enqueue_transfer_trb(slot_id, 0, 0, status_control);
+    xhci_ring_doorbell(info, slot_id, 1u);
+
+    if (xhci_wait_transfer_event(info, slot_id, &completion) != 0) {
+        info->last_completion_code = completion;
+        return -1;
+    }
+
+    info->last_completion_code = completion;
+    return 0;
 }
 
 static void xhci_enqueue_transfer_trb(uint32_t slot_id,
@@ -390,12 +716,31 @@ static void xhci_enqueue_transfer_trb(uint32_t slot_id,
     if (xhci_transfer_enqueue[slot_id] >= XHCI_TRANSFER_RING_TRBS - 1u) {
         xhci_transfer_enqueue[slot_id] = 0;
         xhci_transfer_cycle[slot_id] ^= 1u;
+        xhci_transfer_link_update_pending[slot_id] = 1;
     }
 
     trb = &ring[xhci_transfer_enqueue[slot_id]++];
     trb->parameter = parameter;
     trb->status = status;
     trb->control = control | (xhci_transfer_cycle[slot_id] ? XHCI_TRB_CYCLE : 0u);
+}
+
+static void xhci_finish_transfer_link_update(uint32_t slot_id, uint64_t event_parameter) {
+    uint64_t ring_start;
+    uint64_t ring_link;
+
+    if (slot_id == 0 || slot_id > USB_MAX_XHCI_SLOTS ||
+        !xhci_transfer_link_update_pending[slot_id]) {
+        return;
+    }
+
+    ring_start = phys_addr(xhci_transfer_rings[slot_id]);
+    ring_link = phys_addr(&xhci_transfer_rings[slot_id][XHCI_TRANSFER_RING_TRBS - 1u]);
+    if (event_parameter >= ring_start && event_parameter < ring_link) {
+        xhci_transfer_rings[slot_id][XHCI_TRANSFER_RING_TRBS - 1u].control =
+            xhci_link_trb_control(xhci_transfer_cycle[slot_id]);
+        xhci_transfer_link_update_pending[slot_id] = 0;
+    }
 }
 
 static int xhci_wait_transfer_event(const usb_controller_info_t *info,
@@ -417,6 +762,7 @@ static int xhci_wait_transfer_event(const usb_controller_info_t *info,
         if (completion_code) {
             *completion_code = event.status >> 24;
         }
+        xhci_finish_transfer_link_update(slot_id, event.parameter);
         return ((event.status >> 24) == XHCI_TRB_COMPLETION_SUCCESS) ? 0 : -1;
     }
 
@@ -450,7 +796,7 @@ static int xhci_address_device(usb_controller_info_t *info,
 
     ctx = xhci_context_dword(input, 1, 0);
     *ctx = (speed << 20) | (1u << 27);
-    ctx = xhci_context_dword(input, 1, 2);
+    ctx = xhci_context_dword(input, 1, 1);
     *ctx = ((port_index + 1u) << 16);
 
     packet_size = xhci_default_control_packet_size(speed);
@@ -480,43 +826,288 @@ static int xhci_address_device(usb_controller_info_t *info,
 }
 
 static int xhci_get_device_descriptor(usb_controller_info_t *info, uint32_t slot_id) {
-    uint64_t setup = 0x0012000001000680ull;
-    uint32_t completion = 0;
-
-    if (slot_id == 0 || slot_id > USB_MAX_XHCI_SLOTS) {
+    zero_bytes(xhci_device_descriptors[slot_id], USB_DEVICE_DESCRIPTOR_SIZE);
+    if (xhci_control_transfer(info,
+                              slot_id,
+                              usb_setup_packet(0x80u, 0x06u, 0x0100u, 0, USB_DEVICE_DESCRIPTOR_SIZE),
+                              xhci_device_descriptors[slot_id],
+                              USB_DEVICE_DESCRIPTOR_SIZE,
+                              1) != 0) {
         return -1;
     }
 
-    zero_bytes(xhci_device_descriptors[slot_id], USB_DEVICE_DESCRIPTOR_SIZE);
-    xhci_enqueue_transfer_trb(slot_id,
-                              setup,
-                              8u,
-                              (XHCI_TRB_TYPE_SETUP_STAGE << XHCI_TRB_TYPE_SHIFT) |
-                              (3u << 16));
-    xhci_enqueue_transfer_trb(slot_id,
-                              phys_addr(xhci_device_descriptors[slot_id]),
-                              USB_DEVICE_DESCRIPTOR_SIZE,
-                              (XHCI_TRB_TYPE_DATA_STAGE << XHCI_TRB_TYPE_SHIFT) |
-                              XHCI_TRB_DIR_IN);
-    xhci_enqueue_transfer_trb(slot_id,
-                              0,
-                              0,
-                              (XHCI_TRB_TYPE_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT) |
-                              XHCI_TRB_IOC);
-    mmio_write32(xhci_doorbell_base(info), slot_id * 4u, 1u);
+    ++info->descriptor_count;
+    return 0;
+}
 
-    if (xhci_wait_transfer_event(info, slot_id, &completion) != 0) {
+static uint16_t read_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint16_t usb_endpoint_max_packet_size(uint16_t value) {
+    value &= USB_ENDPOINT_MAX_PACKET_MASK;
+    return value == 0u ? 1u : value;
+}
+
+static int xhci_get_config_descriptor(usb_controller_info_t *info,
+                                      uint32_t slot_id,
+                                      uint32_t *out_size) {
+    uint32_t total;
+
+    zero_bytes(xhci_config_descriptor, sizeof(xhci_config_descriptor));
+    if (xhci_control_transfer(info,
+                              slot_id,
+                              usb_setup_packet(0x80u, 0x06u, 0x0200u, 0, 9u),
+                              xhci_config_descriptor,
+                              9u,
+                              1) != 0) {
+        return -1;
+    }
+
+    if (xhci_config_descriptor[1] != 2u) {
+        return -1;
+    }
+
+    total = read_le16(&xhci_config_descriptor[2]);
+    if (total < 9u) {
+        return -1;
+    }
+    if (total > USB_CONFIG_DESCRIPTOR_CAPACITY) {
+        total = USB_CONFIG_DESCRIPTOR_CAPACITY;
+    }
+
+    zero_bytes(xhci_config_descriptor, sizeof(xhci_config_descriptor));
+    if (xhci_control_transfer(info,
+                              slot_id,
+                              usb_setup_packet(0x80u, 0x06u, 0x0200u, 0, (uint16_t)total),
+                              xhci_config_descriptor,
+                              total,
+                              1) != 0) {
+        return -1;
+    }
+
+    *out_size = total;
+    return 0;
+}
+
+static int xhci_find_boot_mouse(uint32_t config_size,
+                                uint8_t *configuration_value,
+                                uint8_t *interface_number,
+                                uint8_t *endpoint_address,
+                                uint16_t *max_packet,
+                                uint8_t *interval) {
+    uint32_t offset = 0;
+    uint8_t current_interface = 0;
+    int in_mouse_interface = 0;
+
+    if (config_size < 9u || xhci_config_descriptor[1] != 2u) {
+        return -1;
+    }
+
+    *configuration_value = xhci_config_descriptor[5];
+    while (offset + 2u <= config_size) {
+        uint8_t length = xhci_config_descriptor[offset];
+        uint8_t type = xhci_config_descriptor[offset + 1u];
+
+        if (length < 2u || offset + length > config_size) {
+            break;
+        }
+
+        if (type == 4u && length >= 9u) {
+            current_interface = xhci_config_descriptor[offset + 2u];
+            in_mouse_interface =
+                xhci_config_descriptor[offset + 5u] == 3u &&
+                xhci_config_descriptor[offset + 7u] != 1u;
+            if (in_mouse_interface) {
+                *interface_number = current_interface;
+            }
+        } else if (type == 5u && length >= 7u && in_mouse_interface) {
+            uint8_t address = xhci_config_descriptor[offset + 2u];
+            uint8_t attributes = xhci_config_descriptor[offset + 3u];
+            if ((address & 0x80u) != 0 && (attributes & 0x03u) == 3u) {
+                *endpoint_address = address;
+                *max_packet = usb_endpoint_max_packet_size(read_le16(&xhci_config_descriptor[offset + 4u]));
+                *interval = xhci_config_descriptor[offset + 6u];
+                if (*max_packet == 0u || *max_packet > USB_MOUSE_REPORT_SIZE) {
+                    *max_packet = USB_MOUSE_REPORT_SIZE;
+                }
+                return 0;
+            }
+        }
+
+        offset += length;
+    }
+
+    return -1;
+}
+
+static uint32_t xhci_endpoint_dci(uint8_t endpoint_address) {
+    uint32_t endpoint = endpoint_address & 0x0Fu;
+    uint32_t in = (endpoint_address & 0x80u) != 0 ? 1u : 0u;
+    return endpoint * 2u + in;
+}
+
+static int xhci_configure_interrupt_in_endpoint(usb_controller_info_t *info,
+                                                uint32_t slot_id,
+                                                uint32_t speed,
+                                                uint8_t endpoint_address,
+                                                uint16_t max_packet,
+                                                uint8_t interval,
+                                                uint32_t *out_dci) {
+    uint8_t *input;
+    uint32_t dci;
+    uint32_t context_index;
+    uint32_t *ctx;
+    uint32_t completion = 0;
+
+    dci = xhci_endpoint_dci(endpoint_address);
+    if (dci == 0u || dci > 31u || slot_id == 0u || slot_id > USB_MAX_XHCI_SLOTS) {
+        return -1;
+    }
+
+    input = xhci_input_contexts[slot_id];
+    zero_bytes(input, sizeof(xhci_input_contexts[slot_id]));
+    xhci_setup_transfer_ring(slot_id);
+    context_index = dci + 1u;
+
+    ctx = xhci_context_dword(input, 0, 1);
+    *ctx = (1u << 0) | (1u << dci);
+
+    ctx = xhci_context_dword(input, 1, 0);
+    *ctx = dci << 27;
+
+    ctx = xhci_context_dword(input, context_index, 0);
+    *ctx = xhci_interval_from_usb_interval(speed, interval) << 16;
+    ctx = xhci_context_dword(input, context_index, 1);
+    *ctx = (3u << 1) | (XHCI_ENDPOINT_INTERRUPT_IN << 3) | ((uint32_t)max_packet << 16);
+    ctx = xhci_context_dword(input, context_index, 2);
+    *ctx = (uint32_t)((phys_addr(xhci_transfer_rings[slot_id]) | 1ull) & 0xFFFFFFFFull);
+    ctx = xhci_context_dword(input, context_index, 3);
+    *ctx = (uint32_t)((phys_addr(xhci_transfer_rings[slot_id]) | 1ull) >> 32);
+    ctx = xhci_context_dword(input, context_index, 4);
+    *ctx = (uint32_t)max_packet | ((uint32_t)max_packet << 16);
+
+    if (xhci_ring_command(info,
+                          phys_addr(input),
+                          0,
+                          (XHCI_TRB_TYPE_CONFIGURE_ENDPOINT << XHCI_TRB_TYPE_SHIFT) |
+                          (slot_id << 24),
+                          0,
+                          &completion) != 0) {
         info->last_completion_code = completion;
         return -1;
     }
 
-    info->last_completion_code = completion;
-    ++info->descriptor_count;
+    *out_dci = dci;
+    return 0;
+}
+
+static int xhci_try_configure_boot_mouse(usb_controller_info_t *info, uint32_t slot_id, uint32_t speed) {
+    uint32_t config_size = 0;
+    uint8_t configuration_value = 0;
+    uint8_t interface_number = 0;
+    uint8_t endpoint_address = 0;
+    uint16_t max_packet = 0;
+    uint8_t interval = 0;
+    uint32_t dci = 0;
+
+    info->mouse_stage = 1;
+    if (xhci_get_config_descriptor(info, slot_id, &config_size) != 0) {
+        info->mouse_last_completion_code = info->last_completion_code;
+        return -1;
+    }
+
+    info->mouse_stage = 2;
+    if (xhci_find_boot_mouse(config_size,
+                             &configuration_value,
+                             &interface_number,
+                             &endpoint_address,
+                             &max_packet,
+                             &interval) != 0) {
+        info->mouse_last_completion_code = 0xF2u;
+        return -1;
+    }
+    info->mouse_interface = interface_number;
+    info->mouse_endpoint = endpoint_address;
+    info->mouse_interval = interval;
+    info->mouse_report_size = max_packet;
+
+    info->mouse_stage = 3;
+    if (xhci_control_transfer(info,
+                              slot_id,
+                              usb_setup_packet(0x00u, 0x09u, configuration_value, 0, 0),
+                              0,
+                              0,
+                              0) != 0) {
+        info->mouse_last_completion_code = info->last_completion_code;
+        return -1;
+    }
+
+    (void)xhci_control_transfer(info,
+                                slot_id,
+                                usb_setup_packet(0x21u, 0x0Bu, 0, interface_number, 0),
+                                0,
+                                0,
+                                0);
+
+    info->mouse_stage = 4;
+    if (xhci_configure_interrupt_in_endpoint(info,
+                                             slot_id,
+                                             speed,
+                                             endpoint_address,
+                                             max_packet,
+                                             interval,
+                                             &dci) != 0) {
+        info->mouse_last_completion_code = info->last_completion_code;
+        return -1;
+    }
+
+    xhci_mouse_controller = info;
+    xhci_mouse_slot = slot_id;
+    xhci_mouse_dci = dci;
+    xhci_mouse_report_size = max_packet;
+    xhci_mouse_pending = 0;
+    info->mouse_configured = 1;
+    info->mouse_stage = 5;
+    info->mouse_slot = slot_id;
+    info->mouse_dci = dci;
+    info->mouse_report_size = max_packet;
+    info->mouse_pending = 0;
+    info->mouse_report_count = 0;
+    info->mouse_last_completion_code = 0;
     return 0;
 }
 
 static void xhci_reset_connected_ports(usb_controller_info_t *info, uint64_t opbase) {
     uint32_t max_ports = info->port_count;
+
+    info->enum_stage = 1;
+    info->enum_port = 0;
+    info->enum_portsc = 0;
+    info->enum_speed = 0;
+    info->enum_slot = 0;
+    info->enum_completion_code = 0;
+    info->connected_port_count = 0;
+    info->reset_port_count = 0;
+    info->enabled_slot_count = 0;
+    info->addressed_device_count = 0;
+    info->descriptor_count = 0;
+    info->mouse_configured = 0;
+    info->mouse_stage = 0;
+    info->mouse_slot = 0;
+    info->mouse_dci = 0;
+    info->mouse_report_size = 0;
+    info->mouse_pending = 0;
+    info->mouse_report_count = 0;
+    info->mouse_last_completion_code = 0;
+    info->mouse_interface = 0;
+    info->mouse_endpoint = 0;
+    info->mouse_interval = 0;
+    xhci_mouse_controller = 0;
+    xhci_mouse_slot = 0;
+    xhci_mouse_dci = 0;
+    xhci_mouse_report_size = 0;
+    xhci_mouse_pending = 0;
 
     if (max_ports > 255u) {
         max_ports = 255u;
@@ -533,74 +1124,146 @@ static void xhci_reset_connected_ports(usb_controller_info_t *info, uint64_t opb
             continue;
         }
 
+        info->enum_stage = 2;
+        info->enum_port = port + 1u;
+        info->enum_portsc = portsc;
         ++info->connected_port_count;
-        mmio_write32(opbase,
-                     offset,
-                     (portsc & ~XHCI_PORTSC_CHANGE_BITS) |
-                     XHCI_PORTSC_POWER |
-                     XHCI_PORTSC_RESET);
-        xhci_wait(1000000u);
-        (void)wait_bits_clear(opbase, offset, XHCI_PORTSC_RESET, 10000000u);
-        portsc = mmio_read32(opbase, offset);
-        mmio_write32(opbase, offset, portsc | XHCI_PORTSC_CHANGE_BITS);
+        (void)xhci_reset_port(opbase, offset, &portsc);
+        info->enum_stage = 3;
+        info->enum_portsc = portsc;
         ++info->reset_port_count;
 
-        speed = xhci_port_speed(mmio_read32(opbase, offset));
+        speed = xhci_port_speed(portsc);
+        info->enum_speed = speed;
+        if (speed == 0u || (portsc & XHCI_PORTSC_PED) == 0u) {
+            info->enum_completion_code = 0xFEu;
+            continue;
+        }
+        info->enum_stage = 4;
         if (xhci_ring_command(info,
                               0,
                               0,
                               XHCI_TRB_TYPE_ENABLE_SLOT << XHCI_TRB_TYPE_SHIFT,
                               &slot_id,
-                              &completion) == 0 &&
-            slot_id != 0) {
-            ++info->enabled_slot_count;
-            if (xhci_address_device(info, slot_id, port, speed) == 0) {
-                (void)xhci_get_device_descriptor(info, slot_id);
-            }
+                              &completion) != 0 ||
+            slot_id == 0) {
+            info->last_completion_code = completion;
+            info->enum_completion_code = completion;
+            continue;
+        }
+
+        ++info->enabled_slot_count;
+        info->enum_slot = slot_id;
+        info->enum_stage = 5;
+        if (xhci_address_device(info, slot_id, port, speed) == 0) {
+                    info->enum_stage = 6;
+                    if (xhci_get_device_descriptor(info, slot_id) == 0) {
+                        info->enum_stage = 7;
+                        (void)xhci_try_configure_boot_mouse(info, slot_id, speed);
+                    }
+        } else {
+            info->enum_completion_code = info->last_completion_code;
         }
         info->last_completion_code = completion;
     }
+    if (info->addressed_device_count != 0u || info->enabled_slot_count == 0u) {
+        info->enum_stage = 8;
+    }
 }
 
-static void init_xhci(usb_controller_info_t *info) {
-    uint64_t opbase;
-    uint32_t slots;
+static int xhci_ready_for_start(usb_controller_info_t *info) {
+    return info != 0 && info->bar0 != 0 && !info->bar0_is_io && info->max_slots != 0;
+}
 
-    if (info->bar0 == 0 || info->bar0_is_io || info->max_slots == 0) {
-        return;
-    }
+static int xhci_halt(usb_controller_info_t *info) {
+    uint64_t opbase = xhci_operational_base(info);
 
-    opbase = xhci_operational_base(info);
     mmio_write32(opbase, XHCI_USBCMD, mmio_read32(opbase, XHCI_USBCMD) & ~XHCI_USBCMD_RUN);
     if (wait_bits_set(opbase, XHCI_USBSTS, XHCI_USBSTS_HALTED, 10000000u) != 0) {
-        return;
+        return -1;
     }
+    return 0;
+}
+
+static int xhci_reset_controller(usb_controller_info_t *info) {
+    uint64_t opbase = xhci_operational_base(info);
 
     mmio_write32(opbase, XHCI_USBCMD, mmio_read32(opbase, XHCI_USBCMD) | XHCI_USBCMD_RESET);
     if (wait_bits_clear(opbase, XHCI_USBCMD, XHCI_USBCMD_RESET, 10000000u) != 0 ||
         wait_bits_clear(opbase, XHCI_USBSTS, XHCI_USBSTS_CNR, 10000000u) != 0) {
-        return;
+        return -1;
+    }
+    info->running = 0;
+    return 0;
+}
+
+static int xhci_setup_rings_and_contexts(usb_controller_info_t *info) {
+    uint64_t opbase = xhci_operational_base(info);
+    uint32_t slots;
+
+    if (info->page_size != XHCI_PAGE_SIZE) {
+        info->last_completion_code = info->page_size;
+        return -1;
+    }
+    if (info->scratchpad_count > USB_MAX_XHCI_SCRATCHPADS) {
+        info->last_completion_code = info->scratchpad_count;
+        return -1;
     }
 
     zero_bytes(xhci_dcbaa, sizeof(xhci_dcbaa));
+    zero_bytes(xhci_scratchpad_array, sizeof(xhci_scratchpad_array));
+    if (info->scratchpad_count != 0u) {
+        for (uint32_t i = 0; i < info->scratchpad_count; ++i) {
+            zero_bytes(xhci_scratchpad_buffers[i], XHCI_PAGE_SIZE);
+            xhci_scratchpad_array[i] = phys_addr(xhci_scratchpad_buffers[i]);
+        }
+        xhci_dcbaa[0] = phys_addr(xhci_scratchpad_array);
+    }
+
     slots = info->max_slots;
     if (slots > USB_MAX_XHCI_SLOTS) {
         slots = USB_MAX_XHCI_SLOTS;
     }
     mmio_write32(opbase, XHCI_CONFIG, slots);
     mmio_write64(opbase, XHCI_DCBAAP, phys_addr(xhci_dcbaa));
+    (void)mmio_read64(opbase, XHCI_DCBAAP);
 
     xhci_setup_command_ring(opbase);
     xhci_setup_event_ring(info);
+    info->dcbaa_phys = phys_addr(xhci_dcbaa);
+    info->command_ring_phys = phys_addr(xhci_command_ring);
+    info->event_ring_phys = phys_addr(xhci_event_ring);
+    info->erst_phys = phys_addr(xhci_erst);
+    dma_write_barrier();
+    return 0;
+}
 
-    mmio_write32(opbase, XHCI_USBCMD, mmio_read32(opbase, XHCI_USBCMD) | XHCI_USBCMD_RUN);
+static int xhci_run(usb_controller_info_t *info) {
+    uint64_t opbase = xhci_operational_base(info);
+
+    mmio_write32(opbase, XHCI_USBSTS, XHCI_USBSTS_CLEAR_BITS);
+    mmio_write32(opbase,
+                 XHCI_USBCMD,
+                 (mmio_read32(opbase, XHCI_USBCMD) & ~XHCI_USBCMD_INTE) | XHCI_USBCMD_RUN);
     if (wait_bits_clear(opbase, XHCI_USBSTS, XHCI_USBSTS_HALTED, 10000000u) != 0) {
-        return;
+        return -1;
     }
 
     info->running = 1;
-    xhci_reset_connected_ports(info, opbase);
-    info->initialized = 1;
+    return 0;
+}
+
+static int xhci_poke_run(usb_controller_info_t *info) {
+    uint64_t opbase = xhci_operational_base(info);
+    uint32_t command;
+
+    mmio_write32(opbase, XHCI_USBSTS, XHCI_USBSTS_CLEAR_BITS);
+    command = mmio_read32(opbase, XHCI_USBCMD);
+    command &= ~XHCI_USBCMD_INTE;
+    command |= XHCI_USBCMD_RUN;
+    mmio_write32(opbase, XHCI_USBCMD, command);
+    info->running = 1;
+    return 0;
 }
 
 static void visit_pci(uint8_t bus, uint8_t device, uint8_t function, void *ctx) {
@@ -608,7 +1271,6 @@ static void visit_pci(uint8_t bus, uint8_t device, uint8_t function, void *ctx) 
     uint8_t class_code = pci_read_config8(bus, device, function, 0x0B);
     uint8_t subclass = pci_read_config8(bus, device, function, 0x0A);
     uint8_t prog_if = pci_read_config8(bus, device, function, 0x09);
-    uint16_t command;
 
     (void)ctx;
 
@@ -631,6 +1293,14 @@ static void visit_pci(uint8_t bus, uint8_t device, uint8_t function, void *ctx) 
     info->max_slots = 0;
     info->interrupter_count = 0;
     info->port_count = 0;
+    info->scratchpad_count = 0;
+    info->page_size = 0;
+    info->hcsparams2 = 0;
+    info->hccparams1 = 0;
+    info->dcbaa_phys = 0;
+    info->command_ring_phys = 0;
+    info->event_ring_phys = 0;
+    info->erst_phys = 0;
     info->initialized = 0;
     info->running = 0;
     info->connected_port_count = 0;
@@ -639,30 +1309,438 @@ static void visit_pci(uint8_t bus, uint8_t device, uint8_t function, void *ctx) 
     info->addressed_device_count = 0;
     info->descriptor_count = 0;
     info->last_completion_code = 0;
+    info->mouse_configured = 0;
+    info->mouse_slot = 0;
+    info->mouse_dci = 0;
+    info->mouse_report_size = 0;
+    info->mouse_pending = 0;
+    info->mouse_report_count = 0;
+    info->mouse_last_completion_code = 0;
+    info->mouse_stage = 0;
+    info->mouse_interface = 0;
+    info->mouse_endpoint = 0;
+    info->mouse_interval = 0;
+    info->enum_stage = 0;
+    info->enum_port = 0;
+    info->enum_portsc = 0;
+    info->enum_speed = 0;
+    info->enum_slot = 0;
+    info->enum_completion_code = 0;
     info->bar0 = read_bar0(bus, device, function, &info->bar0_is_io);
-
-    command = pci_read_config16(bus, device, function, 0x04);
-    command |= PCI_COMMAND_IO_SPACE | PCI_COMMAND_MEMORY_SPACE | PCI_COMMAND_BUS_MASTER;
-    pci_write_config32(bus,
-                       device,
-                       function,
-                       0x04,
-                       (pci_read_config32(bus, device, function, 0x04) & 0xFFFF0000u) |
-                       command);
 
     if (info->type == USB_CONTROLLER_XHCI) {
         ++xhci_count;
-        probe_xhci(info);
-        init_xhci(info);
     }
 
     ++controller_count;
 }
 
 void usb_init(void) {
+    unsigned int hz;
+
     controller_count = 0;
     xhci_count = 0;
+    xhci_late_enum_attempts = 0;
+    xhci_next_late_enum_tick = 0;
     pci_scan(visit_pci, 0);
+
+    hz = timer_frequency();
+    if (hz == 0u) {
+        hz = 250u;
+    }
+    xhci_next_late_enum_tick = timer_ticks() +
+                               (unsigned long long)hz * USB_LATE_ENUM_INITIAL_DELAY_SECONDS;
+}
+
+int usb_xhci_init_controller(uint32_t index) {
+    usb_controller_info_t *info;
+    uint16_t command;
+
+    if (index >= controller_count) {
+        return -1;
+    }
+
+    info = &controllers[index];
+    if (info->type != USB_CONTROLLER_XHCI) {
+        return -1;
+    }
+    if (info->initialized) {
+        return 0;
+    }
+
+    command = pci_read_config16(info->bus, info->device, info->function, 0x04);
+    command |= PCI_COMMAND_IO_SPACE |
+               PCI_COMMAND_MEMORY_SPACE |
+               PCI_COMMAND_INTERRUPT_DISABLE;
+    pci_write_config16(info->bus, info->device, info->function, 0x04, command);
+
+    probe_xhci(info);
+    if (info->max_slots == 0 || info->port_count == 0) {
+        return -1;
+    }
+    info->initialized = 1;
+    return info->initialized ? 0 : -1;
+}
+
+int usb_xhci_handoff_controller(uint32_t index) {
+    usb_controller_info_t *info;
+
+    if (index >= controller_count) {
+        return -1;
+    }
+
+    info = &controllers[index];
+    if (info->type != USB_CONTROLLER_XHCI) {
+        return -1;
+    }
+    if (!info->initialized && usb_xhci_init_controller(index) != 0) {
+        return -1;
+    }
+
+    return xhci_legacy_handoff(info);
+}
+
+static usb_controller_info_t *xhci_controller_for_stage(uint32_t index) {
+    usb_controller_info_t *info;
+
+    if (index >= controller_count) {
+        return 0;
+    }
+
+    info = &controllers[index];
+    if (info->type != USB_CONTROLLER_XHCI) {
+        return 0;
+    }
+    if (!info->initialized && usb_xhci_init_controller(index) != 0) {
+        return 0;
+    }
+    if (!xhci_ready_for_start(info)) {
+        return 0;
+    }
+    return info;
+}
+
+static int xhci_enable_bus_mastering(usb_controller_info_t *info) {
+    uint16_t command;
+
+    if (info == 0) {
+        return -1;
+    }
+
+    command = pci_read_config16(info->bus, info->device, info->function, 0x04);
+    command |= PCI_COMMAND_IO_SPACE |
+               PCI_COMMAND_MEMORY_SPACE |
+               PCI_COMMAND_BUS_MASTER |
+               PCI_COMMAND_INTERRUPT_DISABLE;
+    pci_write_config16(info->bus, info->device, info->function, 0x04, command);
+    return 0;
+}
+
+static int xhci_disable_bus_mastering(usb_controller_info_t *info) {
+    uint16_t command;
+
+    if (info == 0) {
+        return -1;
+    }
+
+    command = pci_read_config16(info->bus, info->device, info->function, 0x04);
+    command |= PCI_COMMAND_IO_SPACE |
+               PCI_COMMAND_MEMORY_SPACE |
+               PCI_COMMAND_INTERRUPT_DISABLE;
+    command &= (uint16_t)~PCI_COMMAND_BUS_MASTER;
+    pci_write_config16(info->bus, info->device, info->function, 0x04, command);
+    return 0;
+}
+
+int usb_xhci_halt_controller(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0 || xhci_legacy_handoff(info) != 0) {
+        return -1;
+    }
+    return xhci_halt(info);
+}
+
+int usb_xhci_reset_controller(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0 || xhci_legacy_handoff(info) != 0) {
+        return -1;
+    }
+    if (xhci_halt(info) != 0) {
+        return -1;
+    }
+    return xhci_reset_controller(info);
+}
+
+int usb_xhci_setup_rings(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0) {
+        return -1;
+    }
+    return xhci_setup_rings_and_contexts(info);
+}
+
+int usb_xhci_run_controller(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0 || xhci_enable_bus_mastering(info) != 0) {
+        return -1;
+    }
+    return xhci_run(info);
+}
+
+int usb_xhci_poke_run_controller(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0 || xhci_enable_bus_mastering(info) != 0) {
+        return -1;
+    }
+    return xhci_poke_run(info);
+}
+
+int usb_xhci_poke_no_dma_controller(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0 || xhci_disable_bus_mastering(info) != 0) {
+        return -1;
+    }
+    return xhci_poke_run(info);
+}
+
+int usb_xhci_busmaster_controller(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0) {
+        return -1;
+    }
+    return xhci_enable_bus_mastering(info);
+}
+
+int usb_xhci_no_busmaster_controller(uint32_t index) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+
+    if (info == 0) {
+        return -1;
+    }
+    return xhci_disable_bus_mastering(info);
+}
+
+int usb_xhci_status_controller(uint32_t index, uint32_t *usbcmd, uint32_t *usbsts) {
+    usb_controller_info_t *info = xhci_controller_for_stage(index);
+    uint64_t opbase;
+
+    if (info == 0 || usbcmd == 0 || usbsts == 0) {
+        return -1;
+    }
+
+    opbase = xhci_operational_base(info);
+    *usbcmd = mmio_read32(opbase, XHCI_USBCMD);
+    *usbsts = mmio_read32(opbase, XHCI_USBSTS);
+    return 0;
+}
+
+int usb_xhci_start_controller(uint32_t index) {
+    usb_controller_info_t *info;
+
+    if (index >= controller_count) {
+        return -1;
+    }
+
+    info = &controllers[index];
+    if (info->type != USB_CONTROLLER_XHCI) {
+        return -1;
+    }
+    if (info->running) {
+        return 0;
+    }
+    if (!info->initialized && usb_xhci_init_controller(index) != 0) {
+        return -1;
+    }
+    if (xhci_legacy_handoff(info) != 0) {
+        return -1;
+    }
+    if (xhci_halt(info) != 0 ||
+        xhci_reset_controller(info) != 0 ||
+        xhci_setup_rings_and_contexts(info) != 0 ||
+        xhci_enable_bus_mastering(info) != 0 ||
+        xhci_run(info) != 0) {
+        return -1;
+    }
+    return info->running ? 0 : -1;
+}
+
+int usb_xhci_enumerate_controller(uint32_t index) {
+    usb_controller_info_t *info;
+
+    if (index >= controller_count) {
+        return -1;
+    }
+
+    info = &controllers[index];
+    if (info->type != USB_CONTROLLER_XHCI) {
+        return -1;
+    }
+    if (!info->running) {
+        if (usb_xhci_start_controller(index) != 0) {
+            return -1;
+        }
+    }
+
+    xhci_reset_connected_ports(info, xhci_operational_base(info));
+    return 0;
+}
+
+static int xhci_recover_controller_for_mouse(uint32_t index) {
+    if (index >= controller_count || controllers[index].type != USB_CONTROLLER_XHCI) {
+        return -1;
+    }
+
+    if (usb_xhci_reset_controller(index) != 0) {
+        return -1;
+    }
+    xhci_wait_ms(500u);
+    if (usb_xhci_start_controller(index) != 0) {
+        return -1;
+    }
+    xhci_wait_ms(500u);
+    return usb_xhci_enumerate_controller(index);
+}
+
+int usb_xhci_scan_ports(uint32_t index) {
+    usb_controller_info_t *info;
+    uint16_t command;
+    uint64_t opbase;
+    uint32_t max_ports;
+    uint32_t connected = 0;
+
+    if (index >= controller_count) {
+        return -1;
+    }
+
+    info = &controllers[index];
+    if (info->type != USB_CONTROLLER_XHCI ||
+        info->bar0 == 0 ||
+        info->bar0_is_io) {
+        return -1;
+    }
+
+    command = pci_read_config16(info->bus, info->device, info->function, 0x04);
+    command |= PCI_COMMAND_IO_SPACE | PCI_COMMAND_MEMORY_SPACE | PCI_COMMAND_INTERRUPT_DISABLE;
+    pci_write_config16(info->bus, info->device, info->function, 0x04, command);
+
+    probe_xhci(info);
+    if (info->port_count == 0u) {
+        return -1;
+    }
+
+    opbase = xhci_operational_base(info);
+    max_ports = info->port_count;
+    if (max_ports > 255u) {
+        max_ports = 255u;
+    }
+
+    for (uint32_t port = 0; port < max_ports; ++port) {
+        uint32_t offset = XHCI_PORT_REGS + port * XHCI_PORT_STRIDE;
+        uint32_t portsc = mmio_read32(opbase, offset);
+
+        if ((portsc & XHCI_PORTSC_CCS) != 0u) {
+            ++connected;
+        }
+    }
+
+    info->connected_port_count = connected;
+    return 0;
+}
+
+static void xhci_try_late_mouse_enumeration(void) {
+    unsigned long long now;
+    unsigned int hz;
+
+    if (xhci_mouse_controller != 0 || xhci_late_enum_attempts >= USB_LATE_ENUM_MAX_ATTEMPTS) {
+        return;
+    }
+
+    now = timer_ticks();
+    if (now < xhci_next_late_enum_tick) {
+        return;
+    }
+
+    hz = timer_frequency();
+    if (hz == 0u) {
+        hz = 250u;
+    }
+    xhci_next_late_enum_tick = now + (unsigned long long)hz * USB_LATE_ENUM_RETRY_SECONDS;
+    ++xhci_late_enum_attempts;
+
+    for (uint32_t i = 0; i < controller_count; ++i) {
+        if (controllers[i].type == USB_CONTROLLER_XHCI &&
+            controllers[i].mouse_configured == 0u) {
+            (void)xhci_recover_controller_for_mouse(i);
+            if (xhci_mouse_controller != 0) {
+                return;
+            }
+        }
+    }
+}
+
+void usb_poll(void) {
+    if (xhci_mouse_controller == 0 ||
+        xhci_mouse_slot == 0 ||
+        xhci_mouse_dci == 0 ||
+        xhci_mouse_report_size == 0) {
+        xhci_try_late_mouse_enumeration();
+        return;
+    }
+
+    if (xhci_mouse_pending) {
+        for (uint32_t i = 0; i < 8u; ++i) {
+            xhci_trb_t event;
+
+            if (!xhci_next_event(&event)) {
+                break;
+            }
+
+            xhci_update_erdp(xhci_mouse_controller);
+            if (trb_type(&event) != XHCI_TRB_TYPE_TRANSFER_EVENT ||
+                (event.control >> 24) != xhci_mouse_slot) {
+                continue;
+            }
+
+            xhci_mouse_controller->last_completion_code = event.status >> 24;
+            xhci_mouse_controller->mouse_last_completion_code = event.status >> 24;
+            xhci_finish_transfer_link_update(xhci_mouse_slot, event.parameter);
+            xhci_mouse_pending = 0;
+            xhci_mouse_controller->mouse_pending = 0;
+            if ((event.status >> 24) == XHCI_TRB_COMPLETION_SUCCESS ||
+                (event.status >> 24) == XHCI_TRB_COMPLETION_SHORT_PACKET) {
+                uint32_t residual = event.status & XHCI_TRB_TRANSFER_LENGTH_MASK;
+                uint32_t transferred = xhci_mouse_report_size > residual ?
+                                       xhci_mouse_report_size - residual :
+                                       xhci_mouse_report_size;
+                int dx = (int)(int8_t)xhci_mouse_report[1];
+                int dy = (int)(int8_t)xhci_mouse_report[2];
+                if (transferred >= 3u) {
+                    mouse_apply_usb_report(xhci_mouse_report[0], dx, dy);
+                    ++xhci_mouse_controller->mouse_report_count;
+                }
+            }
+            break;
+        }
+    }
+
+    if (!xhci_mouse_pending) {
+        zero_bytes(xhci_mouse_report, sizeof(xhci_mouse_report));
+        xhci_enqueue_transfer_trb(xhci_mouse_slot,
+                                  phys_addr(xhci_mouse_report),
+                                  xhci_mouse_report_size,
+                                  (XHCI_TRB_TYPE_NORMAL << XHCI_TRB_TYPE_SHIFT) |
+                                  XHCI_TRB_IOC);
+        xhci_ring_doorbell(xhci_mouse_controller, xhci_mouse_slot, xhci_mouse_dci);
+        xhci_mouse_pending = 1;
+        xhci_mouse_controller->mouse_pending = 1;
+    }
 }
 
 uint32_t usb_controller_count(void) {

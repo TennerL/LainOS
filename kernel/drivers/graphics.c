@@ -56,6 +56,10 @@ uint32_t graphics_format(void) {
     return graphics_fb_format;
 }
 
+uint32_t graphics_viewport_active(void) {
+    return graphics_viewport_depth > 0u ? 1u : 0u;
+}
+
 uint32_t graphics_pack_color(uint32_t rgb_color) {
     uint32_t r = (rgb_color >> 16) & 0xFFu;
     uint32_t g = (rgb_color >> 8) & 0xFFu;

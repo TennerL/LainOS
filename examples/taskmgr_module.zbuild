@@ -1,0 +1,3 @@
+include .
+module
+taskmgr_module.Z taskmgr_module.zo

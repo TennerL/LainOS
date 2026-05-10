@@ -1,0 +1,163 @@
+extern uint64_t ticks(void);
+extern uint64_t mem_total_kb(void);
+extern uint64_t mem_free_kb(void);
+extern uint64_t mem_used_kb(void);
+extern uint32_t cpu_count(void);
+extern uint32_t cpu_usage(uint32_t core);
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern uint32_t gfx_viewport_active(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void put_char_at_screen(uint32_t col, uint32_t row, uint32_t ch);
+extern void put_dec_at_screen(uint32_t col, uint32_t row, uint64_t value);
+
+global uint32_t taskmgr_enabled;
+global uint64_t taskmgr_next_tick;
+
+void put_taskmgr_title(void) {
+    put_char_at_screen(2, 1, 84);
+    put_char_at_screen(3, 1, 65);
+    put_char_at_screen(4, 1, 83);
+    put_char_at_screen(5, 1, 75);
+    put_char_at_screen(6, 1, 83);
+    put_char_at_screen(8, 1, 77);
+    put_char_at_screen(9, 1, 69);
+    put_char_at_screen(10, 1, 77);
+    put_char_at_screen(12, 1, 67);
+    put_char_at_screen(13, 1, 80);
+    put_char_at_screen(14, 1, 85);
+}
+
+void put_mem_label(uint32_t row) {
+    put_char_at_screen(2, row, 77);
+    put_char_at_screen(3, row, 69);
+    put_char_at_screen(4, row, 77);
+    put_char_at_screen(6, row, 85);
+    put_char_at_screen(7, row, 83);
+    put_char_at_screen(8, row, 69);
+    put_char_at_screen(9, row, 68);
+}
+
+void put_core_label(uint32_t row, uint32_t core) {
+    put_char_at_screen(2, row, 67);
+    put_char_at_screen(3, row, 80);
+    put_char_at_screen(4, row, 85);
+    put_char_at_screen(5, row, 32);
+    put_dec_at_screen(6, row, core);
+}
+
+void put_percent(uint32_t col, uint32_t row, uint32_t value) {
+    gfx_fill_rect(col * 8, row * 10, 48, 10, 0x18111f);
+    put_dec_at_screen(col, row, value);
+    put_char_at_screen(col + 3, row, 37);
+}
+
+void draw_bar(uint32_t x, uint32_t y, uint32_t width, uint32_t color, uint32_t pct) {
+    uint32_t filled;
+
+    if (pct > 100) {
+        pct = 100;
+    }
+    filled = ((width - 2) * pct) / 100;
+    gfx_fill_rect(x, y, width, 14, 0x0d0a12);
+    gfx_draw_rect(x, y, width, 14, 0x6e5876);
+    gfx_fill_rect(x + 1, y + 1, filled, 12, color);
+}
+
+void draw_taskmgr(void) {
+    uint32_t width;
+    uint32_t height;
+    uint32_t bar_x;
+    uint32_t bar_w;
+    uint32_t total;
+    uint32_t used;
+    uint32_t free_kb;
+    uint32_t mem_pct;
+    uint32_t cores;
+    uint32_t core;
+    uint32_t row;
+    uint32_t y;
+    uint32_t cpu;
+
+    width = gfx_width();
+    height = gfx_height();
+    if (width < 180 || height < 110) {
+        return;
+    }
+
+    bar_x = 92;
+    if (width > 112) {
+        bar_w = width - 108;
+    } else {
+        bar_w = 64;
+    }
+
+    gfx_fill_rect(0, 0, width, height, 0x120d1b);
+    gfx_fill_rect(0, 0, width, 24, 0x2d2038);
+    gfx_fill_rect(0, 22, width, 2, 0xe05f4f);
+    put_taskmgr_title();
+
+    total = mem_total_kb();
+    used = mem_used_kb();
+    free_kb = mem_free_kb();
+    if (total != 0) {
+        mem_pct = (used * 100) / total;
+    } else {
+        mem_pct = 0;
+    }
+
+    put_mem_label(4);
+    put_percent(12, 4, mem_pct);
+    put_char_at_screen(18, 4, 70);
+    put_char_at_screen(19, 4, 82);
+    put_char_at_screen(20, 4, 69);
+    put_char_at_screen(21, 4, 69);
+    put_dec_at_screen(23, 4, free_kb / 1024);
+    put_char_at_screen(28, 4, 77);
+    draw_bar(bar_x, 40, bar_w, 0xe05f4f, mem_pct);
+
+    cores = cpu_count();
+    if (cores == 0) {
+        cores = 1;
+    }
+    core = 0;
+    row = 7;
+    y = 70;
+    while (core < cores && core < 8 && y + 16 < height) {
+        cpu = cpu_usage(core);
+        put_core_label(row, core);
+        put_percent(12, row, cpu);
+        draw_bar(bar_x, y, bar_w, 0x33aaff, cpu);
+        core = core + 1;
+        row = row + 2;
+        y = y + 24;
+    }
+}
+
+export void zmodule_tick(void) {
+    uint64_t now;
+
+    if (taskmgr_enabled == 0) {
+        return;
+    }
+    if (gfx_viewport_active() == 0) {
+        return;
+    }
+
+    now = ticks();
+    if (now < taskmgr_next_tick) {
+        return;
+    }
+    taskmgr_next_tick = now + 25;
+    draw_taskmgr();
+}
+
+export void zmodule_unload(void) {
+    taskmgr_enabled = 0;
+}
+
+taskmgr_enabled = 1;
+taskmgr_next_tick = 0;
+print("task manager module loaded: open it from Modules\n");
+return 0;
