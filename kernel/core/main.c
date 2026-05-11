@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "dma.h"
 #include "graphics.h"
 #include "net.h"
 #include "shell.h"
@@ -291,6 +292,8 @@ void kernel_main(boot_info_t *info) {
     interrupts_init();
     boot_stage("timer");
     timer_init();
+    boot_stage("dma");
+    dma_init(info);
     boot_stage("keyboard");
     keyboard_init();
     boot_stage("mouse");

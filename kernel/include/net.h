@@ -14,7 +14,10 @@ typedef int (*net_poll_t)(void *ctx);
 typedef struct {
     int present;
     char name[8];
+    char driver[16];
     uint8_t mac[NET_MAC_SIZE];
+    uint16_t vendor_id;
+    uint16_t device_id;
     int link_up;
     uint64_t rx_packets;
     uint64_t tx_packets;
@@ -25,8 +28,85 @@ typedef struct {
     void *ctx;
 } net_device_t;
 
+typedef struct {
+    uint64_t rx_arp;
+    uint64_t rx_ipv4;
+    uint64_t rx_other;
+    uint64_t arp_requests;
+    uint64_t arp_replies;
+    uint64_t arp_mismatches;
+    uint64_t arp_tx_errors;
+    uint16_t last_eth_type;
+    uint16_t last_inner_eth_type;
+    uint16_t last_arp_op;
+    uint32_t last_arp_requested_ip;
+    uint32_t last_arp_sender_ip;
+    uint32_t last_arp_target_ip;
+} net_debug_info_t;
+
+typedef struct {
+    uint32_t present;
+    uint32_t status;
+    uint32_t ctrl;
+    uint32_t ctrl_ext;
+    uint32_t pci_command;
+    uint32_t pmcsr;
+    uint32_t rctl;
+    uint32_t tctl;
+    uint32_t rxdctl;
+    uint32_t txdctl;
+    uint32_t tarc0;
+    uint32_t tarc1;
+    uint32_t iosfpc;
+    uint32_t pba;
+    uint32_t gcr;
+    uint32_t fwsm;
+    uint32_t h2me;
+    uint32_t phy_result;
+    uint32_t phy_pm_ctrl;
+    uint32_t phy_ulp_cfg;
+    uint32_t reset_result;
+    uint32_t rdh;
+    uint32_t rdt;
+    uint32_t tdh;
+    uint32_t tdt;
+    uint64_t tx_reg_base;
+    uint32_t tx_reg_len;
+    uint32_t rx_tail;
+    uint32_t tx_tail;
+    uint32_t last_tx_status;
+    uint32_t last_tx_command;
+    uint32_t last_tx_length;
+    uint64_t last_tx_desc_addr;
+    uint64_t last_tx_desc_phys;
+    uint64_t last_tx_buffer_phys;
+    uint8_t last_tx_desc_bytes[16];
+    uint32_t first_rx_status;
+    uint32_t first_rx_errors;
+    uint32_t first_rx_length;
+    uint64_t first_rx_desc_addr;
+    uint8_t first_rx_bytes[16];
+    uint32_t rx_scan_dd_count;
+    uint32_t rx_scan_index;
+    uint32_t rx_scan_status;
+    uint32_t rx_scan_errors;
+    uint32_t rx_scan_length;
+    uint8_t rx_scan_bytes[16];
+    uint32_t last_rx_status;
+    uint32_t last_rx_errors;
+    uint32_t last_rx_length;
+    uint64_t last_rx_desc_addr;
+    uint8_t last_rx_bytes[16];
+    uint64_t rx_ring_phys;
+    uint64_t tx_ring_phys;
+    uint64_t first_rx_phys;
+} e1000_debug_info_t;
+
 void net_init(void);
 int net_register_device(const char *name,
+                        const char *driver,
+                        uint16_t vendor_id,
+                        uint16_t device_id,
                         const uint8_t mac[NET_MAC_SIZE],
                         int link_up,
                         net_send_frame_t send_frame,
@@ -53,6 +133,16 @@ int net_http_get(uint32_t index,
                  char *out,
                  uint32_t out_capacity,
                  uint32_t *out_size);
+int net_arp_probe(uint32_t index, uint32_t ip, uint8_t mac[NET_MAC_SIZE]);
+void net_debug_info(net_debug_info_t *out);
 void e1000_init(void);
+int e1000_debug_info(uint32_t index, e1000_debug_info_t *out);
+int e1000_reset_controller(uint32_t index);
+uint32_t intel_net_unsupported_count(void);
+int intel_net_unsupported_info(uint32_t index,
+                               uint16_t *vendor_id,
+                               uint16_t *device_id,
+                               const char **name,
+                               const char **needed_driver);
 
 #endif

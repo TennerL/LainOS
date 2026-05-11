@@ -3,6 +3,8 @@
 
 #define NET_ETH_TYPE_ARP 0x0806u
 #define NET_ETH_TYPE_IPV4 0x0800u
+#define NET_ETH_TYPE_VLAN 0x8100u
+#define NET_ETH_TYPE_QINQ 0x88A8u
 #define NET_IP_PROTO_TCP 6u
 #define NET_ARP_OP_REQUEST 1u
 #define NET_ARP_OP_REPLY 2u
@@ -92,11 +94,25 @@ static uint16_t next_local_port = 49152u;
 static uint32_t local_ip = NET_DEFAULT_IP;
 static uint32_t local_netmask = NET_DEFAULT_MASK;
 static uint32_t local_gateway = NET_DEFAULT_GATEWAY;
+static net_debug_info_t debug_info;
+
+static void net_zero(void *ptr, uint32_t size);
 
 static void copy_name(char *dst, const char *src) {
     uint32_t i = 0;
 
     while (src[i] && i + 1u < sizeof(devices[0].name)) {
+        dst[i] = src[i];
+        ++i;
+    }
+
+    dst[i] = '\0';
+}
+
+static void copy_driver(char *dst, const char *src) {
+    uint32_t i = 0;
+
+    while (src[i] && i + 1u < sizeof(devices[0].driver)) {
         dst[i] = src[i];
         ++i;
     }
@@ -110,6 +126,7 @@ void net_init(void) {
     }
 
     device_count = 0;
+    net_zero(&debug_info, sizeof(debug_info));
     e1000_init();
 }
 
@@ -132,18 +149,24 @@ uint32_t net_ipv4_gateway(void) {
 }
 
 int net_register_device(const char *name,
+                        const char *driver,
+                        uint16_t vendor_id,
+                        uint16_t device_id,
                         const uint8_t mac[NET_MAC_SIZE],
                         int link_up,
                         net_send_frame_t send_frame,
                         net_poll_t poll,
                         void *ctx) {
-    if (device_count >= NET_MAX_DEVICES || !name || !mac || !send_frame || !poll) {
+    if (device_count >= NET_MAX_DEVICES || !name || !driver || !mac || !send_frame || !poll) {
         return -1;
     }
 
     uint32_t index = device_count++;
     devices[index].present = 1;
     copy_name(devices[index].name, name);
+    copy_driver(devices[index].driver, driver);
+    devices[index].vendor_id = vendor_id;
+    devices[index].device_id = device_id;
     for (uint32_t i = 0; i < NET_MAC_SIZE; ++i) {
         devices[index].mac[i] = mac[i];
     }
@@ -419,7 +442,11 @@ static int net_send_arp_request(uint32_t index, uint32_t target_ip) {
     net_arp_packet_t *arp = (net_arp_packet_t *)(frame + sizeof(net_eth_header_t));
     const net_device_t *dev = net_get_device_const(index);
 
+    ++debug_info.arp_requests;
+    debug_info.last_arp_requested_ip = target_ip;
+
     if (!dev) {
+        ++debug_info.arp_tx_errors;
         return -1;
     }
 
@@ -440,7 +467,12 @@ static int net_send_arp_request(uint32_t index, uint32_t target_ip) {
     arp->spa = net_htonl(local_ip);
     arp->tpa = net_htonl(target_ip);
 
-    return net_send_frame(index, frame, sizeof(frame));
+    if (net_send_frame(index, frame, sizeof(frame)) != 0) {
+        ++debug_info.arp_tx_errors;
+        return -1;
+    }
+
+    return 0;
 }
 
 static int net_arp_resolve(uint32_t index, uint32_t ip, uint8_t mac[6]) {
@@ -569,29 +601,76 @@ static void net_http_copy_body_byte(net_tcp_get_t *ctx, char ch) {
     }
 }
 
-static void net_handle_arp(uint32_t index, const uint8_t *frame, uint32_t size) {
+static int net_send_arp_reply(uint32_t index, const uint8_t target_mac[6], uint32_t target_ip) {
+    uint8_t frame[NET_MIN_FRAME_SIZE];
+    net_eth_header_t *eth = (net_eth_header_t *)frame;
+    net_arp_packet_t *arp = (net_arp_packet_t *)(frame + sizeof(net_eth_header_t));
+    const net_device_t *dev = net_get_device_const(index);
+
+    if (!dev) {
+        return -1;
+    }
+
+    net_zero(frame, sizeof(frame));
+    net_copy(eth->dst, target_mac, 6u);
+    net_copy(eth->src, dev->mac, 6u);
+    eth->type = net_htons(NET_ETH_TYPE_ARP);
+    arp->htype = net_htons(1u);
+    arp->ptype = net_htons(NET_ETH_TYPE_IPV4);
+    arp->hlen = 6u;
+    arp->plen = 4u;
+    arp->oper = net_htons(NET_ARP_OP_REPLY);
+    net_copy(arp->sha, dev->mac, 6u);
+    arp->spa = net_htonl(local_ip);
+    net_copy(arp->tha, target_mac, 6u);
+    arp->tpa = net_htonl(target_ip);
+
+    return net_send_frame(index, frame, sizeof(frame));
+}
+
+static void net_handle_arp(uint32_t index, const uint8_t *payload, uint32_t size) {
     const net_arp_packet_t *arp;
     uint32_t sender_ip;
+    uint32_t target_ip;
+    uint16_t op;
 
-    if (size < sizeof(net_eth_header_t) + sizeof(net_arp_packet_t)) {
+    if (size < sizeof(net_arp_packet_t)) {
         return;
     }
 
-    arp = (const net_arp_packet_t *)(frame + sizeof(net_eth_header_t));
+    arp = (const net_arp_packet_t *)payload;
+    if (net_ntohs(arp->htype) != 1u ||
+        net_ntohs(arp->ptype) != NET_ETH_TYPE_IPV4 ||
+        arp->hlen != 6u ||
+        arp->plen != 4u) {
+        return;
+    }
+
     sender_ip = net_ntohl(arp->spa);
+    target_ip = net_ntohl(arp->tpa);
+    op = net_ntohs(arp->oper);
+
+    debug_info.last_arp_op = op;
+    debug_info.last_arp_sender_ip = sender_ip;
+    debug_info.last_arp_target_ip = target_ip;
+    if (op == NET_ARP_OP_REPLY) {
+        ++debug_info.arp_replies;
+    } else if (op == NET_ARP_OP_REQUEST && target_ip == local_ip) {
+        (void)net_send_arp_reply(index, arp->sha, sender_ip);
+    }
 
     if (arp_wait.active &&
         arp_wait.device == index &&
         arp_wait.wanted_ip == sender_ip &&
-        net_ntohs(arp->oper) == NET_ARP_OP_REPLY) {
+        op == NET_ARP_OP_REPLY) {
         net_copy(arp_wait.mac, arp->sha, 6u);
         arp_wait.found = 1;
+    } else if (arp_wait.active && op == NET_ARP_OP_REPLY) {
+        ++debug_info.arp_mismatches;
     }
 }
 
 static void net_handle_tcp(uint32_t index,
-                           const uint8_t *frame,
-                           uint32_t size,
                            const net_ipv4_header_t *ip,
                            uint32_t ip_header_size,
                            uint32_t ip_total_size) {
@@ -609,8 +688,7 @@ static void net_handle_tcp(uint32_t index,
     tcp = (const net_tcp_header_t *)((const uint8_t *)ip + ip_header_size);
     tcp_header_size = (uint32_t)(tcp->data_offset >> 4) * 4u;
     if (tcp_header_size < sizeof(net_tcp_header_t) ||
-        ip_total_size < ip_header_size + tcp_header_size ||
-        size < sizeof(net_eth_header_t) + ip_header_size + tcp_header_size) {
+        ip_total_size < ip_header_size + tcp_header_size) {
         return;
     }
 
@@ -679,37 +757,38 @@ static void net_handle_tcp(uint32_t index,
         ++tcp_get.seq;
     }
 
-    (void)frame;
 }
 
-static void net_handle_ipv4(uint32_t index, const uint8_t *frame, uint32_t size) {
+static void net_handle_ipv4(uint32_t index, const uint8_t *payload, uint32_t size) {
     const net_ipv4_header_t *ip;
     uint32_t ip_header_size;
     uint32_t ip_total_size;
 
-    if (size < sizeof(net_eth_header_t) + sizeof(net_ipv4_header_t)) {
+    if (size < sizeof(net_ipv4_header_t)) {
         return;
     }
 
-    ip = (const net_ipv4_header_t *)(frame + sizeof(net_eth_header_t));
+    ip = (const net_ipv4_header_t *)payload;
     ip_header_size = (uint32_t)(ip->ver_ihl & 0x0Fu) * 4u;
     ip_total_size = net_ntohs(ip->total_length);
     if ((ip->ver_ihl >> 4) != 4u ||
         ip_header_size < sizeof(net_ipv4_header_t) ||
         ip_total_size < ip_header_size ||
-        size < sizeof(net_eth_header_t) + ip_total_size ||
+        size < ip_total_size ||
         ip->proto != NET_IP_PROTO_TCP ||
         net_ntohl(ip->dst) != local_ip) {
         return;
     }
 
-    net_handle_tcp(index, frame, size, ip, ip_header_size, ip_total_size);
+    net_handle_tcp(index, ip, ip_header_size, ip_total_size);
 }
 
 void net_receive_frame(uint32_t index, const void *data, uint32_t size) {
     const uint8_t *frame = (const uint8_t *)data;
     const net_eth_header_t *eth;
+    const uint8_t *payload;
     uint16_t type;
+    uint32_t payload_offset = sizeof(net_eth_header_t);
 
     if (index >= device_count || data == 0 || size < sizeof(net_eth_header_t)) {
         return;
@@ -717,11 +796,43 @@ void net_receive_frame(uint32_t index, const void *data, uint32_t size) {
 
     eth = (const net_eth_header_t *)frame;
     type = net_ntohs(eth->type);
-    if (type == NET_ETH_TYPE_ARP) {
-        net_handle_arp(index, frame, size);
-    } else if (type == NET_ETH_TYPE_IPV4) {
-        net_handle_ipv4(index, frame, size);
+    debug_info.last_eth_type = type;
+    debug_info.last_inner_eth_type = type;
+    if ((type == NET_ETH_TYPE_VLAN || type == NET_ETH_TYPE_QINQ) && size >= sizeof(net_eth_header_t) + 4u) {
+        type = ((uint16_t)frame[16] << 8) | frame[17];
+        payload_offset += 4u;
+        debug_info.last_inner_eth_type = type;
     }
+
+    if (size < payload_offset) {
+        return;
+    }
+    payload = frame + payload_offset;
+    if (type == NET_ETH_TYPE_ARP) {
+        ++debug_info.rx_arp;
+        net_handle_arp(index, payload, size - payload_offset);
+    } else if (type == NET_ETH_TYPE_IPV4) {
+        ++debug_info.rx_ipv4;
+        net_handle_ipv4(index, payload, size - payload_offset);
+    } else {
+        ++debug_info.rx_other;
+    }
+}
+
+int net_arp_probe(uint32_t index, uint32_t ip, uint8_t mac[NET_MAC_SIZE]) {
+    if (!mac || index >= device_count) {
+        return -1;
+    }
+
+    return net_arp_resolve(index, ip, mac);
+}
+
+void net_debug_info(net_debug_info_t *out) {
+    if (!out) {
+        return;
+    }
+
+    *out = debug_info;
 }
 
 static int net_wait_for_tcp_connected(uint32_t index) {

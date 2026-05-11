@@ -57,6 +57,7 @@ KERNEL_C_SOURCES := \
 	kernel/core/kernel_exports.c \
 	kernel/core/timer.c \
 	kernel/core/cpu.c \
+	kernel/core/dma.c \
 	kernel/core/power.c \
 	kernel/drivers/graphics.c \
 	kernel/drivers/console.c \

@@ -2953,6 +2953,15 @@ static void cmd_net_print_ipv4(uint32_t ip) {
     console_put_dec64(ip & 0xFFu);
 }
 
+static void cmd_net_print_bytes(const uint8_t *bytes, uint32_t count) {
+    for (uint32_t i = 0; i < count; ++i) {
+        if (i != 0) {
+            console_puts(" ");
+        }
+        put_hex_byte(bytes[i]);
+    }
+}
+
 static void build_test_frame(const net_device_t *dev, uint8_t frame[NET_MIN_FRAME_SIZE]) {
     static const char payload[] = "lainos e1000 test";
 
@@ -2971,6 +2980,174 @@ static void build_test_frame(const net_device_t *dev, uint8_t frame[NET_MIN_FRAM
     }
 }
 
+static void cmd_net_print_debug(void) {
+    net_debug_info_t debug;
+    e1000_debug_info_t hw;
+
+    net_debug_info(&debug);
+    console_puts("netdbg arp_tx=");
+    console_put_dec64(debug.arp_requests);
+    console_puts(" arp_txerr=");
+    console_put_dec64(debug.arp_tx_errors);
+    console_puts(" arp_rx=");
+    console_put_dec64(debug.arp_replies);
+    console_puts(" arp_bad=");
+    console_put_dec64(debug.arp_mismatches);
+    console_puts(" rx_arp=");
+    console_put_dec64(debug.rx_arp);
+    console_puts(" rx_ip=");
+    console_put_dec64(debug.rx_ipv4);
+    console_puts(" rx_other=");
+    console_put_dec64(debug.rx_other);
+    console_puts(" last_type=0x");
+    console_put_hex32(debug.last_eth_type);
+    console_puts(" inner=0x");
+    console_put_hex32(debug.last_inner_eth_type);
+    console_puts(" last_arp_op=");
+    console_put_dec64(debug.last_arp_op);
+    console_puts(" request=");
+    cmd_net_print_ipv4(debug.last_arp_requested_ip);
+    console_puts(" sender=");
+    cmd_net_print_ipv4(debug.last_arp_sender_ip);
+    console_puts(" target=");
+    cmd_net_print_ipv4(debug.last_arp_target_ip);
+    console_puts("\n");
+
+    if (e1000_debug_info(0, &hw) == 0) {
+        console_puts("e1000 status=0x");
+        console_put_hex32(hw.status);
+        console_puts(" ctrl=0x");
+        console_put_hex32(hw.ctrl);
+        console_puts(" ext=0x");
+        console_put_hex32(hw.ctrl_ext);
+        console_puts(" pcicmd=0x");
+        console_put_hex32(hw.pci_command);
+        console_puts(" pm=0x");
+        console_put_hex32(hw.pmcsr);
+        console_puts(" rctl=0x");
+        console_put_hex32(hw.rctl);
+            console_puts(" tctl=0x");
+            console_put_hex32(hw.tctl);
+            console_puts(" rxdctl=0x");
+            console_put_hex32(hw.rxdctl);
+            console_puts(" txdctl=0x");
+            console_put_hex32(hw.txdctl);
+            console_puts(" tarc0=0x");
+            console_put_hex32(hw.tarc0);
+            console_puts(" tarc1=0x");
+            console_put_hex32(hw.tarc1);
+            console_puts(" iosfpc=0x");
+            console_put_hex32(hw.iosfpc);
+            console_puts(" pba=0x");
+            console_put_hex32(hw.pba);
+            console_puts(" gcr=0x");
+            console_put_hex32(hw.gcr);
+            console_puts(" fwsm=0x");
+            console_put_hex32(hw.fwsm);
+            console_puts(" h2me=0x");
+            console_put_hex32(hw.h2me);
+            console_puts(" phyres=0x");
+            console_put_hex32(hw.phy_result);
+            console_puts(" phypm=0x");
+            console_put_hex32(hw.phy_pm_ctrl);
+            console_puts(" phyulp=0x");
+            console_put_hex32(hw.phy_ulp_cfg);
+            console_puts(" rst=0x");
+            console_put_hex32(hw.reset_result);
+            console_puts(" rdh=");
+        console_put_dec64(hw.rdh);
+        console_puts(" rdt=");
+        console_put_dec64(hw.rdt);
+        console_puts(" tdh=");
+        console_put_dec64(hw.tdh);
+        console_puts(" tdt=");
+        console_put_dec64(hw.tdt);
+        console_puts(" txbase=0x");
+        console_put_hex64(hw.tx_reg_base);
+        console_puts(" txreglen=");
+        console_put_dec64(hw.tx_reg_len);
+        console_puts(" txs=0x");
+        console_put_hex32(hw.last_tx_status);
+        console_puts(" txc=0x");
+        console_put_hex32(hw.last_tx_command);
+        console_puts(" txlen=");
+        console_put_dec64(hw.last_tx_length);
+        console_puts(" txaddr=0x");
+        console_put_hex64(hw.last_tx_desc_addr);
+        console_puts(" txdesc=0x");
+        console_put_hex64(hw.last_tx_desc_phys);
+        console_puts(" txdescbytes=");
+        cmd_net_print_bytes(hw.last_tx_desc_bytes, sizeof(hw.last_tx_desc_bytes));
+        console_puts(" rxst=0x");
+            console_put_hex32(hw.first_rx_status);
+            console_puts(" rxerr=0x");
+            console_put_hex32(hw.first_rx_errors);
+            console_puts(" rxlen=");
+            console_put_dec64(hw.first_rx_length);
+            console_puts(" rxaddr=0x");
+            console_put_hex64(hw.first_rx_desc_addr);
+            console_puts(" rxbytes=");
+            cmd_net_print_bytes(hw.first_rx_bytes, sizeof(hw.first_rx_bytes));
+            console_puts(" rxdd=");
+            console_put_dec64(hw.rx_scan_dd_count);
+            console_puts(" rxdi=");
+            console_put_dec64(hw.rx_scan_index);
+            console_puts(" rxds=0x");
+            console_put_hex32(hw.rx_scan_status);
+            console_puts("/e0x");
+            console_put_hex32(hw.rx_scan_errors);
+            console_puts("/");
+            console_put_dec64(hw.rx_scan_length);
+            console_puts(" ");
+            cmd_net_print_bytes(hw.rx_scan_bytes, sizeof(hw.rx_scan_bytes));
+            console_puts(" lastrx=0x");
+            console_put_hex32(hw.last_rx_status);
+            console_puts("/e0x");
+            console_put_hex32(hw.last_rx_errors);
+            console_puts("/");
+            console_put_dec64(hw.last_rx_length);
+            console_puts("/a0x");
+            console_put_hex64(hw.last_rx_desc_addr);
+            console_puts(" ");
+            cmd_net_print_bytes(hw.last_rx_bytes, sizeof(hw.last_rx_bytes));
+            console_puts(" rxring=0x");
+            console_put_hex64(hw.rx_ring_phys);
+            console_puts(" txring=0x");
+            console_put_hex64(hw.tx_ring_phys);
+            console_puts(" rxbuf=0x");
+            console_put_hex64(hw.first_rx_phys);
+            console_puts("\n");
+        }
+    }
+
+static void cmd_net_print_device(uint32_t index) {
+    const net_device_t *dev = net_get_device_const(index);
+
+    if (!dev) {
+        return;
+    }
+
+    console_puts(dev->name);
+    console_puts(" ");
+    console_puts(dev->driver);
+    console_puts(" pci=");
+    console_put_hex32(dev->vendor_id);
+    console_puts(":");
+    console_put_hex32(dev->device_id);
+    console_puts(" mac=");
+    cmd_net_print_mac(dev->mac);
+    console_puts(dev->link_up ? " link=up" : " link=down");
+    console_puts(" rx=");
+    console_put_dec64(dev->rx_packets);
+    console_puts(" tx=");
+    console_put_dec64(dev->tx_packets);
+    console_puts(" drop=");
+    console_put_dec64(dev->rx_dropped);
+    console_puts(" txerr=");
+    console_put_dec64(dev->tx_errors);
+    console_puts("\n");
+}
+
 static void cmd_net(const char *args, const boot_info_t *info) {
     char *mutable_args = (char *)args;
     char *command = 0;
@@ -2983,6 +3160,61 @@ static void cmd_net(const char *args, const boot_info_t *info) {
     split_first_arg(mutable_args, &command, &index_text);
     if (*command != '\0') {
         split_first_arg(index_text, &index_text, &extra);
+        if (streq(command, "arp")) {
+            uint32_t ip = 0;
+            uint8_t mac[NET_MAC_SIZE];
+
+            if (*index_text == '\0' ||
+                *extra != '\0' ||
+                net_parse_ipv4_addr(index_text, &ip) != 0) {
+                console_puts("usage: net arp ip\n");
+                return;
+            }
+
+            if (net_device_count() == 0) {
+                console_puts("net: no supported network device\n");
+                return;
+            }
+
+            console_puts("net: arp ");
+            cmd_net_print_ipv4(ip);
+            console_puts("\n");
+            if (net_arp_probe(0, ip, mac) != 0) {
+                console_puts("net: arp timed out\n");
+                cmd_net_print_device(0);
+                cmd_net_print_debug();
+            } else {
+                console_puts("net: arp reply mac=");
+                cmd_net_print_mac(mac);
+                console_puts("\n");
+                cmd_net_print_device(0);
+                cmd_net_print_debug();
+            }
+            return;
+        }
+
+        if (streq(command, "reset")) {
+            if (*index_text != '\0' || *extra != '\0') {
+                console_puts("usage: net reset\n");
+                return;
+            }
+
+            if (net_device_count() == 0) {
+                console_puts("net: no supported network device\n");
+                return;
+            }
+
+            console_puts("net: reset eth0\n");
+            if (e1000_reset_controller(0) != 0) {
+                console_puts("net: reset completed with warnings\n");
+            } else {
+                console_puts("net: reset complete\n");
+            }
+            cmd_net_print_device(0);
+            cmd_net_print_debug();
+            return;
+        }
+
         if (streq(command, "ip")) {
             char *mask_text = extra;
             char *gateway_text = 0;
@@ -3028,7 +3260,7 @@ static void cmd_net(const char *args, const boot_info_t *info) {
             *index_text == '\0' ||
             *extra != '\0' ||
             parse_u64_arg(index_text, &index) != 0) {
-            console_puts("usage: net [poll|send] index | net ip [address mask [gateway]]\n");
+            console_puts("usage: net [poll|send] index | net arp ip | net reset | net ip [address mask [gateway]]\n");
             return;
         }
 
@@ -3060,8 +3292,7 @@ static void cmd_net(const char *args, const boot_info_t *info) {
     }
 
     if (net_device_count() == 0) {
-        console_puts("no network devices. In QEMU try: -netdev user,id=net0 -device e1000,netdev=net0\n");
-        return;
+        console_puts("no supported network devices. In QEMU try: -netdev user,id=net0 -device e1000,netdev=net0\n");
     }
 
     console_puts("ip=");
@@ -3072,24 +3303,30 @@ static void cmd_net(const char *args, const boot_info_t *info) {
     cmd_net_print_ipv4(net_ipv4_gateway());
     console_puts("\n");
 
+    cmd_net_print_debug();
+
     for (uint32_t i = 0; i < net_device_count(); ++i) {
-        const net_device_t *dev = net_get_device_const(i);
-        if (!dev) {
+        cmd_net_print_device(i);
+    }
+
+    for (uint32_t i = 0; i < intel_net_unsupported_count(); ++i) {
+        uint16_t vendor_id = 0;
+        uint16_t device_id = 0;
+        const char *name = "?";
+        const char *needed_driver = "?";
+
+        if (intel_net_unsupported_info(i, &vendor_id, &device_id, &name, &needed_driver) != 0) {
             continue;
         }
 
-        console_puts(dev->name);
-        console_puts(" mac=");
-        cmd_net_print_mac(dev->mac);
-        console_puts(dev->link_up ? " link=up" : " link=down");
-        console_puts(" rx=");
-        console_put_dec64(dev->rx_packets);
-        console_puts(" tx=");
-        console_put_dec64(dev->tx_packets);
-        console_puts(" drop=");
-        console_put_dec64(dev->rx_dropped);
-        console_puts(" txerr=");
-        console_put_dec64(dev->tx_errors);
+        console_puts("unsupported Intel Ethernet ");
+        console_puts(name);
+        console_puts(" pci=");
+        console_put_hex32(vendor_id);
+        console_puts(":");
+        console_put_hex32(device_id);
+        console_puts(" needs ");
+        console_puts(needed_driver);
         console_puts("\n");
     }
 }
