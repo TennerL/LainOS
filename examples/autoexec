@@ -7,10 +7,14 @@ cp R:/examples/mouse_module.Z mouse_module.Z
 cp R:/examples/mouse_module.zbuild mouse_module.zbuild
 cp R:/examples/taskmgr_module.Z taskmgr_module.Z
 cp R:/examples/taskmgr_module.zbuild taskmgr_module.zbuild
+cp R:/examples/filemgr_module.Z filemgr_module.Z
+cp R:/examples/filemgr_module.zbuild filemgr_module.zbuild
 zinstall hwdash_module
 zmod hwdash_module.zo
 zinstall taskmgr_module
 zmod taskmgr_module.zo
+zinstall filemgr_module
+zmod filemgr_module.zo
 bgcolor 0x0035063E
 cd ..
 keymap de

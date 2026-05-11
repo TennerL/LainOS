@@ -40,6 +40,8 @@ unsigned int graphics_height(void);
 unsigned int graphics_pitch(void);
 unsigned int graphics_format(void);
 unsigned int graphics_viewport_active(void);
+unsigned int graphics_viewport_x(void);
+unsigned int graphics_viewport_y(void);
 unsigned int graphics_get_pixel(unsigned int x, unsigned int y);
 void graphics_fill_rect(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned int color);
 void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int width, unsigned int height, unsigned int color);

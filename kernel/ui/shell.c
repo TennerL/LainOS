@@ -8,6 +8,7 @@
 #include "editor.h"
 #include "keyboard.h"
 #include "lainfs.h"
+#include "net.h"
 #include "shell.h"
 #include "storage.h"
 #include "usb.h"
@@ -23,7 +24,7 @@
 #define EXEC_API_MAGIC 0x4C41494E45584543ull
 #define ASM_SOURCE_SIZE 524288u
 #define Z_INCLUDE_BUFFER_SIZE 65536u
-#define ZMODULE_IMAGE_SIZE 65536u
+#define ZMODULE_IMAGE_SIZE 131072u
 #define SHELL_PATH_SIZE 128u
 #define SHELL_MAX_SESSIONS 2u
 #define Z_INCLUDE_MAX_DEPTH 4u
@@ -74,6 +75,7 @@ typedef void (*exec_program_t)(const exec_api_t *api);
 typedef uint64_t (*exec_program_ret_t)(const exec_api_t *api);
 typedef void (*zmodule_tick_t)(void);
 typedef void (*zmodule_unload_t)(void);
+typedef void (*zmodule_void_hook_t)(void);
 
 typedef struct {
     const char *name;
@@ -1167,6 +1169,7 @@ static void cmd_edit(const char *args, const boot_info_t *info);
 static void cmd_browse(const char *args, const boot_info_t *info);
 static void cmd_desktop(const char *args, const boot_info_t *info);
 static void cmd_ahci(const char *args, const boot_info_t *info);
+static void cmd_net(const char *args, const boot_info_t *info);
 static void cmd_usb(const char *args, const boot_info_t *info);
 static void cmd_ticks(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
@@ -1238,6 +1241,7 @@ static const command_t commands[] = {
     { "desktop", "enter framebuffer desktop", cmd_desktop },
     { "keymap",  "set keyboard layout",       cmd_keymap },
     { "ahci",    "show AHCI status",          cmd_ahci },
+    { "net",     "show network devices",      cmd_net },
     { "usb",     "show USB controllers",      cmd_usb },
     { "ticks",   "show timer ticks",          cmd_ticks },
     { "run",     "run a script file",         cmd_run },
@@ -1386,7 +1390,7 @@ static void cmd_info(const char *args, const boot_info_t *info) {
 }
 
 static void cmd_cpus(const char *args, const boot_info_t *info) {
-    unsigned int count = status_cpu_core_count();
+    unsigned int count = cpu_core_count();
 
     (void)args;
     (void)info;
@@ -2917,6 +2921,117 @@ static void cmd_ahci(const char *args, const boot_info_t *info) {
     console_puts("\n");
 }
 
+static void put_hex_byte(uint8_t value) {
+    static const char digits[] = "0123456789abcdef";
+    char text[3];
+
+    text[0] = digits[(value >> 4) & 0x0Fu];
+    text[1] = digits[value & 0x0Fu];
+    text[2] = '\0';
+    console_puts(text);
+}
+
+static void cmd_net_print_mac(const uint8_t mac[NET_MAC_SIZE]) {
+    for (uint32_t i = 0; i < NET_MAC_SIZE; ++i) {
+        if (i != 0) {
+            console_puts(":");
+        }
+        put_hex_byte(mac[i]);
+    }
+}
+
+static void build_test_frame(const net_device_t *dev, uint8_t frame[NET_MIN_FRAME_SIZE]) {
+    static const char payload[] = "lainos e1000 test";
+
+    for (uint32_t i = 0; i < 6u; ++i) {
+        frame[i] = 0xFFu;
+        frame[6u + i] = dev->mac[i];
+    }
+
+    frame[12] = 0x88u;
+    frame[13] = 0xB5u;
+    for (uint32_t i = 14u; i < NET_MIN_FRAME_SIZE; ++i) {
+        frame[i] = 0;
+    }
+    for (uint32_t i = 0; payload[i] && 14u + i < NET_MIN_FRAME_SIZE; ++i) {
+        frame[14u + i] = (uint8_t)payload[i];
+    }
+}
+
+static void cmd_net(const char *args, const boot_info_t *info) {
+    char *mutable_args = (char *)args;
+    char *command = 0;
+    char *index_text = 0;
+    char *extra = 0;
+    uint64_t index = 0;
+
+    (void)info;
+
+    split_first_arg(mutable_args, &command, &index_text);
+    if (*command != '\0') {
+        split_first_arg(index_text, &index_text, &extra);
+        if ((!streq(command, "poll") && !streq(command, "send")) ||
+            *index_text == '\0' ||
+            *extra != '\0' ||
+            parse_u64_arg(index_text, &index) != 0) {
+            console_puts("usage: net [poll|send] index\n");
+            return;
+        }
+
+        if (index >= net_device_count()) {
+            console_puts("net: device not found\n");
+            return;
+        }
+
+        if (streq(command, "poll")) {
+            int handled = net_poll_device((uint32_t)index);
+            console_puts("net: poll handled ");
+            console_put_dec64(handled < 0 ? 0u : (uint32_t)handled);
+            console_puts(" packet(s)\n");
+        } else {
+            const net_device_t *dev = net_get_device_const((uint32_t)index);
+            uint8_t frame[NET_MIN_FRAME_SIZE];
+            if (!dev) {
+                console_puts("net: device not found\n");
+                return;
+            }
+
+            build_test_frame(dev, frame);
+            if (net_send_frame((uint32_t)index, frame, sizeof(frame)) != 0) {
+                console_puts("net: send failed\n");
+            } else {
+                console_puts("net: sent raw Ethernet test frame\n");
+            }
+        }
+    }
+
+    if (net_device_count() == 0) {
+        console_puts("no network devices. In QEMU try: -netdev user,id=net0 -device e1000,netdev=net0\n");
+        return;
+    }
+
+    for (uint32_t i = 0; i < net_device_count(); ++i) {
+        const net_device_t *dev = net_get_device_const(i);
+        if (!dev) {
+            continue;
+        }
+
+        console_puts(dev->name);
+        console_puts(" mac=");
+        cmd_net_print_mac(dev->mac);
+        console_puts(dev->link_up ? " link=up" : " link=down");
+        console_puts(" rx=");
+        console_put_dec64(dev->rx_packets);
+        console_puts(" tx=");
+        console_put_dec64(dev->tx_packets);
+        console_puts(" drop=");
+        console_put_dec64(dev->rx_dropped);
+        console_puts(" txerr=");
+        console_put_dec64(dev->tx_errors);
+        console_puts("\n");
+    }
+}
+
 static void cmd_desktop(const char *args, const boot_info_t *info) {
     (void)args;
     desktop_run(info);
@@ -3587,6 +3702,7 @@ static void cmd_zco(const char *args, const boot_info_t *info) {
     uint32_t asm_size = 0;
     uint32_t object_size = 0;
     uint32_t compile_error_line = 0;
+    int zobject_status = 0;
     char entry_label[32];
     char label_prefix[8];
     char *mutable_args = (char *)args;
@@ -3665,13 +3781,22 @@ static void cmd_zco(const char *args, const boot_info_t *info) {
     zscript_output[asm_size] = '\0';
 
     zero_memory(asm_output, EXEC_BUFFER_SIZE);
-    if (zobject_from_asm(zscript_output,
-                         asm_size,
-                         entry_label,
-                         asm_output,
-                         EXEC_BUFFER_SIZE,
-                         &object_size) != 0) {
-        console_puts("zco failed: object is too large\n");
+    zobject_status = zobject_from_asm(zscript_output,
+                                      asm_size,
+                                      entry_label,
+                                      asm_output,
+                                      EXEC_BUFFER_SIZE,
+                                      &object_size);
+    if (zobject_status != 0) {
+        if (zobject_status <= -3000) {
+            console_puts("zco failed: generated asm failed on line ");
+            console_put_dec64((uint32_t)(-zobject_status - 3000));
+            console_puts("\n");
+        } else if (zobject_status == -60 || zobject_status == -30) {
+            console_puts("zco failed: object is too large\n");
+        } else {
+            console_puts("zco failed: could not create object\n");
+        }
         return;
     }
 
@@ -3825,6 +3950,7 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
     uint32_t manifest_size = 0;
     uint32_t output_size = 0;
     uint32_t link_error_line = 0;
+    int zobject_status = 0;
     uint32_t source_dir = 0;
     uint32_t build_dir = 0;
     uint32_t include_dirs[Z_INCLUDE_MAX_DIRS];
@@ -4100,15 +4226,28 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
         zscript_output[asm_size] = '\0';
 
         zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
-        if (zobject_from_asm(zscript_output,
-                             asm_size,
-                             entry_label,
-                             exec_buffer,
-                             EXEC_BUFFER_SIZE,
-                             &object_size) != 0) {
-            console_puts("zbuild failed: object too large for ");
-            console_puts(source_name);
-            console_puts("\n");
+        zobject_status = zobject_from_asm(zscript_output,
+                                          asm_size,
+                                          entry_label,
+                                          exec_buffer,
+                                          EXEC_BUFFER_SIZE,
+                                          &object_size);
+        if (zobject_status != 0) {
+            if (zobject_status <= -3000) {
+                console_puts("zbuild failed: generated asm failed for ");
+                console_puts(source_name);
+                console_puts(" on asm line ");
+                console_put_dec64((uint32_t)(-zobject_status - 3000));
+                console_puts("\n");
+            } else if (zobject_status == -60 || zobject_status == -30) {
+                console_puts("zbuild failed: object too large for ");
+                console_puts(source_name);
+                console_puts("\n");
+            } else {
+                console_puts("zbuild failed: could not create object for ");
+                console_puts(source_name);
+                console_puts("\n");
+            }
             return;
         }
 
@@ -4895,7 +5034,9 @@ static int zmodule_collect_exports(zobject_resolved_symbol_t *symbols,
         }
 
         for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
-            if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick")) {
+            if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick") ||
+                streq(zmodule_slots[i].exports[j].name, "zmodule_unload") ||
+                streq(zmodule_slots[i].exports[j].name, "zmodule_redraw")) {
                 continue;
             }
             if (count >= capacity) {
@@ -4971,7 +5112,15 @@ const char *shell_module_name(uint32_t index) {
 }
 
 int shell_module_tick(uint32_t index) {
+    return shell_module_call(index, "zmodule_tick");
+}
+
+int shell_module_call(uint32_t index, const char *export_name) {
     uint32_t seen = 0;
+
+    if (export_name == 0) {
+        return -1;
+    }
 
     for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
         if (!zmodule_slots[i].loaded) {
@@ -4979,8 +5128,8 @@ int shell_module_tick(uint32_t index) {
         }
         if (seen == index) {
             for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
-                if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick")) {
-                    ((zmodule_tick_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                if (streq(zmodule_slots[i].exports[j].name, export_name)) {
+                    ((zmodule_void_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
                     return 0;
                 }
             }

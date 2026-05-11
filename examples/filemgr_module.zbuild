@@ -1,0 +1,3 @@
+include .
+module
+filemgr_module.Z filemgr_module.zo

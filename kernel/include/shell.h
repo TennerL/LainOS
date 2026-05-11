@@ -13,6 +13,7 @@ void shell_modules_tick(void);
 uint32_t shell_module_count(void);
 const char *shell_module_name(uint32_t index);
 int shell_module_tick(uint32_t index);
+int shell_module_call(uint32_t index, const char *export_name);
 int shell_api_mkdir(const char *path);
 int shell_api_delete(const char *path);
 int shell_api_write_file(const char *path, const char *text);

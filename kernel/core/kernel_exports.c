@@ -1,4 +1,5 @@
 #include "kernel_exports.h"
+#include "desktop.h"
 #include "kernel.h"
 #include "shell.h"
 
@@ -32,11 +33,14 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("gfx_pitch", graphics_pitch),
     KERNEL_EXPORT("gfx_format", graphics_format),
     KERNEL_EXPORT("gfx_viewport_active", graphics_viewport_active),
+    KERNEL_EXPORT("gfx_viewport_x", graphics_viewport_x),
+    KERNEL_EXPORT("gfx_viewport_y", graphics_viewport_y),
     KERNEL_EXPORT("gfx_get_pixel", graphics_get_pixel),
     KERNEL_EXPORT("gfx_fill_rect", graphics_fill_rect),
     KERNEL_EXPORT("gfx_draw_rect", graphics_draw_rect),
     KERNEL_EXPORT("gfx_draw_line", graphics_draw_line),
     KERNEL_EXPORT("gfx_clear", graphics_clear),
+    KERNEL_EXPORT("draw_text_at_pixel", console_draw_text_at_pixel),
     KERNEL_EXPORT("mouse_init", mouse_init),
     KERNEL_EXPORT("mouse_enabled", mouse_enabled),
     KERNEL_EXPORT("mouse_x", mouse_x),
@@ -74,6 +78,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("os_zmod", shell_api_zmod),
     KERNEL_EXPORT("os_zunload", shell_api_zunload),
     KERNEL_EXPORT("os_zreload", shell_api_zreload),
+    KERNEL_EXPORT("os_open_editor", desktop_api_open_editor),
 };
 
 #undef KERNEL_EXPORT

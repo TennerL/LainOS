@@ -60,6 +60,20 @@ uint32_t graphics_viewport_active(void) {
     return graphics_viewport_depth > 0u ? 1u : 0u;
 }
 
+uint32_t graphics_viewport_x(void) {
+    if (graphics_viewport_depth > 0u) {
+        return graphics_viewport_stack[graphics_viewport_depth - 1u].x;
+    }
+    return 0u;
+}
+
+uint32_t graphics_viewport_y(void) {
+    if (graphics_viewport_depth > 0u) {
+        return graphics_viewport_stack[graphics_viewport_depth - 1u].y;
+    }
+    return 0u;
+}
+
 uint32_t graphics_pack_color(uint32_t rgb_color) {
     uint32_t r = (rgb_color >> 16) & 0xFFu;
     uint32_t g = (rgb_color >> 8) & 0xFFu;

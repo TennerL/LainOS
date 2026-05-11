@@ -1,0 +1,361 @@
+enum {
+    OS_ENTRY_FILE = 1,
+    OS_ENTRY_DIR = 2,
+};
+
+extern uint64_t ticks(void);
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern uint32_t gfx_viewport_active(void);
+extern uint32_t gfx_viewport_x(void);
+extern uint32_t gfx_viewport_y(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg);
+extern int mouse_enabled(void);
+extern int mouse_init(void);
+extern int mouse_x(void);
+extern int mouse_y(void);
+extern int mouse_buttons(void);
+extern int os_strlen(const uint8_t *text);
+extern int os_strcmp(const uint8_t *a, const uint8_t *b);
+extern int os_dir_count(const uint8_t *path);
+extern int os_dir_name(const uint8_t *path, uint32_t index, uint8_t *buffer, uint32_t capacity);
+extern int os_dir_type(const uint8_t *path, uint32_t index);
+extern int os_chdir(const uint8_t *path);
+extern int os_zbuild(const uint8_t *target);
+extern int os_zinstall(const uint8_t *target);
+extern int os_zreload(const uint8_t *target);
+extern int os_open_editor(const uint8_t *path);
+
+global uint32_t filemgr_enabled;
+global uint64_t filemgr_next_tick;
+global uint32_t filemgr_last_w;
+global uint32_t filemgr_last_h;
+global int filemgr_last_buttons;
+global int filemgr_selected;
+global uint32_t filemgr_dirty;
+global uint8_t filemgr_path[128];
+global uint8_t filemgr_status[64];
+global uint8_t filemgr_selected_name[32];
+
+void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
+    uint32_t i;
+
+    i = 0;
+    if (capacity == 0) {
+        return;
+    }
+    while (src[i] != 0 && i + 1 < capacity) {
+        dst[i] = src[i];
+        i = i + 1;
+    }
+    dst[i] = 0;
+}
+
+void clear_name(void) {
+    filemgr_selected = -1;
+    filemgr_selected_name[0] = 0;
+}
+
+int has_suffix(const uint8_t *name, const uint8_t *suffix) {
+    int n;
+    int s;
+    int i;
+
+    n = os_strlen(name);
+    s = os_strlen(suffix);
+    if (n < s) {
+        return 0;
+    }
+    i = 0;
+    while (i < s) {
+        if (name[(n - s) + i] != suffix[i]) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+void target_from_name(const uint8_t *name, uint8_t *target, uint32_t capacity) {
+    uint32_t i;
+    int len;
+    int trim;
+
+    copy_text(target, capacity, name);
+    len = os_strlen(target);
+    trim = 0;
+    if (has_suffix(name, ".zbuild")) {
+        trim = 7;
+    } else if (has_suffix(name, ".Z")) {
+        trim = 2;
+    }
+    if (trim != 0 && len > trim) {
+        i = len - trim;
+        if (i < capacity) {
+            target[i] = 0;
+        }
+    }
+}
+
+int selected_is_buildable(void) {
+    if (filemgr_selected < 0) {
+        return 0;
+    }
+    if (has_suffix(filemgr_selected_name, ".Z")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".zbuild")) {
+        return 1;
+    }
+    return 0;
+}
+
+void draw_button(uint32_t x, uint32_t y, uint32_t w, const uint8_t *label, uint32_t active) {
+    uint32_t fill;
+    uint32_t edge;
+
+    fill = 0x26323a;
+    edge = 0x6e5876;
+    if (active != 0) {
+        fill = 0x334652;
+        edge = 0xf7d154;
+    }
+    gfx_fill_rect(x, y, w, 24, fill);
+    gfx_draw_rect(x, y, w, 24, edge);
+    draw_text_at_pixel(x + 8, y + 7, label, 0xf5fbf7, fill);
+}
+
+void draw_filemgr(void) {
+    uint32_t w;
+    uint32_t h;
+    int count;
+    int i;
+    uint8_t name[32];
+    int type;
+    int stripe;
+    uint32_t row_y;
+    uint32_t bg;
+
+    w = gfx_width();
+    h = gfx_height();
+    gfx_fill_rect(0, 0, w, h, 0x101820);
+    gfx_fill_rect(0, 0, w, 42, 0x151c22);
+    gfx_fill_rect(0, 40, w, 2, 0xe05f4f);
+    draw_text_at_pixel(8, 8, "Z Files", 0xf7d154, 0x151c22);
+    draw_text_at_pixel(72, 8, filemgr_path, 0xf5fbf7, 0x151c22);
+    draw_button(8, 50, 52, "Up", 1);
+    draw_button(66, 50, 60, "Build", selected_is_buildable());
+    draw_button(132, 50, 60, "Inst", selected_is_buildable());
+    draw_button(198, 50, 60, "Load", selected_is_buildable());
+    draw_text_at_pixel(268, 57, filemgr_status, 0xbdd7d0, 0x101820);
+
+    count = os_dir_count(filemgr_path);
+    if (count < 0) {
+        draw_text_at_pixel(8, 88, "directory unavailable", 0xffb3a7, 0x101820);
+        return;
+    }
+
+    i = 0;
+    while (i < count && i < 48) {
+        if (os_dir_name(filemgr_path, i, name, 32) == 0) {
+            type = os_dir_type(filemgr_path, i);
+            row_y = 86 + i * 22;
+            if (row_y + 20 >= h) {
+                return;
+            }
+            bg = 0x202a31;
+            stripe = i % 2;
+            if (stripe != 0) {
+                bg = 0x26323a;
+            }
+            gfx_fill_rect(0, row_y, w, 20, bg);
+            if (i == filemgr_selected) {
+                gfx_draw_rect(0, row_y, w, 20, 0xf7d154);
+            }
+            if (type == OS_ENTRY_DIR) {
+                draw_text_at_pixel(8, row_y + 6, "dir ", 0x9dd6ff, bg);
+            } else {
+                draw_text_at_pixel(8, row_y + 6, "file", 0xd9e4de, bg);
+            }
+            draw_text_at_pixel(56, row_y + 6, name, 0xf5fbf7, bg);
+        }
+        i = i + 1;
+    }
+}
+
+void go_up(void) {
+    if (os_chdir("..") == 0) {
+        copy_text(filemgr_path, 128, ".");
+        clear_name();
+        copy_text(filemgr_status, 64, "up");
+        filemgr_dirty = 1;
+    } else {
+        copy_text(filemgr_status, 64, "up failed");
+        filemgr_dirty = 1;
+    }
+}
+
+void select_row(int row) {
+    uint8_t name[32];
+    int type;
+
+    if (os_dir_name(filemgr_path, row, name, 32) != 0) {
+        return;
+    }
+    type = os_dir_type(filemgr_path, row);
+    if (type == OS_ENTRY_DIR) {
+        if (os_chdir(name) == 0) {
+            copy_text(filemgr_path, 128, ".");
+            clear_name();
+            copy_text(filemgr_status, 64, "entered directory");
+            filemgr_dirty = 1;
+        } else {
+            copy_text(filemgr_status, 64, "enter failed");
+            filemgr_dirty = 1;
+        }
+        return;
+    }
+    filemgr_selected = row;
+    copy_text(filemgr_selected_name, 32, name);
+    if (os_open_editor(name) == 0) {
+        copy_text(filemgr_status, 64, "opened editor");
+    } else {
+        copy_text(filemgr_status, 64, "selected");
+    }
+    filemgr_dirty = 1;
+}
+
+void run_action(uint32_t action) {
+    uint8_t target[32];
+    int status;
+
+    if (!selected_is_buildable()) {
+        return;
+    }
+    target_from_name(filemgr_selected_name, target, 32);
+    if (action == 0) {
+        status = os_zbuild(target);
+        if (status == 0) {
+            copy_text(filemgr_status, 64, "build ok");
+        } else {
+            copy_text(filemgr_status, 64, "build failed");
+        }
+        filemgr_dirty = 1;
+    } else if (action == 1) {
+        status = os_zinstall(target);
+        if (status == 0) {
+            copy_text(filemgr_status, 64, "install ok");
+        } else {
+            copy_text(filemgr_status, 64, "install failed");
+        }
+        filemgr_dirty = 1;
+    } else {
+        status = os_zinstall(target);
+        if (status == 0) {
+            status = os_zreload(target);
+        }
+        if (status == 0) {
+            copy_text(filemgr_status, 64, "module loaded");
+        } else {
+            copy_text(filemgr_status, 64, "load failed");
+        }
+        filemgr_dirty = 1;
+    }
+}
+
+void handle_click(void) {
+    int rx;
+    int ry;
+    int buttons;
+    int row;
+
+    buttons = mouse_buttons();
+    if (buttons == 0 || filemgr_last_buttons != 0) {
+        filemgr_last_buttons = buttons;
+        return;
+    }
+    filemgr_last_buttons = buttons;
+    if (gfx_viewport_active() == 0) {
+        return;
+    }
+
+    rx = mouse_x() - gfx_viewport_x();
+    ry = mouse_y() - gfx_viewport_y();
+    if (rx < 0 || ry < 0) {
+        return;
+    }
+    if (ry >= 50 && ry < 74) {
+        if (rx >= 8 && rx < 60) {
+            go_up();
+        } else if (rx >= 66 && rx < 126) {
+            run_action(0);
+        } else if (rx >= 132 && rx < 192) {
+            run_action(1);
+        } else if (rx >= 198 && rx < 258) {
+            run_action(2);
+        }
+        return;
+    }
+    if (ry >= 86) {
+        row = (ry - 86) / 22;
+        select_row(row);
+    }
+}
+
+export void zmodule_redraw(void) {
+    if (filemgr_enabled == 0) {
+        return;
+    }
+    if (gfx_viewport_active() == 0) {
+        return;
+    }
+    filemgr_last_w = gfx_width();
+    filemgr_last_h = gfx_height();
+    filemgr_dirty = 0;
+    draw_filemgr();
+}
+
+export void zmodule_tick(void) {
+    uint64_t now;
+    uint32_t w;
+    uint32_t h;
+
+    if (filemgr_enabled == 0) {
+        return;
+    }
+    if (gfx_viewport_active() == 0) {
+        return;
+    }
+
+    now = ticks();
+    w = gfx_width();
+    h = gfx_height();
+    handle_click();
+    if (filemgr_dirty != 0 || filemgr_last_w != w || filemgr_last_h != h) {
+        zmodule_redraw();
+    }
+    if (now >= filemgr_next_tick) {
+        filemgr_next_tick = now + 100;
+    }
+}
+
+export void zmodule_unload(void) {
+    filemgr_enabled = 0;
+}
+
+filemgr_enabled = 1;
+filemgr_next_tick = 0;
+filemgr_last_w = 0;
+filemgr_last_h = 0;
+filemgr_last_buttons = 0;
+filemgr_dirty = 1;
+copy_text(filemgr_path, 128, ".");
+clear_name();
+copy_text(filemgr_status, 64, "ready");
+if (mouse_enabled() == 0) {
+    mouse_init();
+}
+print("Z file manager module loaded: open it from Modules\n");
+return 0;

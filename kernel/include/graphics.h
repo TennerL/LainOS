@@ -20,6 +20,8 @@ uint32_t graphics_height(void);
 uint32_t graphics_pitch(void);
 uint32_t graphics_format(void);
 uint32_t graphics_viewport_active(void);
+uint32_t graphics_viewport_x(void);
+uint32_t graphics_viewport_y(void);
 uint32_t graphics_pack_color(uint32_t rgb_color);
 void graphics_put_pixel(uint32_t x, uint32_t y, uint32_t rgb_color);
 uint32_t graphics_get_pixel(uint32_t x, uint32_t y);

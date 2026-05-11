@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include "graphics.h"
+#include "net.h"
 #include "shell.h"
 #include "storage.h"
 #include "usb.h"
@@ -25,6 +26,7 @@ static volatile unsigned int status_cpu_idle_depth;
 static volatile unsigned long long status_cpu_idle_ticks;
 static unsigned long long status_cpu_last_ticks;
 static unsigned long long status_cpu_last_idle_ticks;
+static unsigned int status_cpu_cached_busy_percent;
 static int status_cpu_sample_initialized;
 static int statusbar_enabled;
 static unsigned long long statusbar_last_update_tick;
@@ -105,7 +107,7 @@ unsigned long long status_memory_used_kb(void) {
 }
 
 unsigned int status_cpu_core_count(void) {
-    return cpu_core_count();
+    return 1u;
 }
 
 void status_cpu_enter_idle(void) {
@@ -137,6 +139,10 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
     current_ticks = timer_ticks();
     current_idle_ticks = status_cpu_idle_ticks;
 
+    if (status_cpu_sample_initialized && current_ticks == status_cpu_last_ticks) {
+        return status_cpu_cached_busy_percent;
+    }
+
     if (!status_cpu_sample_initialized) {
         delta_ticks = current_ticks;
         delta_idle_ticks = current_idle_ticks;
@@ -149,7 +155,8 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
     status_cpu_last_ticks = current_ticks;
     status_cpu_last_idle_ticks = current_idle_ticks;
 
-    return (unsigned int)status_busy_percent_from_ticks(delta_ticks, delta_idle_ticks);
+    status_cpu_cached_busy_percent = (unsigned int)status_busy_percent_from_ticks(delta_ticks, delta_idle_ticks);
+    return status_cpu_cached_busy_percent;
 }
 
 static void statusbar_put_label(unsigned int col, const char *text) {
@@ -292,6 +299,8 @@ void kernel_main(boot_info_t *info) {
     storage_init();
     boot_stage("usb");
     usb_init();
+    boot_stage("network");
+    net_init();
 
     console_puts("Lain kernel says hi from C :3\n");
     console_kprintf2("Kernel base: 0x%x, framebuffer: 0x%x\n",
@@ -301,8 +310,8 @@ void kernel_main(boot_info_t *info) {
                      info->framebuffer_width,
                      info->framebuffer_height);
     console_kprintf1("Memory map bytes: %u\n", info->memory_map_size);
-    console_kprintf1("CPU cores detected: %u\n", status_cpu_core_count());
-    console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, storage, and USB scan loaded.\n");
+    console_kprintf1("CPU cores detected: %u\n", cpu_core_count());
+    console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, storage, USB scan, and network scan loaded.\n");
     console_puts("\nHave fun hacking on it.\n");
 
     shell_init();

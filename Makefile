@@ -63,6 +63,8 @@ KERNEL_C_SOURCES := \
 	kernel/drivers/keyboard.c \
 	kernel/drivers/mouse.c \
 	kernel/drivers/pci.c \
+	kernel/drivers/net.c \
+	kernel/drivers/e1000.c \
 	kernel/drivers/ahci.c \
 	kernel/drivers/usb.c \
 	kernel/drivers/storage.c \
@@ -269,6 +271,17 @@ run-usb: all
 		-device usb-kbd,bus=xhci.0 \
 		-device usb-tablet,bus=xhci.0
 
+run-net: all
+	qemu-system-x86_64 \
+		-enable-kvm \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+		-drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+		-drive format=raw,file=build/$(ESP_IMG),if=ide,index=0 \
+		-drive format=raw,file=build/$(DATA_IMG),if=ide,index=1 \
+		-netdev user,id=net0 \
+		-device e1000,netdev=net0
+
 run-bootdisk: all
 	qemu-system-x86_64 \
 		-enable-kvm \
@@ -316,4 +329,4 @@ print-efi-config:
 	@echo EFI_LDS=$(EFI_LDS)
 	@echo EFI_ARCH=$(EFI_ARCH)
 
-.PHONY: all build image pxe run run-ahci run-usb run-bootdisk run-bootdisk-gpt run-iso reseed-data clean inspect-efi print-efi-config FORCE
+.PHONY: all build image pxe run run-ahci run-usb run-net run-bootdisk run-bootdisk-gpt run-iso reseed-data clean inspect-efi print-efi-config FORCE
