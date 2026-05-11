@@ -42,6 +42,17 @@ void net_record_tx(uint32_t index);
 void net_record_tx_error(uint32_t index);
 int net_send_frame(uint32_t index, const void *data, uint32_t size);
 int net_poll_device(uint32_t index);
+void net_receive_frame(uint32_t index, const void *data, uint32_t size);
+int net_parse_ipv4_addr(const char *text, uint32_t *out);
+void net_set_ipv4_config(uint32_t address, uint32_t netmask, uint32_t gateway);
+uint32_t net_ipv4_address(void);
+uint32_t net_ipv4_netmask(void);
+uint32_t net_ipv4_gateway(void);
+int net_http_get(uint32_t index,
+                 const char *url,
+                 char *out,
+                 uint32_t out_capacity,
+                 uint32_t *out_size);
 void e1000_init(void);
 
 #endif

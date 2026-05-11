@@ -269,6 +269,9 @@ static int e1000_poll(void *ctx) {
 
         if (desc->status & E1000_RX_STATUS_EOP) {
             net_record_rx((uint32_t)ctrl->net_index);
+            net_receive_frame((uint32_t)ctrl->net_index,
+                              rx_buffers[slot][next],
+                              desc->length);
         } else {
             net_record_rx_drop((uint32_t)ctrl->net_index);
         }

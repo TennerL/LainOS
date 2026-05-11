@@ -44,6 +44,7 @@ static char zscript_output[ASM_SOURCE_SIZE + 1];
 static char zinclude_buffers[Z_INCLUDE_MAX_DEPTH][Z_INCLUDE_BUFFER_SIZE + 1];
 static char shell_manifest_buffer[ASM_SOURCE_SIZE + 1];
 static char shell_source_buffer[ASM_SOURCE_SIZE + 1];
+static char shell_wget_buffer[LAINFS_FILE_CAPACITY + 1];
 static char zbuild_report[512];
 static char ztest_report[256];
 
@@ -1170,6 +1171,7 @@ static void cmd_browse(const char *args, const boot_info_t *info);
 static void cmd_desktop(const char *args, const boot_info_t *info);
 static void cmd_ahci(const char *args, const boot_info_t *info);
 static void cmd_net(const char *args, const boot_info_t *info);
+static void cmd_wget(const char *args, const boot_info_t *info);
 static void cmd_usb(const char *args, const boot_info_t *info);
 static void cmd_ticks(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
@@ -1242,6 +1244,7 @@ static const command_t commands[] = {
     { "keymap",  "set keyboard layout",       cmd_keymap },
     { "ahci",    "show AHCI status",          cmd_ahci },
     { "net",     "show network devices",      cmd_net },
+    { "wget",    "fetch http://IP/path to a file", cmd_wget },
     { "usb",     "show USB controllers",      cmd_usb },
     { "ticks",   "show timer ticks",          cmd_ticks },
     { "run",     "run a script file",         cmd_run },
@@ -2940,6 +2943,16 @@ static void cmd_net_print_mac(const uint8_t mac[NET_MAC_SIZE]) {
     }
 }
 
+static void cmd_net_print_ipv4(uint32_t ip) {
+    console_put_dec64((ip >> 24) & 0xFFu);
+    console_puts(".");
+    console_put_dec64((ip >> 16) & 0xFFu);
+    console_puts(".");
+    console_put_dec64((ip >> 8) & 0xFFu);
+    console_puts(".");
+    console_put_dec64(ip & 0xFFu);
+}
+
 static void build_test_frame(const net_device_t *dev, uint8_t frame[NET_MIN_FRAME_SIZE]) {
     static const char payload[] = "lainos e1000 test";
 
@@ -2970,11 +2983,52 @@ static void cmd_net(const char *args, const boot_info_t *info) {
     split_first_arg(mutable_args, &command, &index_text);
     if (*command != '\0') {
         split_first_arg(index_text, &index_text, &extra);
+        if (streq(command, "ip")) {
+            char *mask_text = extra;
+            char *gateway_text = 0;
+            char *too_much = 0;
+            uint32_t address = 0;
+            uint32_t mask = 0;
+            uint32_t gateway = 0;
+
+            if (*index_text == '\0') {
+                console_puts("ip=");
+                cmd_net_print_ipv4(net_ipv4_address());
+                console_puts(" mask=");
+                cmd_net_print_ipv4(net_ipv4_netmask());
+                console_puts(" gateway=");
+                cmd_net_print_ipv4(net_ipv4_gateway());
+                console_puts("\n");
+                return;
+            }
+
+            split_first_arg(mask_text, &mask_text, &gateway_text);
+            split_first_arg(gateway_text, &gateway_text, &too_much);
+            if (*mask_text == '\0' ||
+                *too_much != '\0' ||
+                net_parse_ipv4_addr(index_text, &address) != 0 ||
+                net_parse_ipv4_addr(mask_text, &mask) != 0 ||
+                (*gateway_text != '\0' && net_parse_ipv4_addr(gateway_text, &gateway) != 0)) {
+                console_puts("usage: net ip [address mask [gateway]]\n");
+                return;
+            }
+
+            net_set_ipv4_config(address, mask, gateway);
+            console_puts("net: ip=");
+            cmd_net_print_ipv4(net_ipv4_address());
+            console_puts(" mask=");
+            cmd_net_print_ipv4(net_ipv4_netmask());
+            console_puts(" gateway=");
+            cmd_net_print_ipv4(net_ipv4_gateway());
+            console_puts("\n");
+            return;
+        }
+
         if ((!streq(command, "poll") && !streq(command, "send")) ||
             *index_text == '\0' ||
             *extra != '\0' ||
             parse_u64_arg(index_text, &index) != 0) {
-            console_puts("usage: net [poll|send] index\n");
+            console_puts("usage: net [poll|send] index | net ip [address mask [gateway]]\n");
             return;
         }
 
@@ -3010,6 +3064,14 @@ static void cmd_net(const char *args, const boot_info_t *info) {
         return;
     }
 
+    console_puts("ip=");
+    cmd_net_print_ipv4(net_ipv4_address());
+    console_puts(" mask=");
+    cmd_net_print_ipv4(net_ipv4_netmask());
+    console_puts(" gateway=");
+    cmd_net_print_ipv4(net_ipv4_gateway());
+    console_puts("\n");
+
     for (uint32_t i = 0; i < net_device_count(); ++i) {
         const net_device_t *dev = net_get_device_const(i);
         if (!dev) {
@@ -3030,6 +3092,110 @@ static void cmd_net(const char *args, const boot_info_t *info) {
         console_put_dec64(dev->tx_errors);
         console_puts("\n");
     }
+}
+
+static void wget_default_name(const char *url, char *out, uint32_t out_size) {
+    const char *last = url;
+    const char *s = url;
+
+    while (*s) {
+        if (*s == '/') {
+            last = s + 1;
+        }
+        ++s;
+    }
+
+    if (*last == '\0') {
+        copy_text_limited(out, out_size, "index.html");
+    } else {
+        copy_text_limited(out, out_size, last);
+    }
+}
+
+static void cmd_wget(const char *args, const boot_info_t *info) {
+    char *url = 0;
+    char *output = 0;
+    char *extra = 0;
+    char output_name[32];
+    uint32_t size = 0;
+    uint32_t parent = LAINFS_ROOT_DIR;
+    int drive = active_drive();
+    int status = 0;
+
+    (void)info;
+
+    split_first_arg((char *)args, &url, &output);
+    split_first_arg(output, &output, &extra);
+    if (*url == '\0' || *extra != '\0') {
+        console_puts("usage: wget http://IP[:port]/path [output]\n");
+        return;
+    }
+
+    if (drive < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
+        return;
+    }
+
+    if (net_device_count() == 0) {
+        console_puts("wget failed: no network device\n");
+        return;
+    }
+
+    if (*output == '\0') {
+        wget_default_name(url, output_name, sizeof(output_name));
+        output = output_name;
+    }
+
+    if (resolve_file_path((char)('A' + drive),
+                          cwd_dirs[drive],
+                          output,
+                          &parent,
+                          output_name,
+                          sizeof(output_name)) != 0) {
+        console_puts("wget failed: bad output path\n");
+        return;
+    }
+
+    console_puts("wget: fetching ");
+    console_puts(url);
+    console_puts("\n");
+
+    status = net_http_get(0, url, shell_wget_buffer, sizeof(shell_wget_buffer), &size);
+    if (status == -2) {
+        console_puts("wget failed: use plain http://numeric.ip[:port]/path\n");
+        return;
+    }
+    if (status == -3) {
+        console_puts("wget failed: arp lookup timed out\n");
+        return;
+    }
+    if (status == -7) {
+        console_puts("wget failed: no route; set net ip address mask gateway\n");
+        return;
+    }
+    if (status == -5) {
+        console_puts("wget failed: tcp connect timed out\n");
+        return;
+    }
+    if (status == -6) {
+        console_puts("wget failed: http receive timed out\n");
+        return;
+    }
+    if (status != 0) {
+        console_puts("wget failed\n");
+        return;
+    }
+
+    if (lainfs_save_file_in_dir((char)('A' + drive), parent, output_name, shell_wget_buffer, size) != 0) {
+        console_puts("wget failed: could not save output\n");
+        return;
+    }
+
+    console_puts("wget: saved ");
+    console_puts(output_name);
+    console_puts(" bytes=");
+    console_put_dec64(size);
+    console_puts("\n");
 }
 
 static void cmd_desktop(const char *args, const boot_info_t *info) {

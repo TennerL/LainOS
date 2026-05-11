@@ -26,6 +26,7 @@
 #define START_MENU_ITEM_H 24u
 #define DESKTOP_MODULE_INDEX_NONE 0xffffffffu
 #define DESKTOP_MODULE_TICK_HZ 10u
+#define DESKTOP_MODULE_APP_WINDOWS_MAX 6u
 #define DESKTOP_EDITOR_BUFFER_SIZE 262144u
 #define DESKTOP_EDITOR_NAME_SIZE 64u
 #define DESKTOP_EDITOR_TOOLBAR_H 24u
@@ -85,6 +86,16 @@ typedef struct {
     desktop_window_t restore;
 } desktop_window_state_t;
 
+typedef struct {
+    desktop_window_t window;
+    desktop_window_state_t state;
+    int open;
+    int minimized;
+    int bounds_ready;
+    uint32_t module_index;
+    unsigned long long last_tick;
+} desktop_module_window_t;
+
 static uint32_t cursor_back[CURSOR_W * CURSOR_H];
 static uint32_t cursor_x;
 static uint32_t cursor_y;
@@ -130,13 +141,7 @@ static desktop_window_state_t modules_window_state;
 static int modules_open;
 static int modules_minimized;
 static int modules_bounds_ready;
-static desktop_window_t module_app_window;
-static desktop_window_state_t module_app_window_state;
-static int module_app_open;
-static int module_app_minimized;
-static int module_app_bounds_ready;
-static uint32_t module_app_index;
-static unsigned long long module_app_last_tick;
+static desktop_module_window_t module_app_windows[DESKTOP_MODULE_APP_WINDOWS_MAX];
 static int desktop_deferred_redraw;
 static desktop_window_t editor_window;
 static desktop_window_state_t editor_window_state;
@@ -167,6 +172,11 @@ static inline void cpu_pause(void) {
 static void desktop_terminal_draw(int fresh);
 static void desktop_redraw_all(void);
 static void desktop_open_module_app(uint32_t index);
+static int desktop_any_module_app_open(void);
+static int desktop_any_module_app_minimized(void);
+static desktop_module_window_t *desktop_find_module_app_window(uint32_t index);
+static desktop_module_window_t *desktop_allocate_module_app_window(void);
+static desktop_module_window_t *desktop_top_module_app_window_at(uint32_t x, uint32_t y);
 static int point_in_rect(uint32_t px, uint32_t py, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 static uint32_t desktop_taskbar_height(void);
 
@@ -253,8 +263,8 @@ static void desktop_draw_task_buttons(void) {
     if (modules_open || modules_minimized) {
         x = desktop_draw_task_button(x, "Modules", modules_open);
     }
-    if (module_app_open || module_app_minimized) {
-        x = desktop_draw_task_button(x, "Module", module_app_open);
+    if (desktop_any_module_app_open() || desktop_any_module_app_minimized()) {
+        x = desktop_draw_task_button(x, "Module", desktop_any_module_app_open());
     }
     if (editor_open || editor_minimized) {
         x = desktop_draw_task_button(x, "Editor", editor_open);
@@ -282,7 +292,7 @@ static desktop_app_t desktop_task_button_at(uint32_t px, uint32_t py) {
         if (point_in_rect(px, py, x, height - task_h + 10u, 88u, task_h - 20u)) return DESKTOP_APP_MODULES;
         x += 96u;
     }
-    if (module_app_open || module_app_minimized) {
+    if (desktop_any_module_app_open() || desktop_any_module_app_minimized()) {
         if (point_in_rect(px, py, x, height - task_h + 10u, 88u, task_h - 20u)) return DESKTOP_APP_MODULE_APP;
         x += 96u;
     }
@@ -675,6 +685,55 @@ static int desktop_find_module(const char *name) {
     }
 
     return -1;
+}
+
+static int desktop_any_module_app_open(void) {
+    for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+        if (module_app_windows[i].open) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int desktop_any_module_app_minimized(void) {
+    for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+        if (module_app_windows[i].minimized) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static desktop_module_window_t *desktop_find_module_app_window(uint32_t index) {
+    for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+        desktop_module_window_t *slot = &module_app_windows[i];
+        if ((slot->open || slot->minimized) && slot->module_index == index) {
+            return slot;
+        }
+    }
+    return 0;
+}
+
+static desktop_module_window_t *desktop_allocate_module_app_window(void) {
+    for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+        desktop_module_window_t *slot = &module_app_windows[i];
+        if (!slot->open && !slot->minimized) {
+            return slot;
+        }
+    }
+    return 0;
+}
+
+static desktop_module_window_t *desktop_top_module_app_window_at(uint32_t x, uint32_t y) {
+    for (uint32_t i = DESKTOP_MODULE_APP_WINDOWS_MAX; i > 0u; --i) {
+        desktop_module_window_t *slot = &module_app_windows[i - 1u];
+        if (slot->open &&
+            point_in_rect(x, y, slot->window.x, slot->window.y, slot->window.w, slot->window.h)) {
+            return slot;
+        }
+    }
+    return 0;
 }
 
 static int text_starts_command(const char *line, const char *command) {
@@ -1153,22 +1212,34 @@ static void desktop_launch_app(desktop_app_t app, const boot_info_t *info) {
 }
 
 static void desktop_open_module_app(uint32_t index) {
-    if (shell_module_name(index) == 0) {
+    desktop_module_window_t *slot;
+    const char *name = shell_module_name(index);
+
+    if (name == 0) {
         return;
     }
 
-    module_app_open = 1;
-    module_app_minimized = 0;
-    module_app_index = index;
-    module_app_last_tick = 0;
-    if (!module_app_bounds_ready) {
-        desktop_make_window(&module_app_window);
-        module_app_window.x += 72u;
-        module_app_window.y += 72u;
-        module_app_window.w = module_app_window.w > 420u ? 420u : module_app_window.w;
-        module_app_window.h = module_app_window.h > 260u ? 260u : module_app_window.h;
-        desktop_clamp_window(&module_app_window);
-        module_app_bounds_ready = 1;
+    slot = desktop_find_module_app_window(index);
+    if (slot == 0) {
+        slot = desktop_allocate_module_app_window();
+    }
+    if (slot == 0) {
+        return;
+    }
+
+    slot->open = 1;
+    slot->minimized = 0;
+    slot->module_index = index;
+    slot->last_tick = 0;
+    if (!slot->bounds_ready) {
+        uint32_t ordinal = (uint32_t)(slot - module_app_windows);
+        desktop_make_window(&slot->window);
+        slot->window.x += 72u + ordinal * 24u;
+        slot->window.y += 72u + ordinal * 24u;
+        slot->window.w = slot->window.w > 420u ? 420u : slot->window.w;
+        slot->window.h = slot->window.h > 260u ? 260u : slot->window.h;
+        desktop_clamp_window(&slot->window);
+        slot->bounds_ready = 1;
     }
 }
 
@@ -1225,6 +1296,8 @@ int desktop_api_open_editor(const char *path) {
 }
 
 static void desktop_restore_task_app(desktop_app_t app) {
+    uint32_t i;
+
     if (app == DESKTOP_APP_TERMINAL) {
         terminal_open = 1;
         terminal_minimized = 0;
@@ -1235,8 +1308,12 @@ static void desktop_restore_task_app(desktop_app_t app) {
         modules_open = 1;
         modules_minimized = 0;
     } else if (app == DESKTOP_APP_MODULE_APP) {
-        module_app_open = 1;
-        module_app_minimized = 0;
+        for (i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+            if (module_app_windows[i].minimized) {
+                module_app_windows[i].open = 1;
+                module_app_windows[i].minimized = 0;
+            }
+        }
     } else if (app == DESKTOP_APP_EDITOR) {
         editor_open = 1;
         editor_minimized = 0;
@@ -1442,8 +1519,8 @@ static void desktop_draw_modules(void) {
     }
 }
 
-static int desktop_module_app_tick_due(int force, unsigned long long now) {
-    if (!module_app_open || shell_module_name(module_app_index) == 0) {
+static int desktop_module_app_tick_due(const desktop_module_window_t *slot, int force, unsigned long long now) {
+    if (slot == 0 || !slot->open || shell_module_name(slot->module_index) == 0) {
         return 0;
     }
 
@@ -1461,26 +1538,26 @@ static int desktop_module_app_tick_due(int force, unsigned long long now) {
     if (!force && start_menu_open) {
         return 0;
     }
-    if (!force && now - module_app_last_tick < interval) {
+    if (!force && now - slot->last_tick < interval) {
         return 0;
     }
 
     return 1;
 }
 
-static int desktop_tick_module_app(int force) {
+static int desktop_tick_module_app(desktop_module_window_t *slot, int force) {
     unsigned long long now = timer_ticks();
 
-    if (!desktop_module_app_tick_due(force, now)) {
+    if (!desktop_module_app_tick_due(slot, force, now)) {
         return 0;
     }
-    module_app_last_tick = now;
+    slot->last_tick = now;
 
-    graphics_viewport_push(module_app_window.content_x,
-                           module_app_window.content_y,
-                           module_app_window.content_w,
-                           module_app_window.content_h);
-    (void)shell_module_tick(module_app_index);
+    graphics_viewport_push(slot->window.content_x,
+                           slot->window.content_y,
+                           slot->window.content_w,
+                           slot->window.content_h);
+    (void)shell_module_tick(slot->module_index);
     graphics_viewport_pop();
     if (desktop_deferred_redraw) {
         desktop_deferred_redraw = 0;
@@ -1490,32 +1567,37 @@ static int desktop_tick_module_app(int force) {
 }
 
 static void desktop_draw_module_app(void) {
-    const char *name;
+    for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+        desktop_module_window_t *slot = &module_app_windows[i];
+        const char *name;
 
-    if (!module_app_open) {
-        return;
-    }
+        if (!slot->open) {
+            continue;
+        }
 
-    name = shell_module_name(module_app_index);
-    if (name == 0) {
-        module_app_open = 0;
-        return;
-    }
+        name = shell_module_name(slot->module_index);
+        if (name == 0) {
+            slot->open = 0;
+            slot->minimized = 0;
+            slot->state.maximized = 0;
+            continue;
+        }
 
-    desktop_draw_window(&module_app_window, name);
-    graphics_fill_rect(module_app_window.content_x,
-                       module_app_window.content_y,
-                       module_app_window.content_w,
-                       module_app_window.content_h,
-                       0x101820u);
-    graphics_viewport_push(module_app_window.content_x,
-                           module_app_window.content_y,
-                           module_app_window.content_w,
-                           module_app_window.content_h);
-    if (shell_module_call(module_app_index, "zmodule_redraw") != 0) {
-        (void)shell_module_tick(module_app_index);
+        desktop_draw_window(&slot->window, name);
+        graphics_fill_rect(slot->window.content_x,
+                           slot->window.content_y,
+                           slot->window.content_w,
+                           slot->window.content_h,
+                           0x101820u);
+        graphics_viewport_push(slot->window.content_x,
+                               slot->window.content_y,
+                               slot->window.content_w,
+                               slot->window.content_h);
+        if (shell_module_call(slot->module_index, "zmodule_redraw") != 0) {
+            (void)shell_module_tick(slot->module_index);
+        }
+        graphics_viewport_pop();
     }
-    graphics_viewport_pop();
 }
 
 static uint32_t editor_line_start(uint32_t line) {
@@ -2461,6 +2543,7 @@ void desktop_run(const boot_info_t *info) {
 
         if (left_pressed && !left_was_pressed) {
             desktop_app_t app;
+            desktop_module_window_t *module_slot;
 
             if (editor_open && desktop_window_minimize_hit(&editor_window, x, y)) {
                 cursor_restore();
@@ -2601,19 +2684,20 @@ void desktop_run(const boot_info_t *info) {
                 continue;
             }
 
-            if (module_app_open && desktop_window_minimize_hit(&module_app_window, x, y)) {
+            module_slot = desktop_top_module_app_window_at(x, y);
+            if (module_slot != 0 && desktop_window_minimize_hit(&module_slot->window, x, y)) {
                 cursor_restore();
-                module_app_open = 0;
-                module_app_minimized = 1;
+                module_slot->open = 0;
+                module_slot->minimized = 1;
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
                 continue;
             }
 
-            if (module_app_open && desktop_window_maximize_hit(&module_app_window, x, y)) {
+            if (module_slot != 0 && desktop_window_maximize_hit(&module_slot->window, x, y)) {
                 cursor_restore();
-                desktop_window_toggle_maximize(&module_app_window, &module_app_window_state);
+                desktop_window_toggle_maximize(&module_slot->window, &module_slot->state);
                 terminal_console_active = 0;
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
@@ -2621,34 +2705,42 @@ void desktop_run(const boot_info_t *info) {
                 continue;
             }
 
-            if (module_app_open && desktop_window_close_hit(&module_app_window, x, y)) {
+            if (module_slot != 0 && desktop_window_close_hit(&module_slot->window, x, y)) {
                 cursor_restore();
-                module_app_open = 0;
-                module_app_minimized = 0;
-                module_app_window_state.maximized = 0;
+                module_slot->open = 0;
+                module_slot->minimized = 0;
+                module_slot->state.maximized = 0;
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
                 continue;
             }
 
-            if (module_app_open && desktop_window_resize_hit(&module_app_window, x, y)) {
+            if (module_slot != 0 && desktop_window_resize_hit(&module_slot->window, x, y)) {
                 cursor_restore();
                 wm_action = DESKTOP_WM_RESIZE;
-                wm_target_window = &module_app_window;
-                desktop_preview_begin(&module_app_window);
+                wm_target_window = &module_slot->window;
+                desktop_preview_begin(&module_slot->window);
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
                 continue;
             }
 
-            if (module_app_open && desktop_window_title_hit(&module_app_window, x, y)) {
+            if (module_slot != 0 && desktop_window_title_hit(&module_slot->window, x, y)) {
                 cursor_restore();
                 wm_action = DESKTOP_WM_DRAG;
-                wm_target_window = &module_app_window;
-                wm_drag_dx = (int)x - (int)module_app_window.x;
-                wm_drag_dy = (int)y - (int)module_app_window.y;
-                desktop_preview_begin(&module_app_window);
+                wm_target_window = &module_slot->window;
+                wm_drag_dx = (int)x - (int)module_slot->window.x;
+                wm_drag_dy = (int)y - (int)module_slot->window.y;
+                desktop_preview_begin(&module_slot->window);
+                cursor_draw_at(x, y);
+                last_buttons = buttons;
+                continue;
+            }
+
+            if (module_slot != 0) {
+                cursor_restore();
+                terminal_console_active = 0;
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
                 continue;
@@ -3011,11 +3103,14 @@ void desktop_run(const boot_info_t *info) {
             }
         }
 
-        if (module_app_open && wm_action == DESKTOP_WM_IDLE) {
-            if (desktop_module_app_tick_due(0, timer_ticks())) {
-                cursor_restore();
-                (void)desktop_tick_module_app(0);
-                cursor_draw_at(x, y);
+        if (wm_action == DESKTOP_WM_IDLE) {
+            for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+                desktop_module_window_t *slot = &module_app_windows[i];
+                if (desktop_module_app_tick_due(slot, 0, timer_ticks())) {
+                    cursor_restore();
+                    (void)desktop_tick_module_app(slot, 0);
+                    cursor_draw_at(x, y);
+                }
             }
         }
 

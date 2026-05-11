@@ -27,6 +27,7 @@ extern int os_zbuild(const uint8_t *target);
 extern int os_zinstall(const uint8_t *target);
 extern int os_zreload(const uint8_t *target);
 extern int os_open_editor(const uint8_t *path);
+extern int os_delete(const uint8_t *path);
 
 global uint32_t filemgr_enabled;
 global uint64_t filemgr_next_tick;
@@ -149,7 +150,8 @@ void draw_filemgr(void) {
     draw_button(66, 50, 60, "Build", selected_is_buildable());
     draw_button(132, 50, 60, "Inst", selected_is_buildable());
     draw_button(198, 50, 60, "Load", selected_is_buildable());
-    draw_text_at_pixel(268, 57, filemgr_status, 0xbdd7d0, 0x101820);
+    draw_button(264, 50, 60, "Delete", 2);
+    draw_text_at_pixel(330, 57, filemgr_status, 0xbdd7d0, 0x101820);
 
     count = os_dir_count(filemgr_path);
     if (count < 0) {

@@ -421,9 +421,10 @@ The kernel console has a tiny command shell:
   from a backing buffer after geometry changes. The `Terminal` launcher brings
   it back. Click `Files` or open the Start menu for a native file browser with
   clickable directories and an Up button. The Start menu also lists resident
-  modules. Clicking a resident module opens a draggable module window; while
-  it ticks, framebuffer drawing is clipped and translated into that window's
-  content area. In desktop mode, `edit name.Z` opens a native syntax-highlighted
+  modules. Clicking resident modules opens draggable module windows, with up to
+  six open at once; while they tick, framebuffer drawing is clipped and
+  translated into each window's content area. In desktop mode, `edit name.Z`
+  opens a native syntax-highlighted
   editor window; `Ctrl+S` saves and `Esc`/`Ctrl+Q` closes it.
   Put it at the end of `autoexec` to boot straight into the UI.
 - `ticks` - show PIT timer ticks
