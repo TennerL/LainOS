@@ -6324,6 +6324,7 @@ static int z_emit_db_byte_value(z_compiler_t *c, uint8_t value) {
 static int z_emit_global_data(z_compiler_t *c, const z_global_t *global) {
     uint32_t i;
     uint64_t value = global->has_init ? global->init_value : 0;
+    const uint32_t bytes_per_line = 16u;
 
     if (global->is_export &&
         (z_emit_text(c, "; zo_export ") != 0 ||
@@ -6346,9 +6347,14 @@ static int z_emit_global_data(z_compiler_t *c, const z_global_t *global) {
             byte_value = (uint8_t)((value >> (i * 8u)) & 0xFFu);
         }
 
-        if (i != 0 &&
-            z_emit_text(c, ", ") != 0) {
-            return -1;
+        if (i != 0) {
+            if ((i % bytes_per_line) == 0) {
+                if (z_emit_text(c, "\n    db ") != 0) {
+                    return -1;
+                }
+            } else if (z_emit_text(c, ", ") != 0) {
+                return -1;
+            }
         }
 
         if (z_emit_db_byte_value(c, byte_value) != 0) {
