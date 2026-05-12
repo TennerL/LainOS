@@ -64,9 +64,17 @@ unsigned int console_active_pane(void);
 
 void cpu_init_tables(void);
 void cpu_detect_topology(const boot_info_t *info);
+unsigned int cpu_start_secondary_cores(void);
 unsigned int cpu_core_count(void);
+unsigned int cpu_online_core_count(void);
 unsigned int cpu_lapic_id(unsigned int index);
 unsigned long long cpu_lapic_base(void);
+unsigned long long cpu_core_busy_ticks(unsigned int core);
+typedef void (*smp_work_fn_t)(void *arg);
+unsigned int smp_submit_work(smp_work_fn_t fn, void *arg);
+int smp_work_done(unsigned int id);
+void smp_wait_work(unsigned int id);
+unsigned int smp_pending_work_count(void);
 void interrupts_init(void);
 void keyboard_init(void);
 int mouse_init(void);

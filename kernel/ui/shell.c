@@ -1148,6 +1148,7 @@ static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
 static void cmd_cpus(const char *args, const boot_info_t *info);
+static void cmd_smp(const char *args, const boot_info_t *info);
 static void cmd_reboot(const char *args, const boot_info_t *info);
 static void cmd_poweroff(const char *args, const boot_info_t *info);
 static void cmd_mkdrive(const char *args, const boot_info_t *info);
@@ -1217,6 +1218,7 @@ static const command_t commands[] = {
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
     { "cpus",    "show CPU topology",         cmd_cpus },
+    { "smp",     "run a multicore work test", cmd_smp },
     { "reboot",  "restart the machine",       cmd_reboot },
     { "poweroff", "power off the machine",     cmd_poweroff },
     { "shutdown", "power off the machine",     cmd_poweroff },
@@ -1389,7 +1391,9 @@ static void cmd_info(const char *args, const boot_info_t *info) {
                      info->framebuffer_height);
     console_kprintf1("Memory map bytes: %u\n", info->memory_map_size);
     console_kprintf1("RSDP: 0x%x\n", info->rsdp);
-    console_kprintf1("CPU cores: %u\n", status_cpu_core_count());
+    console_kprintf2("CPU cores online/detected: %u/%u\n",
+                     cpu_online_core_count(),
+                     cpu_core_count());
 }
 
 static void cmd_cpus(const char *args, const boot_info_t *info) {
@@ -1401,6 +1405,8 @@ static void cmd_cpus(const char *args, const boot_info_t *info) {
     console_puts("CPU topology from ACPI MADT\n");
     console_puts("local APIC base: 0x");
     console_put_hex64(cpu_lapic_base());
+    console_puts("\nonline: ");
+    console_put_dec64(cpu_online_core_count());
     console_puts("\ncores: ");
     console_put_dec64(count);
     console_puts("\n");
@@ -1415,6 +1421,75 @@ static void cmd_cpus(const char *args, const boot_info_t *info) {
         }
         console_puts("\n");
     }
+}
+
+typedef struct {
+    volatile uint64_t value;
+    uint64_t iterations;
+} smp_test_job_t;
+
+static void smp_test_worker(void *arg) {
+    smp_test_job_t *job = (smp_test_job_t *)arg;
+    uint64_t value = 0;
+
+    for (uint64_t i = 0; i < job->iterations; ++i) {
+        value += (i ^ (i >> 3)) + 1u;
+    }
+
+    job->value = value;
+}
+
+static void cmd_smp(const char *args, const boot_info_t *info) {
+    enum { SMP_TEST_MAX_JOBS = 8 };
+    smp_test_job_t jobs[SMP_TEST_MAX_JOBS];
+    unsigned int ids[SMP_TEST_MAX_JOBS];
+    unsigned int online = cpu_online_core_count();
+    unsigned int job_count;
+    unsigned long long start;
+    unsigned long long end;
+    uint64_t checksum = 0;
+
+    (void)args;
+    (void)info;
+
+    console_kprintf2("SMP online/detected: %u/%u\n", online, cpu_core_count());
+    if (online <= 1u) {
+        console_puts("no secondary CPUs are online\n");
+        return;
+    }
+
+    job_count = online - 1u;
+    if (job_count > SMP_TEST_MAX_JOBS) {
+        job_count = SMP_TEST_MAX_JOBS;
+    }
+
+    start = timer_ticks();
+    for (unsigned int i = 0; i < job_count; ++i) {
+        jobs[i].value = 0;
+        jobs[i].iterations = 12000000u + (uint64_t)i * 2000000u;
+        ids[i] = smp_submit_work(smp_test_worker, &jobs[i]);
+        if (ids[i] == 0u) {
+            console_puts("smp queue full while submitting job\n");
+            job_count = i;
+            break;
+        }
+    }
+
+    for (unsigned int i = 0; i < job_count; ++i) {
+        smp_wait_work(ids[i]);
+        checksum ^= jobs[i].value + (uint64_t)ids[i];
+    }
+    end = timer_ticks();
+
+    console_puts("jobs completed: ");
+    console_put_dec64(job_count);
+    console_puts("\npending queue items: ");
+    console_put_dec64(smp_pending_work_count());
+    console_puts("\nelapsed ticks: ");
+    console_put_dec64(end - start);
+    console_puts("\nchecksum: 0x");
+    console_put_hex64(checksum);
+    console_puts("\n");
 }
 
 static void cmd_reboot(const char *args, const boot_info_t *info) {

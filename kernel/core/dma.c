@@ -3,7 +3,7 @@
 #define EFI_CONVENTIONAL_MEMORY 7u
 #define DMA_POOL_LIMIT 0x100000000ull
 #define DMA_POOL_MIN 0x01000000ull
-#define DMA_POOL_SIZE (512ull * 1024ull)
+#define DMA_POOL_SIZE (32ull * 1024ull * 1024ull)
 
 typedef struct {
     uint32_t type;

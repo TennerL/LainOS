@@ -25,10 +25,11 @@ static int input_prompt_active[SHELL_SESSION_COUNT];
 static boot_info_t *kernel_boot_info;
 static volatile unsigned int status_cpu_idle_depth;
 static volatile unsigned long long status_cpu_idle_ticks;
-static unsigned long long status_cpu_last_ticks;
+static unsigned long long status_cpu_last_ticks[32];
 static unsigned long long status_cpu_last_idle_ticks;
-static unsigned int status_cpu_cached_busy_percent;
-static int status_cpu_sample_initialized;
+static unsigned long long status_cpu_last_busy_ticks[32];
+static unsigned int status_cpu_cached_busy_percent[32];
+static int status_cpu_sample_initialized[32];
 static int statusbar_enabled;
 static unsigned long long statusbar_last_update_tick;
 
@@ -108,7 +109,7 @@ unsigned long long status_memory_used_kb(void) {
 }
 
 unsigned int status_cpu_core_count(void) {
-    return 1u;
+    return cpu_online_core_count();
 }
 
 void status_cpu_enter_idle(void) {
@@ -130,34 +131,59 @@ void status_cpu_timer_tick(void) {
 unsigned int status_cpu_usage_percent(unsigned int core) {
     unsigned long long current_ticks;
     unsigned long long current_idle_ticks;
+    unsigned long long current_busy_ticks;
     unsigned long long delta_ticks;
     unsigned long long delta_idle_ticks;
+    unsigned long long delta_busy_ticks;
 
-    if (core != 0) {
+    if (core >= 32u || core >= status_cpu_core_count()) {
         return 0;
     }
 
     current_ticks = timer_ticks();
-    current_idle_ticks = status_cpu_idle_ticks;
-
-    if (status_cpu_sample_initialized && current_ticks == status_cpu_last_ticks) {
-        return status_cpu_cached_busy_percent;
+    if (status_cpu_sample_initialized[core] && current_ticks == status_cpu_last_ticks[core]) {
+        return status_cpu_cached_busy_percent[core];
     }
 
-    if (!status_cpu_sample_initialized) {
+    if (core == 0) {
+        current_idle_ticks = status_cpu_idle_ticks;
+        if (!status_cpu_sample_initialized[core]) {
+            delta_ticks = current_ticks;
+            delta_idle_ticks = current_idle_ticks;
+            status_cpu_sample_initialized[core] = 1;
+        } else {
+            delta_ticks = current_ticks - status_cpu_last_ticks[core];
+            delta_idle_ticks = current_idle_ticks - status_cpu_last_idle_ticks;
+        }
+
+        status_cpu_last_ticks[core] = current_ticks;
+        status_cpu_last_idle_ticks = current_idle_ticks;
+        status_cpu_cached_busy_percent[core] =
+            (unsigned int)status_busy_percent_from_ticks(delta_ticks, delta_idle_ticks);
+        return status_cpu_cached_busy_percent[core];
+    }
+
+    current_busy_ticks = cpu_core_busy_ticks(core);
+    if (!status_cpu_sample_initialized[core]) {
         delta_ticks = current_ticks;
-        delta_idle_ticks = current_idle_ticks;
-        status_cpu_sample_initialized = 1;
+        delta_busy_ticks = current_busy_ticks;
+        status_cpu_sample_initialized[core] = 1;
     } else {
-        delta_ticks = current_ticks - status_cpu_last_ticks;
-        delta_idle_ticks = current_idle_ticks - status_cpu_last_idle_ticks;
+        delta_ticks = current_ticks - status_cpu_last_ticks[core];
+        delta_busy_ticks = current_busy_ticks - status_cpu_last_busy_ticks[core];
     }
 
-    status_cpu_last_ticks = current_ticks;
-    status_cpu_last_idle_ticks = current_idle_ticks;
+    status_cpu_last_ticks[core] = current_ticks;
+    status_cpu_last_busy_ticks[core] = current_busy_ticks;
 
-    status_cpu_cached_busy_percent = (unsigned int)status_busy_percent_from_ticks(delta_ticks, delta_idle_ticks);
-    return status_cpu_cached_busy_percent;
+    if (delta_ticks == 0) {
+        status_cpu_cached_busy_percent[core] = 0;
+    } else if (delta_busy_ticks >= delta_ticks) {
+        status_cpu_cached_busy_percent[core] = 100;
+    } else {
+        status_cpu_cached_busy_percent[core] = (unsigned int)((delta_busy_ticks * 100ull) / delta_ticks);
+    }
+    return status_cpu_cached_busy_percent[core];
 }
 
 static void statusbar_put_label(unsigned int col, const char *text) {
@@ -288,6 +314,8 @@ void kernel_main(boot_info_t *info) {
     cpu_init_tables();
     boot_stage("cpu topology");
     cpu_detect_topology(info);
+    boot_stage("secondary CPUs");
+    cpu_start_secondary_cores();
     boot_stage("interrupt vectors");
     interrupts_init();
     boot_stage("timer");
@@ -313,7 +341,9 @@ void kernel_main(boot_info_t *info) {
                      info->framebuffer_width,
                      info->framebuffer_height);
     console_kprintf1("Memory map bytes: %u\n", info->memory_map_size);
-    console_kprintf1("CPU cores detected: %u\n", cpu_core_count());
+    console_kprintf2("CPU cores online/detected: %u/%u\n",
+                     cpu_online_core_count(),
+                     cpu_core_count());
     console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, storage, USB scan, and network scan loaded.\n");
     console_puts("\nHave fun hacking on it.\n");
 

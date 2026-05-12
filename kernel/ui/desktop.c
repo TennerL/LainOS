@@ -180,33 +180,11 @@ static desktop_module_window_t *desktop_top_module_app_window_at(uint32_t x, uin
 static int point_in_rect(uint32_t px, uint32_t py, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 static uint32_t desktop_taskbar_height(void);
 
-static uint32_t mix_color(uint32_t a, uint32_t b, uint32_t step, uint32_t steps) {
-    uint32_t ar = (a >> 16) & 0xffu;
-    uint32_t ag = (a >> 8) & 0xffu;
-    uint32_t ab = a & 0xffu;
-    uint32_t br = (b >> 16) & 0xffu;
-    uint32_t bg = (b >> 8) & 0xffu;
-    uint32_t bb = b & 0xffu;
-
-    if (steps == 0) {
-        steps = 1;
-    }
-
-    uint32_t r = (ar * (steps - step) + br * step) / steps;
-    uint32_t g = (ag * (steps - step) + bg * step) / steps;
-    uint32_t blue = (ab * (steps - step) + bb * step) / steps;
-    return (r << 16) | (g << 8) | blue;
-}
-
 static void desktop_background(void) {
     uint32_t width = graphics_width();
     uint32_t height = graphics_height();
 
-    for (uint32_t y = 0; y < height; ++y) {
-        //uint32_t color = mix_color(0x140f22u, 0x2b1d3du, y, height);
-        uint32_t color = mix_color(0x35063Eu, 0x2b1d3du, y, height);
-        graphics_fill_rect(0, y, width, 1, color);
-    }
+    graphics_fill_vertical_gradient(0, 0, width, height, 0x35063Eu, 0x2b1d3du);
 
     // uint32_t band_y = height / 3u;
     // graphics_fill_rect(0, band_y, width, height / 12u, 0x4b2347u);
@@ -2006,6 +1984,8 @@ static void desktop_redraw_editor_only(uint32_t cursor_x_pos, uint32_t cursor_y_
 }
 
 static void desktop_redraw_all(void) {
+    int buffered = graphics_backbuffer_enable();
+
     desktop_draw_base();
     if (terminal_open) {
         desktop_terminal_draw(1);
@@ -2015,6 +1995,11 @@ static void desktop_redraw_all(void) {
     desktop_draw_module_app();
     desktop_draw_editor();
     desktop_draw_start_menu();
+
+    if (buffered) {
+        graphics_backbuffer_flush();
+        graphics_backbuffer_disable();
+    }
 }
 
 static void desktop_terminal_submit(const boot_info_t *info) {
@@ -2418,10 +2403,8 @@ void desktop_run(const boot_info_t *info) {
     }
 
     console_cursor_enable(0);
-    desktop_draw_base();
     desktop_terminal_open();
-    desktop_terminal_draw(1);
-    desktop_draw_start_menu();
+    desktop_redraw_all();
     cursor_drawn = 0;
 
     uint32_t last_x = (uint32_t)mouse_x();

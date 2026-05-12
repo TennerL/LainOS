@@ -2,11 +2,31 @@
 #include "kernel.h"
 
 #define CPU_MAX_CORES 32u
+#define CPU_AP_STACK_SIZE (6u * 1024u)
+#define CPU_AP_TRAMPOLINE_BASE 0x8000ull
+#define CPU_AP_TRAMPOLINE_VECTOR 0x08u
+#define CPU_SMP_IPI_VECTOR 0xF1u
+#define CPU_SMP_WORK_SLOTS 64u
 #define ACPI_MADT_TYPE_LOCAL_APIC 0u
 #define ACPI_MADT_TYPE_LOCAL_X2APIC 9u
 #define ACPI_CPU_ENABLED 0x1u
 #define ACPI_CPU_ONLINE_CAPABLE 0x2u
 #define ACPI_MAX_TABLE_LENGTH (1024u * 1024u)
+#define IA32_APIC_BASE_MSR 0x1Bu
+#define IA32_APIC_BASE_ENABLE 0x800u
+#define LAPIC_REG_ID 0x20u
+#define LAPIC_REG_EOI 0xB0u
+#define LAPIC_REG_SVR 0xF0u
+#define LAPIC_REG_ICR_LOW 0x300u
+#define LAPIC_REG_ICR_HIGH 0x310u
+#define LAPIC_SVR_ENABLE 0x100u
+#define LAPIC_ICR_DEST_ALL_BUT_SELF 0x000C0000u
+#define LAPIC_ICR_DELIVERY_STATUS 0x1000u
+#define LAPIC_ICR_FIXED 0x000u
+#define LAPIC_ICR_INIT 0x500u
+#define LAPIC_ICR_STARTUP 0x600u
+#define LAPIC_ICR_LEVEL_ASSERT 0x4000u
+#define LAPIC_ICR_TRIGGER_LEVEL 0x8000u
 
 struct __attribute__((packed)) gdtr64 {
     uint16_t limit;
@@ -94,9 +114,15 @@ extern void isr_24(void); extern void isr_25(void); extern void isr_26(void); ex
 extern void isr_28(void); extern void isr_29(void); extern void isr_30(void); extern void isr_31(void);
 extern void irq0_timer(void);
 extern void irq12_mouse(void);
+extern void irq_smp_ipi(void);
 
 extern void cpu_load_gdt_and_segments(const struct gdtr64 *gdtr);
 extern void cpu_load_idt(const struct idtr64 *idtr);
+extern uint8_t ap_trampoline_start[];
+extern uint8_t ap_trampoline_end[];
+extern uint8_t ap_trampoline_cr3[];
+extern uint8_t ap_trampoline_stack[];
+extern uint8_t ap_trampoline_entry[];
 
 static uint64_t gdt64[] = {
     0x0000000000000000ULL,
@@ -105,9 +131,232 @@ static uint64_t gdt64[] = {
 };
 
 static struct idt_entry64 idt64[256];
+static uint8_t ap_stacks[CPU_MAX_CORES][CPU_AP_STACK_SIZE] __attribute__((aligned(16)));
 static unsigned int detected_core_count = 1u;
 static unsigned int detected_lapic_ids[CPU_MAX_CORES];
 static unsigned long long detected_lapic_base;
+static unsigned int bsp_lapic_id;
+static volatile unsigned int online_core_count = 1u;
+static volatile uint64_t cpu_busy_ticks[CPU_MAX_CORES];
+static volatile unsigned int smp_work_lock;
+static volatile unsigned int smp_next_work_id = 1u;
+
+typedef struct {
+    volatile unsigned int state;
+    unsigned int id;
+    smp_work_fn_t fn;
+    void *arg;
+} smp_work_slot_t;
+
+static smp_work_slot_t smp_work_slots[CPU_SMP_WORK_SLOTS];
+
+static void cpu_relax(void) {
+    __asm__ __volatile__("pause");
+}
+
+static uint64_t cpu_read_msr(uint32_t msr) {
+    uint32_t low;
+    uint32_t high;
+
+    __asm__ __volatile__("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    return ((uint64_t)high << 32) | low;
+}
+
+static void cpu_write_msr(uint32_t msr, uint64_t value) {
+    __asm__ __volatile__("wrmsr"
+                         :
+                         : "c"(msr), "a"((uint32_t)value), "d"((uint32_t)(value >> 32))
+                         : "memory");
+}
+
+static uint64_t cpu_read_cr3(void) {
+    uint64_t value;
+
+    __asm__ __volatile__("mov %%cr3, %0" : "=r"(value));
+    return value;
+}
+
+static volatile uint32_t *lapic_reg(uint32_t reg) {
+    return (volatile uint32_t *)(uintptr_t)(detected_lapic_base + reg);
+}
+
+static uint32_t lapic_read(uint32_t reg) {
+    return *lapic_reg(reg);
+}
+
+static void lapic_write(uint32_t reg, uint32_t value) {
+    *lapic_reg(reg) = value;
+    (void)lapic_read(LAPIC_REG_ID);
+}
+
+static void lapic_eoi(void) {
+    lapic_write(LAPIC_REG_EOI, 0u);
+}
+
+static void lapic_wait_delivery(void) {
+    for (unsigned int i = 0; i < 1000000u; ++i) {
+        if ((lapic_read(LAPIC_REG_ICR_LOW) & LAPIC_ICR_DELIVERY_STATUS) == 0u) {
+            return;
+        }
+        cpu_relax();
+    }
+}
+
+static void cpu_delay(unsigned int iterations) {
+    for (unsigned int i = 0; i < iterations; ++i) {
+        cpu_relax();
+    }
+}
+
+static void lapic_enable(void) {
+    uint64_t apic_base = cpu_read_msr(IA32_APIC_BASE_MSR);
+
+    if (detected_lapic_base == 0) {
+        detected_lapic_base = apic_base & 0xFFFFF000ull;
+    }
+    cpu_write_msr(IA32_APIC_BASE_MSR, apic_base | IA32_APIC_BASE_ENABLE);
+    lapic_write(LAPIC_REG_SVR, lapic_read(LAPIC_REG_SVR) | LAPIC_SVR_ENABLE | 0xFFu);
+}
+
+static unsigned int lapic_current_id(void) {
+    return (lapic_read(LAPIC_REG_ID) >> 24) & 0xFFu;
+}
+
+static unsigned int cpu_index_for_lapic_id(unsigned int apic_id) {
+    for (unsigned int i = 0; i < detected_core_count; ++i) {
+        if (detected_lapic_ids[i] == apic_id) {
+            return i;
+        }
+    }
+
+    return 0u;
+}
+
+static void cpu_copy_bytes(void *dst, const void *src, uint64_t size) {
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+
+    for (uint64_t i = 0; i < size; ++i) {
+        d[i] = s[i];
+    }
+}
+
+static void cpu_patch_u64(uint8_t *image, uint64_t offset, uint64_t value) {
+    for (unsigned int i = 0; i < 8u; ++i) {
+        image[offset + i] = (uint8_t)(value >> (i * 8u));
+    }
+}
+
+static void cpu_send_init_sipi(unsigned int apic_id) {
+    lapic_write(LAPIC_REG_ICR_HIGH, apic_id << 24);
+    lapic_write(LAPIC_REG_ICR_LOW, LAPIC_ICR_INIT | LAPIC_ICR_LEVEL_ASSERT | LAPIC_ICR_TRIGGER_LEVEL);
+    lapic_wait_delivery();
+    cpu_delay(1000000u);
+
+    lapic_write(LAPIC_REG_ICR_HIGH, apic_id << 24);
+    lapic_write(LAPIC_REG_ICR_LOW, LAPIC_ICR_INIT | LAPIC_ICR_TRIGGER_LEVEL);
+    lapic_wait_delivery();
+    cpu_delay(1000000u);
+
+    for (unsigned int attempt = 0; attempt < 2u; ++attempt) {
+        lapic_write(LAPIC_REG_ICR_HIGH, apic_id << 24);
+        lapic_write(LAPIC_REG_ICR_LOW, LAPIC_ICR_STARTUP | CPU_AP_TRAMPOLINE_VECTOR);
+        lapic_wait_delivery();
+        cpu_delay(200000u);
+    }
+}
+
+static void cpu_send_smp_ipi(void) {
+    if (online_core_count <= 1u) {
+        return;
+    }
+
+    lapic_write(LAPIC_REG_ICR_HIGH, 0u);
+    lapic_write(LAPIC_REG_ICR_LOW,
+                LAPIC_ICR_DEST_ALL_BUT_SELF | LAPIC_ICR_FIXED | CPU_SMP_IPI_VECTOR);
+    lapic_wait_delivery();
+}
+
+static void smp_lock(void) {
+    while (__sync_lock_test_and_set(&smp_work_lock, 1u) != 0u) {
+        cpu_relax();
+    }
+}
+
+static void smp_unlock(void) {
+    __sync_lock_release(&smp_work_lock);
+}
+
+static int smp_take_work(smp_work_fn_t *out_fn, void **out_arg, unsigned int *out_slot) {
+    int found = 0;
+
+    smp_lock();
+    for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
+        if (smp_work_slots[i].state == 1u && smp_work_slots[i].fn != 0) {
+            smp_work_slots[i].state = 2u;
+            *out_fn = smp_work_slots[i].fn;
+            *out_arg = smp_work_slots[i].arg;
+            *out_slot = i;
+            found = 1;
+            break;
+        }
+    }
+    smp_unlock();
+
+    return found;
+}
+
+static void cpu_record_busy_ticks(unsigned int core, uint64_t ticks) {
+    if (core >= CPU_MAX_CORES || ticks == 0) {
+        return;
+    }
+
+    __sync_fetch_and_add(&cpu_busy_ticks[core], ticks);
+}
+
+static int smp_run_one_work_item(unsigned int core_index) {
+    smp_work_fn_t fn = 0;
+    void *arg = 0;
+    unsigned int slot = 0;
+    uint64_t start_ticks;
+    uint64_t end_ticks;
+    uint64_t elapsed_ticks;
+
+    if (!smp_take_work(&fn, &arg, &slot)) {
+        return 0;
+    }
+
+    start_ticks = timer_ticks();
+    fn(arg);
+    end_ticks = timer_ticks();
+    elapsed_ticks = end_ticks - start_ticks;
+    if (elapsed_ticks == 0u) {
+        elapsed_ticks = 1u;
+    }
+    cpu_record_busy_ticks(core_index, elapsed_ticks);
+    __sync_synchronize();
+    smp_work_slots[slot].state = 3u;
+    return 1;
+}
+
+void cpu_ipi_handler(void) {
+    lapic_eoi();
+}
+
+void cpu_ap_entry(void) {
+    unsigned int core_index;
+
+    cpu_init_tables();
+    lapic_enable();
+    core_index = cpu_index_for_lapic_id(lapic_current_id());
+    __sync_fetch_and_add(&online_core_count, 1u);
+
+    for (;;) {
+        while (smp_run_one_work_item(core_index)) {
+        }
+        __asm__ __volatile__("sti; hlt; cli");
+    }
+}
 
 static void cpu_cpuid(uint32_t leaf, uint32_t subleaf, uint32_t *a, uint32_t *b, uint32_t *c, uint32_t *d) {
     uint32_t eax;
@@ -380,6 +629,7 @@ void cpu_init_tables(void) {
     }
     idt_set_gate(32, irq0_timer);
     idt_set_gate(44, irq12_mouse);
+    idt_set_gate(CPU_SMP_IPI_VECTOR, irq_smp_ipi);
 
     struct idtr64 idtr = {
         .limit = (uint16_t)(sizeof(idt64) - 1),
@@ -442,6 +692,18 @@ unsigned int cpu_core_count(void) {
     return detected_core_count;
 }
 
+unsigned int cpu_online_core_count(void) {
+    return online_core_count;
+}
+
+unsigned long long cpu_core_busy_ticks(unsigned int core) {
+    if (core >= CPU_MAX_CORES) {
+        return 0;
+    }
+
+    return cpu_busy_ticks[core];
+}
+
 unsigned int cpu_lapic_id(unsigned int index) {
     if (index >= detected_core_count) {
         return 0;
@@ -451,4 +713,123 @@ unsigned int cpu_lapic_id(unsigned int index) {
 
 unsigned long long cpu_lapic_base(void) {
     return detected_lapic_base;
+}
+
+unsigned int cpu_start_secondary_cores(void) {
+    uint8_t *trampoline = (uint8_t *)(uintptr_t)CPU_AP_TRAMPOLINE_BASE;
+    uint64_t trampoline_size = (uint64_t)(uintptr_t)(ap_trampoline_end - ap_trampoline_start);
+    uint64_t cr3_offset = (uint64_t)(uintptr_t)(ap_trampoline_cr3 - ap_trampoline_start);
+    uint64_t stack_offset = (uint64_t)(uintptr_t)(ap_trampoline_stack - ap_trampoline_start);
+    uint64_t entry_offset = (uint64_t)(uintptr_t)(ap_trampoline_entry - ap_trampoline_start);
+    uint64_t cr3 = cpu_read_cr3();
+    unsigned int started_before;
+
+    online_core_count = 1u;
+    if (detected_core_count <= 1u || trampoline_size == 0 || trampoline_size > 4096u) {
+        return online_core_count;
+    }
+
+    lapic_enable();
+    bsp_lapic_id = lapic_current_id();
+    cpu_copy_bytes(trampoline, ap_trampoline_start, trampoline_size);
+    cpu_patch_u64(trampoline, cr3_offset, cr3);
+    cpu_patch_u64(trampoline, entry_offset, (uint64_t)(uintptr_t)cpu_ap_entry);
+
+    for (unsigned int i = 0; i < detected_core_count; ++i) {
+        unsigned int apic_id = detected_lapic_ids[i];
+
+        if (apic_id == bsp_lapic_id || apic_id > 0xFFu) {
+            continue;
+        }
+
+        started_before = online_core_count;
+        cpu_patch_u64(trampoline,
+                      stack_offset,
+                      (uint64_t)(uintptr_t)&ap_stacks[i][CPU_AP_STACK_SIZE]);
+        cpu_send_init_sipi(apic_id);
+
+        for (unsigned int wait = 0; wait < 10000000u; ++wait) {
+            if (online_core_count != started_before) {
+                break;
+            }
+            cpu_relax();
+        }
+    }
+
+    return online_core_count;
+}
+
+unsigned int smp_submit_work(smp_work_fn_t fn, void *arg) {
+    unsigned int id = 0;
+
+    if (fn == 0 || online_core_count <= 1u) {
+        return 0u;
+    }
+
+    smp_lock();
+    for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
+        if (smp_work_slots[i].state == 0u || smp_work_slots[i].state == 3u) {
+            id = smp_next_work_id++;
+            if (id == 0u) {
+                id = smp_next_work_id++;
+            }
+            smp_work_slots[i].fn = fn;
+            smp_work_slots[i].arg = arg;
+            smp_work_slots[i].id = id;
+            __sync_synchronize();
+            smp_work_slots[i].state = 1u;
+            break;
+        }
+    }
+    smp_unlock();
+
+    if (id != 0u) {
+        cpu_send_smp_ipi();
+    }
+    return id;
+}
+
+int smp_work_done(unsigned int id) {
+    int done = 0;
+
+    if (id == 0u) {
+        return 1;
+    }
+
+    smp_lock();
+    for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
+        if (smp_work_slots[i].id == id) {
+            done = smp_work_slots[i].state == 3u;
+            break;
+        }
+    }
+    smp_unlock();
+
+    return done;
+}
+
+void smp_wait_work(unsigned int id) {
+    if (id == 0u) {
+        return;
+    }
+
+    while (!smp_work_done(id)) {
+        smp_run_one_work_item(0u);
+        cpu_send_smp_ipi();
+        cpu_relax();
+    }
+}
+
+unsigned int smp_pending_work_count(void) {
+    unsigned int count = 0;
+
+    smp_lock();
+    for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
+        if (smp_work_slots[i].state == 1u || smp_work_slots[i].state == 2u) {
+            ++count;
+        }
+    }
+    smp_unlock();
+
+    return count;
 }
