@@ -1,0 +1,4 @@
+include .
+module
+jpg_decoder.Z jpg_decoder.zo
+

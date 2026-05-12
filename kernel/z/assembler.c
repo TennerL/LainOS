@@ -3,7 +3,7 @@
 #include "kernel_exports.h"
 
 #define ASM_LINE_SIZE 128u
-#define ASM_MAX_LABELS 512u
+#define ASM_MAX_LABELS 2048u
 #define ASM_LABEL_NAME_SIZE 40u
 
 typedef struct {

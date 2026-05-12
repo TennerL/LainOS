@@ -1,0 +1,1395 @@
+enum {
+    JPG_OK = 0,
+    JPG_ERR_INPUT = -1,
+    JPG_ERR_FORMAT = -2,
+    JPG_ERR_UNSUPPORTED = -3,
+    JPG_ERR_OUTPUT = -4,
+    JPG_ERR_ENTROPY = -5,
+};
+
+extern void put_pixel(uint32_t x, uint32_t y, uint32_t color);
+
+struct JpgImage {
+    uint32_t width;
+    uint32_t height;
+    uint32_t components;
+    uint32_t stride;
+};
+
+global int32_t jpg_coeff[64];
+global int32_t jpg_work[64];
+global uint8_t jpg_block[64];
+global uint8_t jpg_mcu_y[256];
+global uint8_t jpg_mcu_cb[256];
+global uint8_t jpg_mcu_cr[256];
+
+global uint32_t jpg_width;
+global uint32_t jpg_height;
+global uint32_t jpg_components;
+global uint32_t jpg_scan_components;
+global uint32_t jpg_max_h;
+global uint32_t jpg_max_v;
+global uint32_t jpg_scan_offset;
+global uint32_t jpg_restart_interval;
+global uint32_t jpg_entropy_detail;
+global uint32_t jpg_entropy_block;
+
+global uint32_t jpg_comp_id[3];
+global uint32_t jpg_comp_h[3];
+global uint32_t jpg_comp_v[3];
+global uint32_t jpg_comp_qt[3];
+global uint32_t jpg_comp_dc[3];
+global uint32_t jpg_comp_ac[3];
+global int32_t jpg_dc_pred[3];
+
+global uint32_t jpg_quant[256];
+global uint32_t jpg_huff_bits[68];
+global uint32_t jpg_huff_values[1024];
+global uint32_t jpg_huff_valid[4];
+
+global uint32_t jpg_stream_pos;
+global uint32_t jpg_stream_size;
+global uint32_t jpg_bits_left;
+global uint32_t jpg_current_byte;
+
+uint32_t jpg_u16(const uint8_t *data, uint32_t pos) {
+    return (uint32_t)data[pos] * 256 + (uint32_t)data[pos + 1];
+}
+
+uint32_t jpg_pow2(uint32_t bits) {
+    uint32_t value;
+    uint32_t i;
+
+    value = 1;
+    i = 0;
+    while (i < bits) {
+        value = value * 2;
+        i = i + 1;
+    }
+    return value;
+}
+
+int32_t jpg_clamp8(int32_t value) {
+    if (value < 0) {
+        return 0;
+    }
+    if (value > 255) {
+        return 255;
+    }
+    return value;
+}
+
+void jpg_clear_parse_state(void) {
+    uint32_t i;
+
+    jpg_width = 0;
+    jpg_height = 0;
+    jpg_components = 0;
+    jpg_scan_components = 0;
+    jpg_max_h = 0;
+    jpg_max_v = 0;
+    jpg_scan_offset = 0;
+    jpg_restart_interval = 0;
+    jpg_entropy_detail = 0;
+    jpg_entropy_block = 0;
+    i = 0;
+    while (i < 3) {
+        jpg_comp_id[i] = 0;
+        jpg_comp_h[i] = 0;
+        jpg_comp_v[i] = 0;
+        jpg_comp_qt[i] = 0;
+        jpg_comp_dc[i] = 0;
+        jpg_comp_ac[i] = 0;
+        jpg_dc_pred[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 4) {
+        jpg_huff_valid[i] = 0;
+        i = i + 1;
+    }
+}
+
+uint32_t jpg_zigzag(uint32_t index) {
+    if (index == 0) return 0;
+    if (index == 1) return 1;
+    if (index == 2) return 8;
+    if (index == 3) return 16;
+    if (index == 4) return 9;
+    if (index == 5) return 2;
+    if (index == 6) return 3;
+    if (index == 7) return 10;
+    if (index == 8) return 17;
+    if (index == 9) return 24;
+    if (index == 10) return 32;
+    if (index == 11) return 25;
+    if (index == 12) return 18;
+    if (index == 13) return 11;
+    if (index == 14) return 4;
+    if (index == 15) return 5;
+    if (index == 16) return 12;
+    if (index == 17) return 19;
+    if (index == 18) return 26;
+    if (index == 19) return 33;
+    if (index == 20) return 40;
+    if (index == 21) return 48;
+    if (index == 22) return 41;
+    if (index == 23) return 34;
+    if (index == 24) return 27;
+    if (index == 25) return 20;
+    if (index == 26) return 13;
+    if (index == 27) return 6;
+    if (index == 28) return 7;
+    if (index == 29) return 14;
+    if (index == 30) return 21;
+    if (index == 31) return 28;
+    if (index == 32) return 35;
+    if (index == 33) return 42;
+    if (index == 34) return 49;
+    if (index == 35) return 56;
+    if (index == 36) return 57;
+    if (index == 37) return 50;
+    if (index == 38) return 43;
+    if (index == 39) return 36;
+    if (index == 40) return 29;
+    if (index == 41) return 22;
+    if (index == 42) return 15;
+    if (index == 43) return 23;
+    if (index == 44) return 30;
+    if (index == 45) return 37;
+    if (index == 46) return 44;
+    if (index == 47) return 51;
+    if (index == 48) return 58;
+    if (index == 49) return 59;
+    if (index == 50) return 52;
+    if (index == 51) return 45;
+    if (index == 52) return 38;
+    if (index == 53) return 31;
+    if (index == 54) return 39;
+    if (index == 55) return 46;
+    if (index == 56) return 53;
+    if (index == 57) return 60;
+    if (index == 58) return 61;
+    if (index == 59) return 54;
+    if (index == 60) return 47;
+    if (index == 61) return 55;
+    if (index == 62) return 62;
+    return 63;
+}
+
+export uint32_t jpg_debug_zigzag(uint32_t index) {
+    return jpg_zigzag(index);
+}
+
+void jpg_set_coeff(uint32_t index, int32_t value) {
+    if (index == 0) { jpg_coeff[0] = value; return; }
+    if (index == 1) { jpg_coeff[1] = value; return; }
+    if (index == 2) { jpg_coeff[2] = value; return; }
+    if (index == 3) { jpg_coeff[3] = value; return; }
+    if (index == 4) { jpg_coeff[4] = value; return; }
+    if (index == 5) { jpg_coeff[5] = value; return; }
+    if (index == 6) { jpg_coeff[6] = value; return; }
+    if (index == 7) { jpg_coeff[7] = value; return; }
+    if (index == 8) { jpg_coeff[8] = value; return; }
+    if (index == 9) { jpg_coeff[9] = value; return; }
+    if (index == 10) { jpg_coeff[10] = value; return; }
+    if (index == 11) { jpg_coeff[11] = value; return; }
+    if (index == 12) { jpg_coeff[12] = value; return; }
+    if (index == 13) { jpg_coeff[13] = value; return; }
+    if (index == 14) { jpg_coeff[14] = value; return; }
+    if (index == 15) { jpg_coeff[15] = value; return; }
+    if (index == 16) { jpg_coeff[16] = value; return; }
+    if (index == 17) { jpg_coeff[17] = value; return; }
+    if (index == 18) { jpg_coeff[18] = value; return; }
+    if (index == 19) { jpg_coeff[19] = value; return; }
+    if (index == 20) { jpg_coeff[20] = value; return; }
+    if (index == 21) { jpg_coeff[21] = value; return; }
+    if (index == 22) { jpg_coeff[22] = value; return; }
+    if (index == 23) { jpg_coeff[23] = value; return; }
+    if (index == 24) { jpg_coeff[24] = value; return; }
+    if (index == 25) { jpg_coeff[25] = value; return; }
+    if (index == 26) { jpg_coeff[26] = value; return; }
+    if (index == 27) { jpg_coeff[27] = value; return; }
+    if (index == 28) { jpg_coeff[28] = value; return; }
+    if (index == 29) { jpg_coeff[29] = value; return; }
+    if (index == 30) { jpg_coeff[30] = value; return; }
+    if (index == 31) { jpg_coeff[31] = value; return; }
+    if (index == 32) { jpg_coeff[32] = value; return; }
+    if (index == 33) { jpg_coeff[33] = value; return; }
+    if (index == 34) { jpg_coeff[34] = value; return; }
+    if (index == 35) { jpg_coeff[35] = value; return; }
+    if (index == 36) { jpg_coeff[36] = value; return; }
+    if (index == 37) { jpg_coeff[37] = value; return; }
+    if (index == 38) { jpg_coeff[38] = value; return; }
+    if (index == 39) { jpg_coeff[39] = value; return; }
+    if (index == 40) { jpg_coeff[40] = value; return; }
+    if (index == 41) { jpg_coeff[41] = value; return; }
+    if (index == 42) { jpg_coeff[42] = value; return; }
+    if (index == 43) { jpg_coeff[43] = value; return; }
+    if (index == 44) { jpg_coeff[44] = value; return; }
+    if (index == 45) { jpg_coeff[45] = value; return; }
+    if (index == 46) { jpg_coeff[46] = value; return; }
+    if (index == 47) { jpg_coeff[47] = value; return; }
+    if (index == 48) { jpg_coeff[48] = value; return; }
+    if (index == 49) { jpg_coeff[49] = value; return; }
+    if (index == 50) { jpg_coeff[50] = value; return; }
+    if (index == 51) { jpg_coeff[51] = value; return; }
+    if (index == 52) { jpg_coeff[52] = value; return; }
+    if (index == 53) { jpg_coeff[53] = value; return; }
+    if (index == 54) { jpg_coeff[54] = value; return; }
+    if (index == 55) { jpg_coeff[55] = value; return; }
+    if (index == 56) { jpg_coeff[56] = value; return; }
+    if (index == 57) { jpg_coeff[57] = value; return; }
+    if (index == 58) { jpg_coeff[58] = value; return; }
+    if (index == 59) { jpg_coeff[59] = value; return; }
+    if (index == 60) { jpg_coeff[60] = value; return; }
+    if (index == 61) { jpg_coeff[61] = value; return; }
+    if (index == 62) { jpg_coeff[62] = value; return; }
+    jpg_coeff[63] = value;
+}
+
+void jpg_store_coeff(uint32_t index, int32_t value) {
+    uint32_t stream_pos;
+    uint32_t bits_left;
+    uint32_t current_byte;
+
+    stream_pos = jpg_stream_pos;
+    bits_left = jpg_bits_left;
+    current_byte = jpg_current_byte;
+    jpg_set_coeff(index, value);
+    jpg_stream_pos = stream_pos;
+    jpg_bits_left = bits_left;
+    jpg_current_byte = current_byte;
+}
+
+int jpg_find_component(uint32_t id) {
+    uint32_t i;
+
+    i = 0;
+    while (i < jpg_components) {
+        if (jpg_comp_id[i] == id) {
+            return (int)i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+int jpg_parse_dqt(const uint8_t *data, uint32_t payload, uint32_t end) {
+    uint32_t pos;
+    uint32_t info;
+    uint32_t table;
+    uint32_t precision;
+    uint32_t i;
+    uint32_t dst;
+
+    pos = payload;
+    while (pos < end) {
+        info = data[pos];
+        pos = pos + 1;
+        precision = info / 16;
+        table = info % 16;
+        if (precision != 0 || table > 3 || pos + 64 > end) {
+            return JPG_ERR_UNSUPPORTED;
+        }
+        i = 0;
+        while (i < 64) {
+            dst = table * 64 + jpg_zigzag(i);
+            jpg_quant[dst] = data[pos + i];
+            i = i + 1;
+        }
+        pos = pos + 64;
+    }
+    if (pos != end) {
+        return JPG_ERR_FORMAT;
+    }
+    return JPG_OK;
+}
+
+int jpg_parse_dht(const uint8_t *data, uint32_t payload, uint32_t end) {
+    uint32_t pos;
+    uint32_t info;
+    uint32_t kind;
+    uint32_t table;
+    uint32_t slot;
+    uint32_t total;
+    uint32_t i;
+
+    pos = payload;
+    while (pos < end) {
+        if (pos + 17 > end) {
+            return JPG_ERR_FORMAT;
+        }
+        info = data[pos];
+        pos = pos + 1;
+        kind = info / 16;
+        table = info % 16;
+        if (kind > 1 || table > 1) {
+            return JPG_ERR_UNSUPPORTED;
+        }
+        slot = kind * 2 + table;
+        total = 0;
+        i = 1;
+        while (i <= 16) {
+            jpg_huff_bits[slot * 17 + i] = data[pos + i - 1];
+            total = total + jpg_huff_bits[slot * 17 + i];
+            i = i + 1;
+        }
+        pos = pos + 16;
+        if (total > 256 || pos + total > end) {
+            return JPG_ERR_FORMAT;
+        }
+        i = 0;
+        while (i < total) {
+            jpg_huff_values[slot * 256 + i] = data[pos + i];
+            i = i + 1;
+        }
+        jpg_huff_valid[slot] = 1;
+        pos = pos + total;
+    }
+    if (pos != end) {
+        return JPG_ERR_FORMAT;
+    }
+    return JPG_OK;
+}
+
+int jpg_parse_sof0(const uint8_t *data, uint32_t payload, uint32_t end) {
+    uint32_t count;
+    uint32_t pos;
+    uint32_t i;
+    uint32_t hv;
+    uint32_t h;
+    uint32_t v;
+
+    if (payload + 6 > end || data[payload] != 8) {
+        return JPG_ERR_UNSUPPORTED;
+    }
+    jpg_height = jpg_u16(data, payload + 1);
+    jpg_width = jpg_u16(data, payload + 3);
+    count = data[payload + 5];
+    if (jpg_width == 0 || jpg_height == 0 || (count != 1 && count != 3)) {
+        return JPG_ERR_UNSUPPORTED;
+    }
+    if (payload + 6 + count * 3 != end) {
+        return JPG_ERR_FORMAT;
+    }
+    jpg_components = count;
+    jpg_max_h = 1;
+    jpg_max_v = 1;
+    pos = payload + 6;
+    i = 0;
+    while (i < count) {
+        jpg_comp_id[i] = data[pos];
+        hv = data[pos + 1];
+        h = hv / 16;
+        v = hv % 16;
+        if (h == 0 || v == 0 || h > 2 || v > 2) {
+            return JPG_ERR_UNSUPPORTED;
+        }
+        jpg_comp_h[i] = h;
+        jpg_comp_v[i] = v;
+        jpg_comp_qt[i] = data[pos + 2];
+        if (jpg_comp_qt[i] > 3) {
+            return JPG_ERR_UNSUPPORTED;
+        }
+        if (h > jpg_max_h) {
+            jpg_max_h = h;
+        }
+        if (v > jpg_max_v) {
+            jpg_max_v = v;
+        }
+        pos = pos + 3;
+        i = i + 1;
+    }
+    return JPG_OK;
+}
+
+int jpg_parse_sos(const uint8_t *data, uint32_t payload, uint32_t end) {
+    uint32_t count;
+    uint32_t pos;
+    uint32_t i;
+    uint32_t tables;
+    int index;
+
+    if (payload + 1 > end) {
+        return JPG_ERR_FORMAT;
+    }
+    count = data[payload];
+    if (count != jpg_components || payload + 1 + count * 2 + 3 != end) {
+        return JPG_ERR_UNSUPPORTED;
+    }
+    pos = payload + 1;
+    i = 0;
+    while (i < count) {
+        index = jpg_find_component(data[pos]);
+        if (index < 0) {
+            return JPG_ERR_FORMAT;
+        }
+        tables = data[pos + 1];
+        jpg_comp_dc[index] = tables / 16;
+        jpg_comp_ac[index] = tables % 16;
+        if (jpg_comp_dc[index] > 1 || jpg_comp_ac[index] > 1) {
+            return JPG_ERR_UNSUPPORTED;
+        }
+        pos = pos + 2;
+        i = i + 1;
+    }
+    if (data[pos] != 0 || data[pos + 1] != 63 || data[pos + 2] != 0) {
+        return JPG_ERR_UNSUPPORTED;
+    }
+    jpg_scan_components = count;
+    jpg_scan_offset = end;
+    return JPG_OK;
+}
+
+int jpg_parse_headers(const uint8_t *data, uint32_t size) {
+    uint32_t pos;
+    uint32_t marker;
+    uint32_t length;
+    uint32_t payload;
+    uint32_t end;
+    int rc;
+
+    jpg_clear_parse_state();
+    if (data == 0 || size < 4 || data[0] != 255 || data[1] != 216) {
+        return JPG_ERR_INPUT;
+    }
+    pos = 2;
+    while (pos + 1 < size) {
+        if (data[pos] != 255) {
+            return JPG_ERR_FORMAT;
+        }
+        while (pos < size && data[pos] == 255) {
+            pos = pos + 1;
+        }
+        if (pos >= size) {
+            return JPG_ERR_FORMAT;
+        }
+        marker = data[pos];
+        pos = pos + 1;
+        if (marker == 217) {
+            break;
+        }
+        if (marker == 216 || marker == 1 || (marker >= 208 && marker <= 215)) {
+            continue;
+        }
+        if (pos + 2 > size) {
+            return JPG_ERR_FORMAT;
+        }
+        length = jpg_u16(data, pos);
+        if (length < 2 || pos + length > size) {
+            return JPG_ERR_FORMAT;
+        }
+        payload = pos + 2;
+        end = pos + length;
+        if (marker == 219) {
+            rc = jpg_parse_dqt(data, payload, end);
+        } else if (marker == 196) {
+            rc = jpg_parse_dht(data, payload, end);
+        } else if (marker == 192) {
+            rc = jpg_parse_sof0(data, payload, end);
+        } else if (marker == 218) {
+            rc = jpg_parse_sos(data, payload, end);
+            if (rc != JPG_OK) {
+                return rc;
+            }
+            return JPG_OK;
+        } else if (marker == 221) {
+            if (payload + 2 != end) {
+                return JPG_ERR_FORMAT;
+            }
+            jpg_restart_interval = jpg_u16(data, payload);
+            rc = JPG_OK;
+        } else if (marker == 194 || marker == 195 || marker == 197 ||
+                   marker == 198 || marker == 199 || marker == 201 ||
+                   marker == 202 || marker == 203 || marker == 205 ||
+                   marker == 206 || marker == 207) {
+            return JPG_ERR_UNSUPPORTED;
+        } else {
+            rc = JPG_OK;
+        }
+        if (rc != JPG_OK) {
+            return rc;
+        }
+        pos = end;
+    }
+    return JPG_ERR_FORMAT;
+}
+
+int jpg_prepare_stream(const uint8_t *data, uint32_t size) {
+    if (jpg_scan_offset == 0 || jpg_scan_offset >= size) {
+        return JPG_ERR_FORMAT;
+    }
+    jpg_stream_size = size;
+    jpg_stream_pos = jpg_scan_offset;
+    jpg_bits_left = 0;
+    jpg_current_byte = 0;
+    return JPG_OK;
+}
+
+int jpg_next_entropy_byte(const uint8_t *data) {
+    uint32_t value;
+    uint32_t next;
+
+    if (jpg_stream_pos >= jpg_stream_size) {
+        return -1;
+    }
+    value = data[jpg_stream_pos];
+    jpg_stream_pos = jpg_stream_pos + 1;
+    if (value != 255) {
+        return (int)value;
+    }
+    while (jpg_stream_pos < jpg_stream_size && data[jpg_stream_pos] == 255) {
+        jpg_stream_pos = jpg_stream_pos + 1;
+    }
+    if (jpg_stream_pos >= jpg_stream_size) {
+        return -1;
+    }
+    next = data[jpg_stream_pos];
+    jpg_stream_pos = jpg_stream_pos + 1;
+    if (next == 0) {
+        return 255;
+    }
+    if (next >= 208 && next <= 215) {
+        jpg_bits_left = 0;
+        return jpg_next_entropy_byte(data);
+    }
+    return -1;
+}
+
+int jpg_get_bit(const uint8_t *data) {
+    int next;
+    uint32_t divisor;
+    uint32_t bit;
+
+    if (jpg_bits_left == 0) {
+        next = jpg_next_entropy_byte(data);
+        if (next < 0) {
+            return -1;
+        }
+        jpg_current_byte = (uint32_t)next;
+        jpg_bits_left = 8;
+    }
+    divisor = jpg_pow2(jpg_bits_left - 1);
+    bit = (jpg_current_byte / divisor) % 2;
+    jpg_bits_left = jpg_bits_left - 1;
+    return (int)bit;
+}
+
+int jpg_get_bits(const uint8_t *data, uint32_t count) {
+    uint32_t value;
+    uint32_t i;
+    int bit;
+
+    value = 0;
+    i = 0;
+    while (i < count) {
+        bit = jpg_get_bit(data);
+        if (bit < 0) {
+            return -1;
+        }
+        value = value * 2 + (uint32_t)bit;
+        i = i + 1;
+    }
+    return (int)value;
+}
+
+int jpg_extend_value(uint32_t bits, uint32_t count) {
+    uint32_t threshold;
+    uint32_t full;
+
+    if (count == 0) {
+        return 0;
+    }
+    threshold = jpg_pow2(count - 1);
+    full = jpg_pow2(count);
+    if (bits < threshold) {
+        return (int)bits - (int)(full - 1);
+    }
+    return (int)bits;
+}
+
+int jpg_decode_huffman(const uint8_t *data, uint32_t slot) {
+    uint32_t code;
+    uint32_t length;
+    uint32_t i;
+    uint32_t count;
+    uint32_t first;
+    uint32_t offset;
+    int bit;
+
+    if (slot > 3) {
+        jpg_entropy_detail = 10 + slot;
+        return -1;
+    }
+    code = 0;
+    first = 0;
+    offset = 0;
+    length = 1;
+    while (length <= 16) {
+        bit = jpg_get_bit(data);
+        if (bit < 0) {
+            jpg_entropy_detail = 20 + slot;
+            return -1;
+        }
+        code = code * 2 + (uint32_t)bit;
+        count = jpg_huff_bits[slot * 17 + length];
+        if (code >= first && code < first + count) {
+            i = offset + code - first;
+            return (int)jpg_huff_values[slot * 256 + i];
+        }
+        offset = offset + count;
+        first = (first + count) * 2;
+        length = length + 1;
+    }
+    jpg_entropy_detail = 30 + slot;
+    return -1;
+}
+
+int jpg_decode_coeff_block(const uint8_t *data, uint32_t component) {
+    uint32_t qt;
+    uint32_t dc_slot;
+    uint32_t ac_slot;
+    int symbol;
+    int bits;
+    int diff;
+    int value;
+    int dc_bits;
+    uint32_t dc_size;
+    uint32_t k;
+    uint32_t run;
+    uint32_t size;
+    uint32_t zz;
+    jpg_entropy_block = jpg_entropy_block + 1;
+    qt = jpg_comp_qt[component];
+    dc_slot = jpg_comp_dc[component];
+    ac_slot = 2 + jpg_comp_ac[component];
+
+    symbol = jpg_decode_huffman(data, dc_slot);
+    if (symbol < 0 || symbol > 16) {
+        if (jpg_entropy_detail == 0) {
+            jpg_entropy_detail = 1;
+        }
+        return JPG_ERR_ENTROPY;
+    }
+    bits = jpg_get_bits(data, (uint32_t)symbol);
+    if (bits < 0) {
+        if (jpg_entropy_detail == 0) {
+            jpg_entropy_detail = 2;
+        }
+        return JPG_ERR_ENTROPY;
+    }
+    dc_size = (uint32_t)symbol;
+    dc_bits = bits;
+    k = 1;
+    while (k < 64) {
+        symbol = jpg_decode_huffman(data, ac_slot);
+        if (symbol < 0) {
+            if (jpg_entropy_detail == 0) {
+                jpg_entropy_detail = 3;
+            }
+            return JPG_ERR_ENTROPY;
+        }
+        if (symbol == 0) {
+            while (k < 64) {
+                zz = jpg_zigzag(k);
+                jpg_store_coeff(zz, 0);
+                k = k + 1;
+            }
+            break;
+        }
+        run = (uint32_t)symbol / 16;
+        size = (uint32_t)symbol % 16;
+        if (size == 0) {
+            if (run != 15) {
+                jpg_entropy_detail = 4;
+                return JPG_ERR_ENTROPY;
+            }
+            run = 16;
+            while (run > 0 && k < 64) {
+                zz = jpg_zigzag(k);
+                jpg_store_coeff(zz, 0);
+                k = k + 1;
+                run = run - 1;
+            }
+            continue;
+        }
+        while (run > 0 && k < 64) {
+            zz = jpg_zigzag(k);
+            jpg_store_coeff(zz, 0);
+            k = k + 1;
+            run = run - 1;
+        }
+        if (k >= 64) {
+            jpg_entropy_detail = 5;
+            return JPG_ERR_ENTROPY;
+        }
+        bits = jpg_get_bits(data, size);
+        if (bits < 0) {
+            jpg_entropy_detail = 6;
+            return JPG_ERR_ENTROPY;
+        }
+        value = jpg_extend_value((uint32_t)bits, size);
+        zz = jpg_zigzag(k);
+        jpg_store_coeff(zz, value * (int32_t)jpg_quant[qt * 64 + zz]);
+        k = k + 1;
+    }
+    diff = jpg_extend_value((uint32_t)dc_bits, dc_size);
+    jpg_dc_pred[component] = jpg_dc_pred[component] + diff;
+    jpg_store_coeff(0, jpg_dc_pred[component] * (int32_t)jpg_quant[qt * 64]);
+    return JPG_OK;
+}
+
+export uint32_t jpg_entropy_error_detail(void) {
+    return jpg_entropy_detail;
+}
+
+export uint32_t jpg_entropy_error_block(void) {
+    return jpg_entropy_block;
+}
+
+export uint32_t jpg_huffman_code_count(uint32_t slot, uint32_t length) {
+    if (slot > 3 || length > 16) {
+        return 0;
+    }
+    return jpg_huff_bits[slot * 17 + length];
+}
+
+export uint32_t jpg_huffman_value(uint32_t slot, uint32_t index) {
+    if (slot > 3 || index > 255) {
+        return 0;
+    }
+    return jpg_huff_values[slot * 256 + index];
+}
+
+export int jpg_entropy_probe_first(const uint8_t *data, uint32_t size) {
+    int rc;
+    int dc_symbol;
+    int dc_bits;
+    int ac_symbol;
+
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_prepare_stream(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    dc_symbol = jpg_decode_huffman(data, 0);
+    if (dc_symbol < 0) {
+        return -100;
+    }
+    dc_bits = jpg_get_bits(data, (uint32_t)dc_symbol);
+    if (dc_bits < 0) {
+        return -200;
+    }
+    ac_symbol = jpg_decode_huffman(data, 2);
+    if (ac_symbol < 0) {
+        return -300 - dc_symbol * 10 - dc_bits;
+    }
+    return dc_symbol * 100 + dc_bits * 10 + ac_symbol;
+}
+
+export int jpg_decode_first_block_probe(const uint8_t *data, uint32_t size) {
+    int rc;
+
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_prepare_stream(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    jpg_dc_pred[0] = 0;
+    jpg_dc_pred[1] = 0;
+    jpg_dc_pred[2] = 0;
+    rc = jpg_decode_coeff_block(data, 0);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    return (int)((jpg_stream_pos - jpg_scan_offset) * 10 + jpg_bits_left);
+}
+
+export int jpg_decode_two_block_probe(const uint8_t *data, uint32_t size) {
+    uint64_t data_addr;
+    int rc;
+
+    data_addr = (uint64_t)data;
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_prepare_stream(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    jpg_dc_pred[0] = 0;
+    jpg_dc_pred[1] = 0;
+    jpg_dc_pred[2] = 0;
+    rc = jpg_decode_coeff_block((const uint8_t *)data_addr, 0);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_decode_coeff_block((const uint8_t *)data_addr, 0);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    return (int)((jpg_stream_pos - jpg_scan_offset) * 10 + jpg_bits_left);
+}
+
+export int jpg_decode_first_ac_probe(const uint8_t *data, uint32_t size) {
+    uint32_t qt;
+    uint32_t dc_slot;
+    uint32_t ac_slot;
+    int rc;
+    int symbol;
+    int bits;
+
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_prepare_stream(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    qt = jpg_comp_qt[0];
+    dc_slot = jpg_comp_dc[0];
+    ac_slot = 2 + jpg_comp_ac[0];
+    jpg_entropy_block = jpg_entropy_block + 1;
+    symbol = jpg_decode_huffman(data, dc_slot);
+    if (symbol < 0) {
+        return -100;
+    }
+    bits = jpg_get_bits(data, (uint32_t)symbol);
+    if (bits < 0) {
+        return -200;
+    }
+    symbol = jpg_decode_huffman(data, ac_slot);
+    if (symbol < 0) {
+        return -300 - (int)qt * 10 - (int)dc_slot - (int)ac_slot;
+    }
+    return symbol;
+}
+
+export uint32_t jpg_debug_scan_offset(void) {
+    return jpg_scan_offset;
+}
+
+export uint32_t jpg_debug_stream_pos(void) {
+    return jpg_stream_pos;
+}
+
+export uint32_t jpg_debug_bits_left(void) {
+    return jpg_bits_left;
+}
+
+export uint32_t jpg_debug_byte_at(const uint8_t *data, uint32_t pos) {
+    return data[pos];
+}
+
+export int jpg_debug_first_entropy_bits(const uint8_t *data, uint32_t size) {
+    int rc;
+    int bit;
+    int value;
+    uint32_t i;
+
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_prepare_stream(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    value = 0;
+    i = 0;
+    while (i < 8) {
+        bit = jpg_get_bit(data);
+        if (bit < 0) {
+            return -1;
+        }
+        value = value * 10 + bit;
+        i = i + 1;
+    }
+    return value;
+}
+
+int32_t jpg_basis(uint32_t pos, uint32_t freq) {
+    int32_t basis[64] = {
+        181, 251, 237, 213, 181, 142, 98, 50,
+        181, 213, 98, -50, -181, -251, -237, -142,
+        181, 142, -98, -251, -181, 50, 237, 213,
+        181, 50, -237, -142, 181, 213, -98, -251,
+        181, -50, -237, 142, 181, -213, -98, 251,
+        181, -142, -98, 251, -181, -50, 237, -213,
+        181, -213, 98, 50, -181, 251, -237, 142,
+        181, -251, 237, -213, 181, -142, 98, -50,
+    };
+    return basis[pos * 8 + freq];
+}
+
+void jpg_idct_block(void) {
+    uint32_t y;
+    uint32_t x;
+    uint32_t v;
+    uint32_t u;
+    int64_t sum;
+    int64_t row_sum;
+    int32_t sample;
+
+    y = 0;
+    while (y < 8) {
+        x = 0;
+        while (x < 8) {
+            sum = 0;
+            v = 0;
+            while (v < 8) {
+                row_sum = 0;
+                u = 0;
+                while (u < 8) {
+                    row_sum = row_sum +
+                              (int64_t)jpg_coeff[v * 8 + u] *
+                              (int64_t)jpg_basis(x, u);
+                    u = u + 1;
+                }
+                sum = sum + row_sum * (int64_t)jpg_basis(y, v);
+                v = v + 1;
+            }
+            sample = (int32_t)(sum / 262144) + 128;
+            jpg_block[y * 8 + x] = (uint8_t)jpg_clamp8(sample);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+void jpg_copy_block_to_plane(uint8_t *plane,
+                             uint32_t plane_w,
+                             uint32_t block_x,
+                             uint32_t block_y) {
+    uint32_t y;
+    uint32_t x;
+    uint32_t dst;
+
+    y = 0;
+    while (y < 8) {
+        x = 0;
+        while (x < 8) {
+            dst = (block_y * 8 + y) * plane_w + block_x * 8 + x;
+            plane[dst] = jpg_block[y * 8 + x];
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+int jpg_decode_component_blocks(const uint8_t *data,
+                                uint32_t component,
+                                uint8_t *plane,
+                                uint32_t plane_w) {
+    const uint8_t *scan_data;
+    uint32_t by;
+    uint32_t bx;
+    uint32_t stream_pos;
+    uint32_t bits_left;
+    uint32_t current_byte;
+    int rc;
+
+    scan_data = data;
+    by = 0;
+    while (by < jpg_comp_v[component]) {
+        bx = 0;
+        while (bx < jpg_comp_h[component]) {
+            rc = jpg_decode_coeff_block(scan_data, component);
+            if (rc != JPG_OK) {
+                return rc;
+            }
+            stream_pos = jpg_stream_pos;
+            bits_left = jpg_bits_left;
+            current_byte = jpg_current_byte;
+            jpg_idct_block();
+            jpg_copy_block_to_plane(plane, plane_w, bx, by);
+            jpg_stream_pos = stream_pos;
+            jpg_bits_left = bits_left;
+            jpg_current_byte = current_byte;
+            bx = bx + 1;
+        }
+        by = by + 1;
+    }
+    return JPG_OK;
+}
+
+uint8_t jpg_plane_sample(const uint8_t *plane,
+                         uint32_t plane_w,
+                         uint32_t plane_h,
+                         uint32_t x,
+                         uint32_t y) {
+    uint32_t sx;
+    uint32_t sy;
+    uint32_t target_w;
+    uint32_t target_h;
+
+    target_w = jpg_max_h * 8;
+    target_h = jpg_max_v * 8;
+    sx = (x * plane_w) / target_w;
+    sy = (y * plane_h) / target_h;
+    if (sx >= plane_w) {
+        sx = plane_w - 1;
+    }
+    if (sy >= plane_h) {
+        sy = plane_h - 1;
+    }
+    return plane[sy * plane_w + sx];
+}
+
+void jpg_store_gray_mcu(uint8_t *rgb,
+                        uint32_t image_x,
+                        uint32_t image_y,
+                        uint32_t mcu_w,
+                        uint32_t mcu_h) {
+    uint32_t y;
+    uint32_t x;
+    uint32_t px;
+    uint32_t py;
+    uint32_t dst;
+    uint8_t gray;
+
+    y = 0;
+    while (y < mcu_h) {
+        py = image_y + y;
+        if (py >= jpg_height) {
+            break;
+        }
+        x = 0;
+        while (x < mcu_w) {
+            px = image_x + x;
+            if (px >= jpg_width) {
+                break;
+            }
+            gray = jpg_mcu_y[y * mcu_w + x];
+            dst = (py * jpg_width + px) * 3;
+            rgb[dst] = gray;
+            rgb[dst + 1] = gray;
+            rgb[dst + 2] = gray;
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+void jpg_store_color_mcu(uint8_t *rgb,
+                         uint32_t image_x,
+                         uint32_t image_y,
+                         uint32_t mcu_w,
+                         uint32_t mcu_h) {
+    uint32_t y;
+    uint32_t x;
+    uint32_t px;
+    uint32_t py;
+    uint32_t dst;
+    uint32_t cb_w;
+    uint32_t cb_h;
+    uint32_t cr_w;
+    uint32_t cr_h;
+    int32_t yy;
+    int32_t cb;
+    int32_t cr;
+    int32_t red;
+    int32_t green;
+    int32_t blue;
+
+    cb_w = jpg_comp_h[1] * 8;
+    cb_h = jpg_comp_v[1] * 8;
+    cr_w = jpg_comp_h[2] * 8;
+    cr_h = jpg_comp_v[2] * 8;
+
+    y = 0;
+    while (y < mcu_h) {
+        py = image_y + y;
+        if (py >= jpg_height) {
+            break;
+        }
+        x = 0;
+        while (x < mcu_w) {
+            px = image_x + x;
+            if (px >= jpg_width) {
+                break;
+            }
+            yy = jpg_mcu_y[y * mcu_w + x];
+            cb = (int32_t)jpg_plane_sample(jpg_mcu_cb, cb_w, cb_h, x, y) - 128;
+            cr = (int32_t)jpg_plane_sample(jpg_mcu_cr, cr_w, cr_h, x, y) - 128;
+            red = yy + (359 * cr) / 256;
+            green = yy - (88 * cb + 183 * cr) / 256;
+            blue = yy + (454 * cb) / 256;
+            dst = (py * jpg_width + px) * 3;
+            rgb[dst] = (uint8_t)jpg_clamp8(red);
+            rgb[dst + 1] = (uint8_t)jpg_clamp8(green);
+            rgb[dst + 2] = (uint8_t)jpg_clamp8(blue);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+void jpg_draw_gray_mcu(uint32_t origin_x,
+                       uint32_t origin_y,
+                       uint32_t image_x,
+                       uint32_t image_y,
+                       uint32_t mcu_w,
+                       uint32_t mcu_h) {
+    uint32_t y;
+    uint32_t x;
+    uint32_t px;
+    uint32_t py;
+    uint32_t gray;
+
+    y = 0;
+    while (y < mcu_h) {
+        py = image_y + y;
+        if (py >= jpg_height) {
+            break;
+        }
+        x = 0;
+        while (x < mcu_w) {
+            px = image_x + x;
+            if (px >= jpg_width) {
+                break;
+            }
+            gray = jpg_mcu_y[y * mcu_w + x];
+            put_pixel(origin_x + px, origin_y + py, gray * 65536 + gray * 256 + gray);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+void jpg_draw_color_mcu(uint32_t origin_x,
+                        uint32_t origin_y,
+                        uint32_t image_x,
+                        uint32_t image_y,
+                        uint32_t mcu_w,
+                        uint32_t mcu_h) {
+    uint32_t y;
+    uint32_t x;
+    uint32_t px;
+    uint32_t py;
+    uint32_t cb_w;
+    uint32_t cb_h;
+    uint32_t cr_w;
+    uint32_t cr_h;
+    int32_t yy;
+    int32_t cb;
+    int32_t cr;
+    int32_t red;
+    int32_t green;
+    int32_t blue;
+
+    cb_w = jpg_comp_h[1] * 8;
+    cb_h = jpg_comp_v[1] * 8;
+    cr_w = jpg_comp_h[2] * 8;
+    cr_h = jpg_comp_v[2] * 8;
+
+    y = 0;
+    while (y < mcu_h) {
+        py = image_y + y;
+        if (py >= jpg_height) {
+            break;
+        }
+        x = 0;
+        while (x < mcu_w) {
+            px = image_x + x;
+            if (px >= jpg_width) {
+                break;
+            }
+            yy = jpg_mcu_y[y * mcu_w + x];
+            cb = (int32_t)jpg_plane_sample(jpg_mcu_cb, cb_w, cb_h, x, y) - 128;
+            cr = (int32_t)jpg_plane_sample(jpg_mcu_cr, cr_w, cr_h, x, y) - 128;
+            red = jpg_clamp8(yy + (359 * cr) / 256);
+            green = jpg_clamp8(yy - (88 * cb + 183 * cr) / 256);
+            blue = jpg_clamp8(yy + (454 * cb) / 256);
+            put_pixel(origin_x + px,
+                      origin_y + py,
+                      (uint32_t)red * 65536 + (uint32_t)green * 256 + (uint32_t)blue);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+int jpg_validate_decode_scan(void) {
+    if (jpg_components == 0 || jpg_scan_components != jpg_components) {
+        return JPG_ERR_FORMAT;
+    }
+    if (jpg_restart_interval != 0) {
+        return JPG_ERR_UNSUPPORTED;
+    }
+    return JPG_OK;
+}
+
+export int jpg_probe(const uint8_t *data, uint32_t size, struct JpgImage *out_image) {
+    int rc;
+
+    if (out_image == 0) {
+        return JPG_ERR_INPUT;
+    }
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    out_image->width = jpg_width;
+    out_image->height = jpg_height;
+    out_image->components = jpg_components;
+    out_image->stride = jpg_width * 3;
+    return JPG_OK;
+}
+
+export int jpg_decode_rgb24(const uint8_t *data,
+                            uint32_t size,
+                            uint8_t *rgb,
+                            uint32_t rgb_capacity,
+                            struct JpgImage *out_image) {
+    uint32_t mcu_w;
+    uint32_t mcu_h;
+    uint32_t mcu_cols;
+    uint32_t mcu_rows;
+    uint32_t mx;
+    uint32_t my;
+    uint32_t i;
+    int rc;
+
+    if (rgb == 0 || out_image == 0) {
+        return JPG_ERR_INPUT;
+    }
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_validate_decode_scan();
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    if (jpg_width > 715827882 || jpg_height > 715827882 ||
+        jpg_width * jpg_height > rgb_capacity / 3) {
+        return JPG_ERR_OUTPUT;
+    }
+    rc = jpg_prepare_stream(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    i = 0;
+    while (i < 3) {
+        jpg_dc_pred[i] = 0;
+        i = i + 1;
+    }
+    mcu_w = jpg_max_h * 8;
+    mcu_h = jpg_max_v * 8;
+    mcu_cols = (jpg_width + mcu_w - 1) / mcu_w;
+    mcu_rows = (jpg_height + mcu_h - 1) / mcu_h;
+
+    my = 0;
+    while (my < mcu_rows) {
+        mx = 0;
+        while (mx < mcu_cols) {
+            rc = jpg_decode_component_blocks(data, 0, jpg_mcu_y, mcu_w);
+            if (rc != JPG_OK) {
+                return rc;
+            }
+            if (jpg_components == 1) {
+                jpg_store_gray_mcu(rgb, mx * mcu_w, my * mcu_h, mcu_w, mcu_h);
+            } else {
+                rc = jpg_decode_component_blocks(data, 1, jpg_mcu_cb, jpg_comp_h[1] * 8);
+                if (rc != JPG_OK) {
+                    return rc;
+                }
+                rc = jpg_decode_component_blocks(data, 2, jpg_mcu_cr, jpg_comp_h[2] * 8);
+                if (rc != JPG_OK) {
+                    return rc;
+                }
+                jpg_store_color_mcu(rgb, mx * mcu_w, my * mcu_h, mcu_w, mcu_h);
+            }
+            mx = mx + 1;
+        }
+        my = my + 1;
+    }
+    out_image->width = jpg_width;
+    out_image->height = jpg_height;
+    out_image->components = jpg_components;
+    out_image->stride = jpg_width * 3;
+    return JPG_OK;
+}
+
+export int jpg_decode_to_screen(const uint8_t *data,
+                                uint32_t size,
+                                uint32_t origin_x,
+                                uint32_t origin_y,
+                                struct JpgImage *out_image) {
+    uint32_t mcu_w;
+    uint32_t mcu_h;
+    uint32_t mcu_cols;
+    uint32_t mcu_rows;
+    uint32_t mx;
+    uint32_t my;
+    uint32_t i;
+    int rc;
+
+    if (out_image == 0) {
+        return JPG_ERR_INPUT;
+    }
+    rc = jpg_parse_headers(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_validate_decode_scan();
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    rc = jpg_prepare_stream(data, size);
+    if (rc != JPG_OK) {
+        return rc;
+    }
+    i = 0;
+    while (i < 3) {
+        jpg_dc_pred[i] = 0;
+        i = i + 1;
+    }
+    mcu_w = jpg_max_h * 8;
+    mcu_h = jpg_max_v * 8;
+    mcu_cols = (jpg_width + mcu_w - 1) / mcu_w;
+    mcu_rows = (jpg_height + mcu_h - 1) / mcu_h;
+
+    my = 0;
+    while (my < mcu_rows) {
+        mx = 0;
+        while (mx < mcu_cols) {
+            rc = jpg_decode_component_blocks(data, 0, jpg_mcu_y, mcu_w);
+            if (rc != JPG_OK) {
+                return rc;
+            }
+            if (jpg_components == 1) {
+                jpg_draw_gray_mcu(origin_x, origin_y, mx * mcu_w, my * mcu_h, mcu_w, mcu_h);
+            } else {
+                rc = jpg_decode_component_blocks(data, 1, jpg_mcu_cb, jpg_comp_h[1] * 8);
+                if (rc != JPG_OK) {
+                    return rc;
+                }
+                rc = jpg_decode_component_blocks(data, 2, jpg_mcu_cr, jpg_comp_h[2] * 8);
+                if (rc != JPG_OK) {
+                    return rc;
+                }
+                jpg_draw_color_mcu(origin_x, origin_y, mx * mcu_w, my * mcu_h, mcu_w, mcu_h);
+            }
+            mx = mx + 1;
+        }
+        my = my + 1;
+    }
+    out_image->width = jpg_width;
+    out_image->height = jpg_height;
+    out_image->components = jpg_components;
+    out_image->stride = jpg_width * 3;
+    return JPG_OK;
+}
+
+return 0;

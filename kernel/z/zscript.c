@@ -2877,6 +2877,7 @@ static int z_parse_call_expression(z_compiler_t *c, const char *name, z_type_t *
     char function_label[Z_MAX_LABEL_TEXT];
     int indirect_target_pushed = 0;
     int32_t signature_index = -1;
+    int direct_function_index = -1;
     int local_index;
     int global_index;
 
@@ -2946,6 +2947,7 @@ static int z_parse_call_expression(z_compiler_t *c, const char *name, z_type_t *
         int function_index = z_find_function(c, name);
         if (function_index >= 0) {
             signature_index = c->functions[function_index].signature_index;
+            direct_function_index = function_index;
         }
     }
 
@@ -3005,6 +3007,7 @@ static int z_parse_call_expression(z_compiler_t *c, const char *name, z_type_t *
         function_index = z_find_function(c, name);
         if (function_index >= 0) {
             signature_index = c->functions[function_index].signature_index;
+            direct_function_index = function_index;
         }
     }
 
@@ -3037,12 +3040,29 @@ static int z_parse_call_expression(z_compiler_t *c, const char *name, z_type_t *
         return z_emit_instr1_text(c, "call", "rax");
     }
 
-    if (out_type) {
-        *out_type = signature_index >= 0
-                    ? c->function_signatures[signature_index].return_type
-                    : z_make_type(Z_TYPE_INT, 0, -1);
+    {
+        z_type_t return_type = signature_index >= 0
+                               ? c->function_signatures[signature_index].return_type
+                               : z_make_type(Z_TYPE_INT, 0, -1);
+
+        if (out_type) {
+            *out_type = return_type;
+        }
+        if (z_emit_instr1_text(c, "call", function_label) != 0) {
+            return -1;
+        }
+
+        if (direct_function_index >= 0 &&
+            c->functions[direct_function_index].is_extern) {
+            if (return_type.kind == Z_TYPE_INT && return_type.pointer_depth == 0) {
+                return_type = z_make_type(Z_TYPE_I32, 0, -1);
+            }
+            if (z_emit_normalize_rax_for_type(c, return_type) != 0) {
+                return -1;
+            }
+        }
     }
-    return z_emit_instr1_text(c, "call", function_label);
+    return 0;
 }
 
 static int z_parse_indirect_call_from_rax(z_compiler_t *c, z_type_t callee_type, z_type_t *out_type) {

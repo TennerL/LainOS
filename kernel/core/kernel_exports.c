@@ -60,6 +60,8 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("os_cat_file", shell_api_cat_file),
     KERNEL_EXPORT("os_file_size", shell_api_file_size),
     KERNEL_EXPORT("os_read_file", shell_api_read_file),
+    KERNEL_EXPORT("os_load_file_shared", shell_api_load_file_shared),
+    KERNEL_EXPORT("os_file_buffer", shell_api_file_buffer),
     KERNEL_EXPORT("os_rename", shell_api_rename),
     KERNEL_EXPORT("os_copy_file", shell_api_copy_file),
     KERNEL_EXPORT("os_strlen", shell_api_strlen),

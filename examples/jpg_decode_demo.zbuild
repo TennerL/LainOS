@@ -1,0 +1,5 @@
+include .
+output jpg_decode_demo.bin
+install-name jpg_decode_demo.bin
+jpg_decoder.Z jpg_decoder.zo
+jpg_decode_demo.Z jpg_decode_demo.zo

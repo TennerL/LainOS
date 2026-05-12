@@ -842,7 +842,8 @@ small `src`/`include`/`build` layout.
 The shared kernel API header also exposes a small self-hosting filesystem
 surface to `.Z`: `os_mkdir(path)`, `os_delete(path)`,
 `os_write_file(path, text)`, `os_cat_file(path)`, `os_file_size(path)`,
-`os_read_file(path, buffer, capacity)`, `os_rename(old_path, new_path)`,
+`os_read_file(path, buffer, capacity)`, `os_load_file_shared(path)`,
+`os_file_buffer()`, `os_rename(old_path, new_path)`,
 `os_copy_file(src_path, dst_path)`,
 `os_strlen(text)`, `os_strcmp(a, b)`, `os_starts_with(text, prefix)`,
 `os_atoi(text)`,

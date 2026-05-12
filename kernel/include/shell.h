@@ -20,6 +20,8 @@ int shell_api_write_file(const char *path, const char *text);
 int shell_api_cat_file(const char *path);
 int shell_api_file_size(const char *path);
 int shell_api_read_file(const char *path, char *buffer, uint32_t capacity);
+int shell_api_load_file_shared(const char *path);
+uint8_t *shell_api_file_buffer(void);
 int shell_api_rename(const char *old_path, const char *new_path);
 int shell_api_copy_file(const char *src_path, const char *dst_path);
 int shell_api_strlen(const char *text);

@@ -2462,6 +2462,14 @@ int shell_api_read_file(const char *path, char *buffer, uint32_t capacity) {
     return (int)size;
 }
 
+int shell_api_load_file_shared(const char *path) {
+    return shell_api_read_file(path, shell_wget_buffer, LAINFS_FILE_CAPACITY);
+}
+
+uint8_t *shell_api_file_buffer(void) {
+    return (uint8_t *)shell_wget_buffer;
+}
+
 int shell_api_rename(const char *old_path, const char *new_path) {
     int drive = active_drive();
     uint32_t old_parent = LAINFS_ROOT_DIR;
@@ -4197,6 +4205,8 @@ static void cmd_zco(const char *args, const boot_info_t *info) {
             console_puts("\n");
         } else if (zobject_status == -60 || zobject_status == -30) {
             console_puts("zco failed: object is too large\n");
+        } else if (zobject_status == -21) {
+            console_puts("zco failed: generated asm exceeded assembler limits\n");
         } else {
             console_puts("zco failed: could not create object\n");
         }
@@ -4644,6 +4654,10 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
                 console_puts("\n");
             } else if (zobject_status == -60 || zobject_status == -30) {
                 console_puts("zbuild failed: object too large for ");
+                console_puts(source_name);
+                console_puts("\n");
+            } else if (zobject_status == -21) {
+                console_puts("zbuild failed: generated asm exceeded assembler limits for ");
                 console_puts(source_name);
                 console_puts("\n");
             } else {

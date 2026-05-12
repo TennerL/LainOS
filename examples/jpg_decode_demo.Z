@@ -1,0 +1,64 @@
+#include "jpg_decoder_api.Z"
+
+extern int os_load_file_shared(const uint8_t *path);
+extern uint8_t *os_file_buffer(void);
+void print_jpg_error(int code) {
+    if (code == -1) {
+        print("bad input");
+    } else if (code == -2) {
+        print("malformed jpg");
+    } else if (code == -3) {
+        print("unsupported jpg feature");
+    } else if (code == -4) {
+        print("output target is too small");
+    } else if (code == -5) {
+        print("entropy stream decode failed");
+    } else {
+        print("unknown error");
+    }
+}
+
+struct JpgImage image;
+uint8_t *jpg_data;
+int jpg_size;
+int rc;
+
+jpg_size = os_load_file_shared("photo.jpg");
+if (jpg_size == -1) {
+    print("jpg demo: photo.jpg was not found or exceeds lainfs capacity\n");
+    return 1;
+}
+
+jpg_data = os_file_buffer();
+rc = jpg_probe(jpg_data, (uint32_t)jpg_size, &image);
+if (rc != 0) {
+    print("jpg demo: probe failed: ");
+    print_jpg_error(rc);
+    print("\n");
+    return rc;
+}
+
+print("jpg demo: ");
+print(image.width);
+print("x");
+print(image.height);
+print(" components=");
+print(image.components);
+print("\n");
+
+rc = jpg_decode_to_screen(jpg_data, (uint32_t)jpg_size, 0, 0, &image);
+if (rc != 0) {
+    print("jpg demo: decode failed: ");
+    print_jpg_error(rc);
+    if (rc == -5) {
+        print(" detail=");
+        print(jpg_entropy_error_detail());
+        print(" block=");
+        print(jpg_entropy_error_block());
+    }
+    print("\n");
+    return rc;
+}
+
+print("jpg demo: decoded and drawn\n");
+return 0;
