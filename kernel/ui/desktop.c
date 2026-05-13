@@ -43,7 +43,8 @@ typedef enum {
     FILE_KIND_MANIFEST,
     FILE_KIND_OBJECT,
     FILE_KIND_BINARY,
-    FILE_KIND_LOG
+    FILE_KIND_LOG,
+    FILE_KIND_IMAGE
 } file_kind_t;
 
 typedef enum {
@@ -135,6 +136,7 @@ static int files_bounds_ready;
 static char files_path[FILE_BROWSER_PATH_SIZE];
 static char files_selected_name[32];
 static file_kind_t files_selected_kind;
+static char desktop_image_path[FILE_BROWSER_PATH_SIZE];
 static int start_menu_open;
 static desktop_window_t modules_window;
 static desktop_window_state_t modules_window_state;
@@ -203,10 +205,6 @@ static void desktop_background(void) {
     uint32_t height = graphics_height();
 
     graphics_fill_vertical_gradient(0, 0, width, height, 0x35063Eu, 0x2b1d3du);
-
-    // uint32_t band_y = height / 3u;
-    // graphics_fill_rect(0, band_y, width, height / 12u, 0x4b2347u);
-    // graphics_fill_rect(0, band_y + height / 12u, width, 2, 0xe05f4fu);
 }
 
 static void desktop_panel(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t fill) {
@@ -677,12 +675,87 @@ static int text_equals(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static uint32_t desktop_text_len(const char *text) {
+    uint32_t len = 0;
+
+    while (text != 0 && text[len] != '\0') {
+        ++len;
+    }
+    return len;
+}
+
+static const char *desktop_path_basename(const char *path) {
+    const char *base = path;
+
+    if (path == 0) {
+        return "";
+    }
+    while (*path) {
+        if (*path == '/' || *path == '\\') {
+            base = path + 1;
+        }
+        ++path;
+    }
+    return base;
+}
+
+static int desktop_name_has_zo_suffix(const char *name) {
+    uint32_t len = desktop_text_len(name);
+
+    return len > 3u &&
+           name[len - 3u] == '.' &&
+           name[len - 2u] == 'z' &&
+           name[len - 1u] == 'o';
+}
+
+static int desktop_text_prefix_equals(const char *a, const char *b, uint32_t len) {
+    for (uint32_t i = 0; i < len; ++i) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int desktop_module_name_pair_matches(const char *loaded_name, const char *query) {
+    uint32_t loaded_len;
+    uint32_t query_len;
+
+    if (loaded_name == 0 || query == 0 || *query == '\0') {
+        return 0;
+    }
+    if (text_equals(loaded_name, query)) {
+        return 1;
+    }
+
+    loaded_len = desktop_text_len(loaded_name);
+    query_len = desktop_text_len(query);
+    if (desktop_name_has_zo_suffix(loaded_name) &&
+        loaded_len == query_len + 3u &&
+        desktop_text_prefix_equals(loaded_name, query, query_len)) {
+        return 1;
+    }
+    if (desktop_name_has_zo_suffix(query) &&
+        query_len == loaded_len + 3u &&
+        desktop_text_prefix_equals(loaded_name, query, loaded_len)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int desktop_module_name_matches(const char *loaded_name, const char *query) {
+    return desktop_module_name_pair_matches(loaded_name, query) ||
+           desktop_module_name_pair_matches(desktop_path_basename(loaded_name),
+                                            desktop_path_basename(query));
+}
+
 static int desktop_find_module(const char *name) {
     uint32_t count = shell_module_count();
 
     for (uint32_t i = 0; i < count; ++i) {
         const char *module_name = shell_module_name(i);
-        if (module_name != 0 && text_equals(module_name, name)) {
+        if (module_name != 0 && desktop_module_name_matches(module_name, name)) {
             return (int)i;
         }
     }
@@ -878,6 +951,12 @@ static file_kind_t files_kind_for_name(const char *name) {
     if (text_ends_with(name, ".buildlog") || text_ends_with(name, ".testlog")) {
         return FILE_KIND_LOG;
     }
+    if (text_ends_with(name, ".jpg") ||
+        text_ends_with(name, ".jpeg") ||
+        text_ends_with(name, ".JPG") ||
+        text_ends_with(name, ".JPEG")) {
+        return FILE_KIND_IMAGE;
+    }
     return FILE_KIND_OTHER;
 }
 
@@ -899,6 +978,9 @@ static const char *files_badge_for_kind(file_kind_t kind, uint32_t type) {
     }
     if (kind == FILE_KIND_LOG) {
         return "LOG";
+    }
+    if (kind == FILE_KIND_IMAGE) {
+        return "IMG";
     }
     return "FILE";
 }
@@ -1246,6 +1328,39 @@ static void desktop_open_module_app(uint32_t index) {
     }
 }
 
+const char *desktop_api_image_path(void) {
+    return desktop_image_path;
+}
+
+int desktop_api_open_image(const char *path) {
+    const char *image_path = skip_spaces_const(path);
+
+    if (*image_path == '\0') {
+        return -1;
+    }
+
+    text_copy_limited(desktop_image_path, sizeof(desktop_image_path), image_path);
+    return 0;
+}
+
+int desktop_api_open_module(const char *name) {
+    int module_index;
+    const char *module_name = skip_spaces_const(name);
+
+    if (*module_name == '\0') {
+        return -1;
+    }
+
+    module_index = desktop_find_module(module_name);
+    if (module_index < 0) {
+        return -1;
+    }
+
+    desktop_open_module_app((uint32_t)module_index);
+    desktop_deferred_redraw = 1;
+    return 0;
+}
+
 static void desktop_open_editor(const char *name) {
     const char *path = skip_spaces_const(name);
     int status;
@@ -1459,6 +1574,9 @@ static void desktop_draw_files(void) {
             files_selected_kind == FILE_KIND_MANIFEST ||
             files_selected_kind == FILE_KIND_LOG) {
             desktop_draw_button(files_window.content_x + 82u, files_window.content_y + 28u, FILE_ACTION_BUTTON_W, "Open", 0);
+        }
+        if (files_selected_kind == FILE_KIND_IMAGE) {
+            desktop_draw_button(files_window.content_x + 82u, files_window.content_y + 28u, FILE_ACTION_BUTTON_W, "View", 0);
         }
         if (files_selected_kind == FILE_KIND_SOURCE || files_selected_kind == FILE_KIND_MANIFEST) {
             desktop_draw_button(files_window.content_x + 146u, files_window.content_y + 28u, FILE_ACTION_BUTTON_W, "Build", 0);
@@ -2245,6 +2363,17 @@ static void desktop_files_run_selected(const boot_info_t *info) {
     shell_run_command(command, info);
     editor_status = "program run";
     desktop_editor_output_end();
+}
+
+static int desktop_files_view_selected(void) {
+    char path[FILE_BROWSER_PATH_SIZE];
+
+    if (files_selected_name[0] == '\0') {
+        return -1;
+    }
+
+    files_child_path(files_selected_name, path, sizeof(path));
+    return desktop_api_open_image(path);
 }
 
 static int desktop_editor_button_hit(uint32_t x, uint32_t y, uint32_t index) {
@@ -3063,6 +3192,14 @@ void desktop_run(const boot_info_t *info) {
                     last_buttons = buttons;
                     continue;
                 }
+                if (files_selected_kind == FILE_KIND_IMAGE && files_action_hit(x, y, 0u)) {
+                    cursor_restore();
+                    (void)desktop_files_view_selected();
+                    desktop_redraw_all();
+                    cursor_draw_at(x, y);
+                    last_buttons = buttons;
+                    continue;
+                }
             }
 
             if (files_open && point_in_rect(x, y, files_window.content_x, files_window.content_y + 58u, files_window.content_w, files_window.content_h)) {
@@ -3076,10 +3213,14 @@ void desktop_run(const boot_info_t *info) {
                     } else {
                         text_copy_limited(files_selected_name, sizeof(files_selected_name), name);
                         files_selected_kind = files_kind_for_name(name);
-                        if (files_selected_kind == FILE_KIND_SOURCE ||
-                            files_selected_kind == FILE_KIND_MANIFEST ||
-                            files_selected_kind == FILE_KIND_LOG ||
-                            files_selected_kind == FILE_KIND_OTHER) {
+                        if (files_selected_kind == FILE_KIND_IMAGE) {
+                            char path[FILE_BROWSER_PATH_SIZE];
+                            files_child_path(name, path, sizeof(path));
+                            (void)desktop_api_open_image(path);
+                        } else if (files_selected_kind == FILE_KIND_SOURCE ||
+                                   files_selected_kind == FILE_KIND_MANIFEST ||
+                                   files_selected_kind == FILE_KIND_LOG ||
+                                   files_selected_kind == FILE_KIND_OTHER) {
                             char path[FILE_BROWSER_PATH_SIZE];
                             files_child_path(name, path, sizeof(path));
                             desktop_open_editor(path);

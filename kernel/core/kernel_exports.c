@@ -39,6 +39,10 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("gfx_viewport_active", graphics_viewport_active),
     KERNEL_EXPORT("gfx_viewport_x", graphics_viewport_x),
     KERNEL_EXPORT("gfx_viewport_y", graphics_viewport_y),
+    KERNEL_EXPORT("gfx_smp_last_workers", graphics_smp_last_workers),
+    KERNEL_EXPORT("gfx_smp_jobs", graphics_smp_jobs),
+    KERNEL_EXPORT("gfx_smp_ops", graphics_smp_ops),
+    KERNEL_EXPORT("gfx_smp_pixels", graphics_smp_pixels),
     KERNEL_EXPORT("gfx_get_pixel", graphics_get_pixel),
     KERNEL_EXPORT("gfx_fill_rect", graphics_fill_rect),
     KERNEL_EXPORT("gfx_draw_rect", graphics_draw_rect),
@@ -85,6 +89,9 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("os_zunload", shell_api_zunload),
     KERNEL_EXPORT("os_zreload", shell_api_zreload),
     KERNEL_EXPORT("os_open_editor", desktop_api_open_editor),
+    KERNEL_EXPORT("os_open_image", desktop_api_open_image),
+    KERNEL_EXPORT("os_open_module", desktop_api_open_module),
+    KERNEL_EXPORT("os_image_path", desktop_api_image_path),
 };
 
 #undef KERNEL_EXPORT

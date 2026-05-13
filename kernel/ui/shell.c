@@ -31,8 +31,8 @@
 #define Z_INCLUDE_MAX_DIRS 4u
 #define Z_INCLUDE_ONCE_MAX 16u
 #define ZLINK_MAX_OBJECTS 16u
-#define ZMODULE_MAX_MODULES 4u
-#define ZMODULE_MAX_EXPORTS 16u
+#define ZMODULE_MAX_MODULES 6u
+#define ZMODULE_MAX_EXPORTS ZOBJECT_MAX_RESOLVED_SYMBOLS
 #define ZMODULE_NAME_SIZE 32u
 #define ZMODULE_TICK_HZ 20u
 
@@ -1149,6 +1149,7 @@ static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
 static void cmd_cpus(const char *args, const boot_info_t *info);
 static void cmd_smp(const char *args, const boot_info_t *info);
+static void cmd_gfx(const char *args, const boot_info_t *info);
 static void cmd_reboot(const char *args, const boot_info_t *info);
 static void cmd_poweroff(const char *args, const boot_info_t *info);
 static void cmd_mkdrive(const char *args, const boot_info_t *info);
@@ -1219,6 +1220,7 @@ static const command_t commands[] = {
     { "info",    "show kernel info",          cmd_info },
     { "cpus",    "show CPU topology",         cmd_cpus },
     { "smp",     "run a multicore work test", cmd_smp },
+    { "gfx",     "show graphics SMP stats",   cmd_gfx },
     { "reboot",  "restart the machine",       cmd_reboot },
     { "poweroff", "power off the machine",     cmd_poweroff },
     { "shutdown", "power off the machine",     cmd_poweroff },
@@ -1489,6 +1491,32 @@ static void cmd_smp(const char *args, const boot_info_t *info) {
     console_put_dec64(end - start);
     console_puts("\nchecksum: 0x");
     console_put_hex64(checksum);
+    console_puts("\n");
+}
+
+static void cmd_gfx(const char *args, const boot_info_t *info) {
+    (void)args;
+    (void)info;
+
+    console_puts("Graphics\n");
+    console_puts("resolution: ");
+    console_put_dec64(graphics_width());
+    console_puts(" x ");
+    console_put_dec64(graphics_height());
+    console_puts("\npitch: ");
+    console_put_dec64(graphics_pitch());
+    console_puts("\nformat: ");
+    console_put_dec64(graphics_format());
+    console_puts("\nbackbuffer: ");
+    console_puts(graphics_backbuffer_active() ? "active" : "inactive");
+    console_puts("\nSMP last workers: ");
+    console_put_dec64(graphics_smp_last_workers());
+    console_puts("\nSMP operations: ");
+    console_put_dec64(graphics_smp_ops());
+    console_puts("\nSMP jobs submitted: ");
+    console_put_dec64(graphics_smp_jobs());
+    console_puts("\nSMP pixels: ");
+    console_put_dec64(graphics_smp_pixels());
     console_puts("\n");
 }
 
@@ -5811,21 +5839,47 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
         }
 
         objects[object_count] = asm_output + object_offset;
-        status = lainfs_load_file_in_dir((char)('A' + drive),
-                                         cwd_dirs[drive],
-                                         load_name,
-                                         (char *)(asm_output + object_offset),
-                                         remaining,
-                                         &object_sizes[object_count]);
+        {
+            int object_drive = drive;
+            uint32_t object_parent = cwd_dirs[drive];
+            char object_name[32];
+
+            status = resolve_file_path_with_drive(load_name,
+                                                  drive,
+                                                  &object_drive,
+                                                  &object_parent,
+                                                  object_name,
+                                                  sizeof(object_name));
+            if (status == 0) {
+                status = lainfs_load_file_in_dir((char)('A' + object_drive),
+                                                 object_parent,
+                                                 object_name,
+                                                 (char *)(asm_output + object_offset),
+                                                 remaining,
+                                                 &object_sizes[object_count]);
+            }
+        }
         if (status == -5 && !has_dot &&
             make_suffixed_name(tokens[i], ".zo", suffixed_name, sizeof(suffixed_name)) == 0) {
+            int object_drive = drive;
+            uint32_t object_parent = cwd_dirs[drive];
+            char object_name[32];
+
             load_name = suffixed_name;
-            status = lainfs_load_file_in_dir((char)('A' + drive),
-                                             cwd_dirs[drive],
-                                             load_name,
-                                             (char *)(asm_output + object_offset),
-                                             remaining,
-                                             &object_sizes[object_count]);
+            status = resolve_file_path_with_drive(load_name,
+                                                  drive,
+                                                  &object_drive,
+                                                  &object_parent,
+                                                  object_name,
+                                                  sizeof(object_name));
+            if (status == 0) {
+                status = lainfs_load_file_in_dir((char)('A' + object_drive),
+                                                 object_parent,
+                                                 object_name,
+                                                 (char *)(asm_output + object_offset),
+                                                 remaining,
+                                                 &object_sizes[object_count]);
+            }
         }
         if (status == -3) {
             console_puts("drive is not formatted as lainfs\n");

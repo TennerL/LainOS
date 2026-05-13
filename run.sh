@@ -21,5 +21,5 @@ qemu-system-x86_64 \
   -drive if=pflash,format=raw,file=build/OVMF_VARS.run.fd \
   -cdrom build/boot.iso \
   -drive format=raw,file=build/data.img,if=ide,index=1 \
-  -netdev user,id=net0 \
-  -device e1000,netdev=net0
+  # -netdev user,id=net0 \
+  # -device e1000,netdev=net0

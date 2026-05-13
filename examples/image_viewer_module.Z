@@ -1,0 +1,137 @@
+#include "jpg_decoder_api.Z"
+
+extern int os_load_file_shared(const uint8_t *path);
+extern uint8_t *os_file_buffer(void);
+extern const uint8_t *os_image_path(void);
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg);
+
+global uint32_t image_viewer_enabled;
+global uint8_t image_viewer_path[128];
+global uint8_t image_viewer_status[96];
+
+void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
+    uint32_t i;
+
+    i = 0;
+    if (capacity == 0) {
+        return;
+    }
+    while (src[i] != 0 && i + 1 < capacity) {
+        dst[i] = src[i];
+        i = i + 1;
+    }
+    dst[i] = 0;
+}
+
+void status_for_jpg_error(int code) {
+    if (code == -1) {
+        copy_text(image_viewer_status, 96, "bad input");
+    } else if (code == -2) {
+        copy_text(image_viewer_status, 96, "malformed jpg");
+    } else if (code == -3) {
+        copy_text(image_viewer_status, 96, "unsupported jpg feature");
+    } else if (code == -4) {
+        copy_text(image_viewer_status, 96, "target too small");
+    } else if (code == -5) {
+        copy_text(image_viewer_status, 96, "entropy decode failed");
+    } else {
+        copy_text(image_viewer_status, 96, "jpg decode failed");
+    }
+}
+
+void draw_shell(void) {
+    uint32_t w;
+    uint32_t h;
+
+    w = gfx_width();
+    h = gfx_height();
+    gfx_fill_rect(0, 0, w, h, 0x0d1117);
+    gfx_fill_rect(0, 0, w, 34, 0x151c22);
+    gfx_fill_rect(0, 32, w, 2, 0xe05f4f);
+    draw_text_at_pixel(8, 8, "Image Viewer", 0xf7d154, 0x151c22);
+    draw_text_at_pixel(120, 8, image_viewer_path, 0xf5fbf7, 0x151c22);
+    draw_text_at_pixel(8, h - 18, image_viewer_status, 0xbdd7d0, 0x0d1117);
+}
+
+void draw_image(void) {
+    const uint8_t *path;
+    uint8_t *data;
+    int size;
+    int rc;
+    uint32_t w;
+    uint32_t h;
+    uint32_t x;
+    uint32_t y;
+    uint32_t image_area_h;
+    struct JpgImage image;
+
+    path = os_image_path();
+    copy_text(image_viewer_path, 128, path);
+    copy_text(image_viewer_status, 96, "loading");
+    draw_shell();
+
+    size = os_load_file_shared(image_viewer_path);
+    if (size < 0) {
+        copy_text(image_viewer_status, 96, "image file not found");
+        draw_shell();
+        return;
+    }
+
+    data = os_file_buffer();
+    rc = jpg_probe(data, (uint32_t)size, &image);
+    if (rc != 0) {
+        status_for_jpg_error(rc);
+        draw_shell();
+        return;
+    }
+
+    w = gfx_width();
+    h = gfx_height();
+    x = 0;
+    y = 40;
+    image_area_h = 0;
+    if (h > 62) {
+        image_area_h = h - 62;
+    }
+    if (w > image.width) {
+        x = (w - image.width) / 2;
+    }
+    if (image_area_h > image.height) {
+        y = 38 + (image_area_h - image.height) / 2;
+    }
+
+    rc = jpg_decode_to_screen(data, (uint32_t)size, x, y, &image);
+    if (rc != 0) {
+        status_for_jpg_error(rc);
+        draw_shell();
+        return;
+    }
+
+    copy_text(image_viewer_status, 96, "decoded");
+    draw_text_at_pixel(8, h - 18, image_viewer_status, 0xbdd7d0, 0x0d1117);
+    gfx_draw_rect(x, y, image.width, image.height, 0xf7d154);
+}
+
+export void zmodule_redraw(void) {
+    if (image_viewer_enabled == 0) {
+        return;
+    }
+    draw_image();
+}
+
+export void zmodule_tick(void) {
+}
+
+export void zmodule_unload(void) {
+    image_viewer_enabled = 0;
+}
+
+image_viewer_enabled = 1;
+copy_text(image_viewer_path, 128, "");
+copy_text(image_viewer_status, 96, "ready");
+print("image viewer module loaded\n");
+return 0;

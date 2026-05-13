@@ -9,6 +9,10 @@ static uint32_t graphics_fb_pitch;
 static uint32_t graphics_fb_format;
 static uint32_t *graphics_backbuffer;
 static uint32_t graphics_backbuffer_active_flag;
+static volatile uint32_t graphics_smp_last_workers_used;
+static volatile uint64_t graphics_smp_total_jobs_submitted;
+static volatile uint64_t graphics_smp_total_ops;
+static volatile uint64_t graphics_smp_total_pixels;
 #define GRAPHICS_VIEWPORT_STACK_MAX 4u
 #define GRAPHICS_SMP_MIN_PIXELS 65536u
 #define GRAPHICS_SMP_MAX_JOBS 8u
@@ -25,8 +29,25 @@ static graphics_viewport_t graphics_viewport_stack[GRAPHICS_VIEWPORT_STACK_MAX];
 static uint32_t graphics_viewport_depth;
 
 static unsigned int graphics_smp_worker_count(uint32_t rows) {
-    (void)rows;
-    return 1u;
+    unsigned int workers = cpu_online_core_count();
+
+    if (workers <= 1u || rows <= 1u) {
+        return 1u;
+    }
+    if (workers > GRAPHICS_SMP_MAX_JOBS) {
+        workers = GRAPHICS_SMP_MAX_JOBS;
+    }
+    if (workers > rows) {
+        workers = rows;
+    }
+    return workers;
+}
+
+static void graphics_smp_record(unsigned int workers, uint64_t pixels) {
+    graphics_smp_last_workers_used = workers;
+    __sync_fetch_and_add(&graphics_smp_total_jobs_submitted, workers);
+    __sync_fetch_and_add(&graphics_smp_total_ops, 1ull);
+    __sync_fetch_and_add(&graphics_smp_total_pixels, pixels);
 }
 
 typedef struct {
@@ -178,6 +199,10 @@ void graphics_init(uint64_t framebuffer_base,
     graphics_fb_format = framebuffer_format;
     graphics_backbuffer = 0;
     graphics_backbuffer_active_flag = 0;
+    graphics_smp_last_workers_used = 0;
+    graphics_smp_total_jobs_submitted = 0;
+    graphics_smp_total_ops = 0;
+    graphics_smp_total_pixels = 0;
 }
 
 int graphics_backbuffer_enable(void) {
@@ -216,8 +241,41 @@ int graphics_backbuffer_active(void) {
 
 void graphics_backbuffer_flush(void) {
     uint32_t *fb = (uint32_t *)(uintptr_t)graphics_fb_base;
+    uint64_t pixels;
+    unsigned int workers;
+    graphics_blit_job_t jobs[GRAPHICS_SMP_MAX_JOBS];
+    unsigned int ids[GRAPHICS_SMP_MAX_JOBS];
 
     if (!graphics_backbuffer_active() || fb == 0) {
+        return;
+    }
+
+    pixels = (uint64_t)graphics_fb_width * graphics_fb_height;
+    workers = graphics_smp_worker_count(graphics_fb_height);
+
+    if (workers > 1u && pixels >= GRAPHICS_SMP_MIN_PIXELS) {
+        uint32_t base_rows = graphics_fb_height / workers;
+        uint32_t extra_rows = graphics_fb_height % workers;
+        uint32_t row = 0;
+
+        graphics_smp_record(workers, pixels);
+        for (unsigned int i = 0; i < workers; ++i) {
+            uint32_t rows = base_rows + (i < extra_rows ? 1u : 0u);
+            jobs[i].dst = fb;
+            jobs[i].src = graphics_backbuffer;
+            jobs[i].y = row;
+            jobs[i].width = graphics_fb_width;
+            jobs[i].height = rows;
+            jobs[i].pitch = graphics_fb_pitch;
+            ids[i] = smp_submit_work(graphics_blit_job, &jobs[i]);
+            if (ids[i] == 0u) {
+                graphics_blit_job(&jobs[i]);
+            }
+            row += rows;
+        }
+        for (unsigned int i = 0; i < workers; ++i) {
+            smp_wait_work(ids[i]);
+        }
         return;
     }
 
@@ -232,6 +290,22 @@ void graphics_backbuffer_flush(void) {
         };
         graphics_blit_job(&job);
     }
+}
+
+uint32_t graphics_smp_last_workers(void) {
+    return graphics_smp_last_workers_used;
+}
+
+uint64_t graphics_smp_jobs(void) {
+    return graphics_smp_total_jobs_submitted;
+}
+
+uint64_t graphics_smp_ops(void) {
+    return graphics_smp_total_ops;
+}
+
+uint64_t graphics_smp_pixels(void) {
+    return graphics_smp_total_pixels;
 }
 
 uint32_t graphics_width(void) {
@@ -359,6 +433,7 @@ void graphics_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
         uint32_t extra_rows = height % workers;
         uint32_t row = 0;
 
+        graphics_smp_record(workers, pixels);
         for (unsigned int i = 0; i < workers; ++i) {
             uint32_t rows = base_rows + (i < extra_rows ? 1u : 0u);
             jobs[i].fb = fb;
@@ -424,6 +499,7 @@ void graphics_fill_vertical_gradient(uint32_t x,
         uint32_t extra_rows = height % workers;
         uint32_t row = 0;
 
+        graphics_smp_record(workers, pixels);
         for (unsigned int i = 0; i < workers; ++i) {
             uint32_t rows = base_rows + (i < extra_rows ? 1u : 0u);
             jobs[i].fb = fb;

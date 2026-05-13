@@ -30,8 +30,12 @@ cp R:/examples/jpg_decode_demo.zbuild jpg_decode_demo.zbuild
 cp R:/examples/jpg_decoder.Z jpg_decoder.Z
 cp R:/examples/jpg_decoder.zbuild jpg_decoder.zbuild
 cp R:/examples/jpg_decoder_api.Z jpg_decoder_api.Z
+cp R:/examples/image_viewer_module.Z image_viewer_module.Z
+cp R:/examples/image_viewer.zbuild image_viewer.zbuild
 cp R:/examples/kernel_api.Z kernel_api.Z
 zinstall jpg_decode_demo
+zmod jpg_decoder.zo
+zinstall image_viewer
 cd ..
 
 // net ip 192.168.2.84 255.255.255.0 192.168.2.1

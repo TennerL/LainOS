@@ -7,6 +7,10 @@
 #define CPU_AP_TRAMPOLINE_VECTOR 0x08u
 #define CPU_SMP_IPI_VECTOR 0xF1u
 #define CPU_SMP_WORK_SLOTS 64u
+#define CPU_SMP_WORK_FREE 0u
+#define CPU_SMP_WORK_QUEUED 1u
+#define CPU_SMP_WORK_RUNNING 2u
+#define CPU_SMP_WORK_DONE 3u
 #define ACPI_MADT_TYPE_LOCAL_APIC 0u
 #define ACPI_MADT_TYPE_LOCAL_APIC_ADDRESS_OVERRIDE 5u
 #define ACPI_MADT_TYPE_LOCAL_X2APIC 9u
@@ -326,8 +330,8 @@ static int smp_take_work(smp_work_fn_t *out_fn, void **out_arg, unsigned int *ou
 
     smp_lock();
     for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
-        if (smp_work_slots[i].state == 1u && smp_work_slots[i].fn != 0) {
-            smp_work_slots[i].state = 2u;
+        if (smp_work_slots[i].state == CPU_SMP_WORK_QUEUED && smp_work_slots[i].fn != 0) {
+            smp_work_slots[i].state = CPU_SMP_WORK_RUNNING;
             *out_fn = smp_work_slots[i].fn;
             *out_arg = smp_work_slots[i].arg;
             *out_slot = i;
@@ -369,7 +373,7 @@ static int smp_run_one_work_item(unsigned int core_index) {
     }
     cpu_record_busy_ticks(core_index, elapsed_ticks);
     __sync_synchronize();
-    smp_work_slots[slot].state = 3u;
+    smp_work_slots[slot].state = CPU_SMP_WORK_DONE;
     return 1;
 }
 
@@ -819,7 +823,7 @@ unsigned int smp_submit_work(smp_work_fn_t fn, void *arg) {
 
     smp_lock();
     for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
-        if (smp_work_slots[i].state == 0u || smp_work_slots[i].state == 3u) {
+        if (smp_work_slots[i].state == CPU_SMP_WORK_FREE) {
             id = smp_next_work_id++;
             if (id == 0u) {
                 id = smp_next_work_id++;
@@ -828,7 +832,7 @@ unsigned int smp_submit_work(smp_work_fn_t fn, void *arg) {
             smp_work_slots[i].arg = arg;
             smp_work_slots[i].id = id;
             __sync_synchronize();
-            smp_work_slots[i].state = 1u;
+            smp_work_slots[i].state = CPU_SMP_WORK_QUEUED;
             break;
         }
     }
@@ -850,13 +854,32 @@ int smp_work_done(unsigned int id) {
     smp_lock();
     for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
         if (smp_work_slots[i].id == id) {
-            done = smp_work_slots[i].state == 3u;
+            done = smp_work_slots[i].state == CPU_SMP_WORK_DONE;
             break;
         }
     }
     smp_unlock();
 
     return done;
+}
+
+static void smp_release_work(unsigned int id) {
+    if (id == 0u) {
+        return;
+    }
+
+    smp_lock();
+    for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
+        if (smp_work_slots[i].id == id && smp_work_slots[i].state == CPU_SMP_WORK_DONE) {
+            smp_work_slots[i].fn = 0;
+            smp_work_slots[i].arg = 0;
+            smp_work_slots[i].id = 0;
+            __sync_synchronize();
+            smp_work_slots[i].state = CPU_SMP_WORK_FREE;
+            break;
+        }
+    }
+    smp_unlock();
 }
 
 void smp_wait_work(unsigned int id) {
@@ -869,6 +892,7 @@ void smp_wait_work(unsigned int id) {
         cpu_send_smp_ipi();
         cpu_relax();
     }
+    smp_release_work(id);
 }
 
 unsigned int smp_pending_work_count(void) {
@@ -876,7 +900,8 @@ unsigned int smp_pending_work_count(void) {
 
     smp_lock();
     for (unsigned int i = 0; i < CPU_SMP_WORK_SLOTS; ++i) {
-        if (smp_work_slots[i].state == 1u || smp_work_slots[i].state == 2u) {
+        if (smp_work_slots[i].state == CPU_SMP_WORK_QUEUED ||
+            smp_work_slots[i].state == CPU_SMP_WORK_RUNNING) {
             ++count;
         }
     }
