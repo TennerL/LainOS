@@ -1,20 +1,43 @@
 # autoexec
+
 mkdir mods
 cd mods
+
 cp R:/examples/hwdash_module.Z hwdash_module.Z
 cp R:/examples/hwdash_module.zbuild hwdash_module.zbuild
-cp R:/examples/mouse_module.Z mouse_module.Z
-cp R:/examples/mouse_module.zbuild mouse_module.zbuild
+
 cp R:/examples/taskmgr_module.Z taskmgr_module.Z
 cp R:/examples/taskmgr_module.zbuild taskmgr_module.zbuild
+
 cp R:/examples/filemgr_module.Z filemgr_module.Z
 cp R:/examples/filemgr_module.zbuild filemgr_module.zbuild
-zinstall hwdash_module
-zmod hwdash_module.zo
+
+//zinstall hwdash_module
+//zmod hwdash_module.zo
+
 zinstall taskmgr_module
 zmod taskmgr_module.zo
+
 zinstall filemgr_module
 zmod filemgr_module.zo
+
 bgcolor 0x0035063E
+
 cd ..
+mkdir decoder
+cp R:/examples/jpg_decode_demo.Z jpg_decode_demo.Z
+cp R:/examples/jpg_decode_demo.zbuild jpg_decode_demo.zbuild
+cp R:/examples/jpg_decoder.Z jpg_decoder.Z
+cp R:/examples/jpg_decoder.zbuild jpg_decoder.zbuild
+cp R:/examples/jpg_decoder_api.Z jpg_decoder_api.Z
+cp R:/examples/kernel_api.Z kernel_api.Z
+zinstall jpg_decode_demo
+cd ..
+
+// net ip 192.168.2.84 255.255.255.0 192.168.2.1
+// net ip 192.168.178.96 255.255.255.0 192.168.178.1
+// net reset
+
 keymap de
+clear
+info
