@@ -24,6 +24,11 @@ typedef struct {
 static graphics_viewport_t graphics_viewport_stack[GRAPHICS_VIEWPORT_STACK_MAX];
 static uint32_t graphics_viewport_depth;
 
+static unsigned int graphics_smp_worker_count(uint32_t rows) {
+    (void)rows;
+    return 1u;
+}
+
 typedef struct {
     uint32_t *fb;
     uint32_t x;
@@ -116,7 +121,12 @@ static void graphics_blit_job(void *arg) {
         uint32_t row = job->y + yy;
         uint32_t *dst = job->dst + (uint64_t)row * job->pitch;
         const uint32_t *src = job->src + (uint64_t)row * job->pitch;
-        for (uint32_t xx = 0; xx < job->width; ++xx) {
+        uint32_t xx = 0;
+
+        for (; xx + 1u < job->width; xx += 2u) {
+            *(uint64_t *)(void *)(dst + xx) = *(const uint64_t *)(const void *)(src + xx);
+        }
+        if (xx < job->width) {
             dst[xx] = src[xx];
         }
     }
@@ -206,44 +216,8 @@ int graphics_backbuffer_active(void) {
 
 void graphics_backbuffer_flush(void) {
     uint32_t *fb = (uint32_t *)(uintptr_t)graphics_fb_base;
-    unsigned int workers;
-    graphics_blit_job_t jobs[GRAPHICS_SMP_MAX_JOBS];
-    unsigned int ids[GRAPHICS_SMP_MAX_JOBS];
 
     if (!graphics_backbuffer_active() || fb == 0) {
-        return;
-    }
-
-    workers = cpu_online_core_count();
-    if (workers > GRAPHICS_SMP_MAX_JOBS) {
-        workers = GRAPHICS_SMP_MAX_JOBS;
-    }
-    if (workers > graphics_fb_height) {
-        workers = graphics_fb_height;
-    }
-
-    if (workers > 1u) {
-        uint32_t base_rows = graphics_fb_height / workers;
-        uint32_t extra_rows = graphics_fb_height % workers;
-        uint32_t row = 0;
-
-        for (unsigned int i = 0; i < workers; ++i) {
-            uint32_t rows = base_rows + (i < extra_rows ? 1u : 0u);
-            jobs[i].dst = fb;
-            jobs[i].src = graphics_backbuffer;
-            jobs[i].y = row;
-            jobs[i].width = graphics_fb_width;
-            jobs[i].height = rows;
-            jobs[i].pitch = graphics_fb_pitch;
-            ids[i] = smp_submit_work(graphics_blit_job, &jobs[i]);
-            if (ids[i] == 0u) {
-                graphics_blit_job(&jobs[i]);
-            }
-            row += rows;
-        }
-        for (unsigned int i = 0; i < workers; ++i) {
-            smp_wait_work(ids[i]);
-        }
         return;
     }
 
@@ -378,13 +352,7 @@ void graphics_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
 
     color = graphics_pack_color(rgb_color);
     pixels = (uint64_t)width * height;
-    workers = cpu_online_core_count();
-    if (workers > GRAPHICS_SMP_MAX_JOBS) {
-        workers = GRAPHICS_SMP_MAX_JOBS;
-    }
-    if (workers > height) {
-        workers = height;
-    }
+    workers = graphics_smp_worker_count(height);
 
     if (workers > 1u && pixels >= GRAPHICS_SMP_MIN_PIXELS) {
         uint32_t base_rows = height / workers;
@@ -449,13 +417,7 @@ void graphics_fill_vertical_gradient(uint32_t x,
     top_color = graphics_pack_color(top_rgb_color);
     bottom_color = graphics_pack_color(bottom_rgb_color);
     pixels = (uint64_t)width * height;
-    workers = cpu_online_core_count();
-    if (workers > GRAPHICS_SMP_MAX_JOBS) {
-        workers = GRAPHICS_SMP_MAX_JOBS;
-    }
-    if (workers > height) {
-        workers = height;
-    }
+    workers = graphics_smp_worker_count(height);
 
     if (workers > 1u && pixels >= GRAPHICS_SMP_MIN_PIXELS) {
         uint32_t base_rows = height / workers;

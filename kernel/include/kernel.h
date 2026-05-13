@@ -51,6 +51,7 @@ void graphics_viewport_push(unsigned int x, unsigned int y, unsigned int width, 
 void graphics_viewport_pop(void);
 void console_set_margin(unsigned int x, unsigned int y);
 void console_set_region(unsigned int left, unsigned int top, unsigned int right, unsigned int bottom);
+void console_set_region_preserve(unsigned int left, unsigned int top, unsigned int right, unsigned int bottom);
 void console_reset_region(void);
 int console_point_to_cell(unsigned int x,
                           unsigned int y,
@@ -85,6 +86,7 @@ int mouse_enabled(void);
 int mouse_x(void);
 int mouse_y(void);
 int mouse_buttons(void);
+void mouse_snapshot(int *out_x, int *out_y, int *out_buttons);
 int mouse_dx(void);
 int mouse_dy(void);
 void timer_init(void);

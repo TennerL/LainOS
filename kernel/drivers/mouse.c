@@ -15,6 +15,9 @@
 #define PS2_CONFIG_ENABLE_IRQ12 0x02u
 #define PS2_CONFIG_DISABLE_AUX_CLOCK 0x20u
 #define MOUSE_CMD_SET_DEFAULTS 0xF6u
+#define MOUSE_CMD_SET_SAMPLE_RATE 0xF3u
+#define MOUSE_CMD_SET_RESOLUTION 0xE8u
+#define MOUSE_CMD_SET_SCALING_1_1 0xE6u
 #define MOUSE_CMD_ENABLE_STREAMING 0xF4u
 #define MOUSE_ACK 0xFAu
 #define MOUSE_PACKET_ALWAYS_ONE 0x08u
@@ -22,7 +25,7 @@
 #define MOUSE_PACKET_Y_SIGN 0x20u
 #define MOUSE_PACKET_X_OVERFLOW 0x40u
 #define MOUSE_PACKET_Y_OVERFLOW 0x80u
-#define MOUSE_MAX_DELTA 96
+#define MOUSE_BUTTON_BITS 0x07u
 #define PIC1_COMMAND 0x20u
 #define PIC1_DATA 0x21u
 #define PIC2_COMMAND 0xA0u
@@ -31,6 +34,7 @@
 #define PS2_WAIT_LIMIT 100000u
 
 static volatile int enabled;
+static volatile int ps2_enabled;
 static volatile int packet_index;
 static volatile uint8_t packet[3];
 static volatile int pos_x;
@@ -38,6 +42,8 @@ static volatile int pos_y;
 static volatile int buttons;
 static volatile int last_dx;
 static volatile int last_dy;
+
+static int clamp_coord(int value, unsigned int limit);
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t value;
@@ -47,6 +53,40 @@ static inline uint8_t inb(uint16_t port) {
 
 static inline void outb(uint16_t port, uint8_t value) {
     __asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline unsigned long irq_save(void) {
+    unsigned long flags;
+    __asm__ __volatile__("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+static inline void irq_restore(unsigned long flags) {
+    __asm__ __volatile__("push %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
+static void mouse_apply_state(int new_buttons, int dx, int dy, int apply_motion, int usb_motion) {
+    buttons = new_buttons & MOUSE_BUTTON_BITS;
+    if (apply_motion) {
+        last_dx = dx;
+        last_dy = dy;
+        pos_x = clamp_coord(pos_x + dx, graphics_width());
+        pos_y = clamp_coord(pos_y + (usb_motion ? dy : -dy), graphics_height());
+    } else {
+        last_dx = 0;
+        last_dy = 0;
+    }
+}
+
+static void mouse_apply_rejected_motion_state(int new_buttons) {
+    int next_buttons = new_buttons & MOUSE_BUTTON_BITS;
+
+    last_dx = 0;
+    last_dy = 0;
+    if ((buttons & MOUSE_LEFT) != 0 && (next_buttons & MOUSE_LEFT) == 0) {
+        return;
+    }
+    buttons = next_buttons;
 }
 
 static int wait_input_empty(void) {
@@ -122,6 +162,25 @@ static int write_mouse(uint8_t command) {
     return 0;
 }
 
+static int write_mouse_arg(uint8_t command, uint8_t argument) {
+    uint8_t response;
+
+    if (write_controller(PS2_COMMAND_WRITE_AUX) != 0 || write_data(command) != 0) {
+        return -1;
+    }
+    if (read_data_with_aux_filter(&response, 1) != 0 || response != MOUSE_ACK) {
+        return -1;
+    }
+    if (write_controller(PS2_COMMAND_WRITE_AUX) != 0 || write_data(argument) != 0) {
+        return -1;
+    }
+    if (read_data_with_aux_filter(&response, 1) != 0 || response != MOUSE_ACK) {
+        return -1;
+    }
+
+    return 0;
+}
+
 static void flush_output(void) {
     for (unsigned int i = 0; i < 64u; ++i) {
         if ((inb(PS2_STATUS_PORT) & PS2_STATUS_OUTPUT_FULL) == 0) {
@@ -163,10 +222,6 @@ static int sign_extend_byte(uint8_t value, uint8_t sign_bit) {
     return result;
 }
 
-static int abs_int(int value) {
-    return value < 0 ? -value : value;
-}
-
 void mouse_handle_byte(uint8_t value) {
     if (packet_index == 0 && (value & MOUSE_PACKET_ALWAYS_ONE) == 0) {
         return;
@@ -179,41 +234,23 @@ void mouse_handle_byte(uint8_t value) {
 
     if ((packet[0] & (MOUSE_PACKET_X_OVERFLOW | MOUSE_PACKET_Y_OVERFLOW)) != 0) {
         packet_index = 0;
-        last_dx = 0;
-        last_dy = 0;
+        mouse_apply_rejected_motion_state(packet[0]);
         return;
     }
 
     int dx = sign_extend_byte(packet[1], packet[0] & MOUSE_PACKET_X_SIGN);
     int dy = sign_extend_byte(packet[2], packet[0] & MOUSE_PACKET_Y_SIGN);
 
-    if (abs_int(dx) > MOUSE_MAX_DELTA || abs_int(dy) > MOUSE_MAX_DELTA) {
-        packet_index = 0;
-        last_dx = 0;
-        last_dy = 0;
-        return;
-    }
-
-    buttons = packet[0] & 0x07u;
-    last_dx = dx;
-    last_dy = dy;
-    pos_x = clamp_coord(pos_x + dx, graphics_width());
-    pos_y = clamp_coord(pos_y - dy, graphics_height());
+    mouse_apply_state(packet[0], dx, dy, 1, 0);
     packet_index = 0;
 }
 
 void mouse_apply_usb_report(uint8_t report_buttons, int dx, int dy) {
-    if (abs_int(dx) > MOUSE_MAX_DELTA || abs_int(dy) > MOUSE_MAX_DELTA) {
-        last_dx = 0;
-        last_dy = 0;
+    if (ps2_enabled) {
         return;
     }
 
-    buttons = report_buttons & 0x07u;
-    last_dx = dx;
-    last_dy = dy;
-    pos_x = clamp_coord(pos_x + dx, graphics_width());
-    pos_y = clamp_coord(pos_y + dy, graphics_height());
+    mouse_apply_state(report_buttons, dx, dy, 1, 1);
     enabled = 1;
 }
 
@@ -221,6 +258,7 @@ int mouse_init(void) {
     uint8_t config;
 
     enabled = 0;
+    ps2_enabled = 0;
     packet_index = 0;
     buttons = 0;
     last_dx = 0;
@@ -243,10 +281,17 @@ int mouse_init(void) {
         return -1;
     }
 
-    if (write_mouse(MOUSE_CMD_SET_DEFAULTS) != 0 || write_mouse(MOUSE_CMD_ENABLE_STREAMING) != 0) {
+    if (write_mouse(MOUSE_CMD_SET_DEFAULTS) != 0) {
+        return -1;
+    }
+    (void)write_mouse(MOUSE_CMD_SET_SCALING_1_1);
+    (void)write_mouse_arg(MOUSE_CMD_SET_RESOLUTION, 3u);
+    (void)write_mouse_arg(MOUSE_CMD_SET_SAMPLE_RATE, 200u);
+    if (write_mouse(MOUSE_CMD_ENABLE_STREAMING) != 0) {
         return -1;
     }
 
+    ps2_enabled = 1;
     enabled = 1;
     unmask_mouse_irq();
     return 0;
@@ -263,7 +308,7 @@ void mouse_irq_handler(void) {
 
         {
             uint8_t value = inb(PS2_DATA_PORT);
-            if (enabled) {
+            if (ps2_enabled) {
                 mouse_handle_byte(value);
             }
         }
@@ -287,6 +332,24 @@ int mouse_y(void) {
 
 int mouse_buttons(void) {
     return buttons;
+}
+
+void mouse_snapshot(int *out_x, int *out_y, int *out_buttons) {
+    unsigned long flags = irq_save();
+    int x = pos_x;
+    int y = pos_y;
+    int b = buttons;
+
+    irq_restore(flags);
+    if (out_x != 0) {
+        *out_x = x;
+    }
+    if (out_y != 0) {
+        *out_y = y;
+    }
+    if (out_buttons != 0) {
+        *out_buttons = b;
+    }
 }
 
 int mouse_dx(void) {

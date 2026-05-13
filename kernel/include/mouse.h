@@ -15,6 +15,7 @@ int mouse_enabled(void);
 int mouse_x(void);
 int mouse_y(void);
 int mouse_buttons(void);
+void mouse_snapshot(int *out_x, int *out_y, int *out_buttons);
 int mouse_dx(void);
 int mouse_dy(void);
 

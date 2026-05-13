@@ -605,7 +605,11 @@ void console_set_margin(uint32_t x, uint32_t y) {
     }
 }
 
-void console_set_region(uint32_t left, uint32_t top, uint32_t right, uint32_t bottom) {
+static void console_set_region_internal(uint32_t left,
+                                        uint32_t top,
+                                        uint32_t right,
+                                        uint32_t bottom,
+                                        int clear) {
     console_pane_t *pane;
     int redraw_cursor = cursor_enabled && cursor_visible;
 
@@ -634,10 +638,20 @@ void console_set_region(uint32_t left, uint32_t top, uint32_t right, uint32_t bo
     cursor_visible = 1;
     last_cursor_blink_tick = timer_ticks();
 
-    clear_pane(pane);
+    if (clear) {
+        clear_pane(pane);
+    }
     if(redraw_cursor) {
         draw_cursor();
     }
+}
+
+void console_set_region(uint32_t left, uint32_t top, uint32_t right, uint32_t bottom) {
+    console_set_region_internal(left, top, right, bottom, 1);
+}
+
+void console_set_region_preserve(uint32_t left, uint32_t top, uint32_t right, uint32_t bottom) {
+    console_set_region_internal(left, top, right, bottom, 0);
 }
 
 void console_reset_region(void) {

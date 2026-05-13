@@ -8,6 +8,7 @@
 #define CPU_SMP_IPI_VECTOR 0xF1u
 #define CPU_SMP_WORK_SLOTS 64u
 #define ACPI_MADT_TYPE_LOCAL_APIC 0u
+#define ACPI_MADT_TYPE_LOCAL_APIC_ADDRESS_OVERRIDE 5u
 #define ACPI_MADT_TYPE_LOCAL_X2APIC 9u
 #define ACPI_CPU_ENABLED 0x1u
 #define ACPI_CPU_ONLINE_CAPABLE 0x2u
@@ -99,6 +100,13 @@ typedef struct __attribute__((packed)) {
     uint8_t type;
     uint8_t length;
     uint16_t reserved;
+    uint64_t local_apic_address;
+} acpi_madt_lapic_address_override_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t type;
+    uint8_t length;
+    uint16_t reserved;
     uint32_t x2apic_id;
     uint32_t flags;
     uint32_t acpi_processor_uid;
@@ -134,6 +142,7 @@ static struct idt_entry64 idt64[256];
 static uint8_t ap_stacks[CPU_MAX_CORES][CPU_AP_STACK_SIZE] __attribute__((aligned(16)));
 static unsigned int detected_core_count = 1u;
 static unsigned int detected_lapic_ids[CPU_MAX_CORES];
+static volatile unsigned int online_lapic_ids[CPU_MAX_CORES];
 static unsigned long long detected_lapic_base;
 static unsigned int bsp_lapic_id;
 static volatile unsigned int online_core_count = 1u;
@@ -230,6 +239,31 @@ static unsigned int cpu_index_for_lapic_id(unsigned int apic_id) {
     }
 
     return 0u;
+}
+
+static int cpu_lapic_id_known(unsigned int apic_id) {
+    for (unsigned int i = 0; i < detected_core_count; ++i) {
+        if (detected_lapic_ids[i] == apic_id) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void cpu_mark_online(unsigned int apic_id) {
+    for (unsigned int i = 0; i < CPU_MAX_CORES; ++i) {
+        unsigned int current = online_lapic_ids[i];
+
+        if (current == apic_id) {
+            return;
+        }
+        if (current == 0xffffffffu &&
+            __sync_bool_compare_and_swap(&online_lapic_ids[i], 0xffffffffu, apic_id)) {
+            __sync_fetch_and_add(&online_core_count, 1u);
+            return;
+        }
+    }
 }
 
 static void cpu_copy_bytes(void *dst, const void *src, uint64_t size) {
@@ -345,11 +379,15 @@ void cpu_ipi_handler(void) {
 
 void cpu_ap_entry(void) {
     unsigned int core_index;
+    unsigned int apic_id;
 
     cpu_init_tables();
     lapic_enable();
-    core_index = cpu_index_for_lapic_id(lapic_current_id());
-    __sync_fetch_and_add(&online_core_count, 1u);
+    apic_id = lapic_current_id();
+    core_index = cpu_index_for_lapic_id(apic_id);
+    if (cpu_lapic_id_known(apic_id)) {
+        cpu_mark_online(apic_id);
+    }
 
     for (;;) {
         while (smp_run_one_work_item(core_index)) {
@@ -600,6 +638,10 @@ static void cpu_record_lapic_id(uint32_t id) {
     detected_lapic_ids[detected_core_count++] = id;
 }
 
+static int cpu_acpi_cpu_usable(uint32_t flags) {
+    return (flags & ACPI_CPU_ENABLED) != 0u;
+}
+
 static void idt_set_gate(int vec, void (*handler)(void)) {
     uint64_t addr = (uint64_t)handler;
     idt64[vec].offset_low = (uint16_t)(addr & 0xFFFF);
@@ -669,13 +711,18 @@ void cpu_detect_topology(const boot_info_t *info) {
         if (header->type == ACPI_MADT_TYPE_LOCAL_APIC &&
             header->length >= sizeof(acpi_madt_local_apic_t)) {
             const acpi_madt_local_apic_t *lapic = (const acpi_madt_local_apic_t *)(const void *)entry;
-            if ((lapic->flags & ACPI_CPU_ENABLED) != 0u) {
+            if (cpu_acpi_cpu_usable(lapic->flags)) {
                 cpu_record_lapic_id(lapic->apic_id);
             }
+        } else if (header->type == ACPI_MADT_TYPE_LOCAL_APIC_ADDRESS_OVERRIDE &&
+                   header->length >= sizeof(acpi_madt_lapic_address_override_t)) {
+            const acpi_madt_lapic_address_override_t *override =
+                (const acpi_madt_lapic_address_override_t *)(const void *)entry;
+            detected_lapic_base = override->local_apic_address;
         } else if (header->type == ACPI_MADT_TYPE_LOCAL_X2APIC &&
                    header->length >= sizeof(acpi_madt_local_x2apic_t)) {
             const acpi_madt_local_x2apic_t *x2apic = (const acpi_madt_local_x2apic_t *)(const void *)entry;
-            if ((x2apic->flags & ACPI_CPU_ENABLED) != 0u) {
+            if (cpu_acpi_cpu_usable(x2apic->flags)) {
                 cpu_record_lapic_id(x2apic->x2apic_id);
             }
         }
@@ -725,12 +772,16 @@ unsigned int cpu_start_secondary_cores(void) {
     unsigned int started_before;
 
     online_core_count = 1u;
+    for (unsigned int i = 0; i < CPU_MAX_CORES; ++i) {
+        online_lapic_ids[i] = 0xffffffffu;
+    }
     if (detected_core_count <= 1u || trampoline_size == 0 || trampoline_size > 4096u) {
         return online_core_count;
     }
 
     lapic_enable();
     bsp_lapic_id = lapic_current_id();
+    online_lapic_ids[0] = bsp_lapic_id;
     cpu_copy_bytes(trampoline, ap_trampoline_start, trampoline_size);
     cpu_patch_u64(trampoline, cr3_offset, cr3);
     cpu_patch_u64(trampoline, entry_offset, (uint64_t)(uintptr_t)cpu_ap_entry);

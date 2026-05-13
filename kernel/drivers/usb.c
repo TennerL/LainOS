@@ -917,7 +917,8 @@ static int xhci_find_boot_mouse(uint32_t config_size,
             current_interface = xhci_config_descriptor[offset + 2u];
             in_mouse_interface =
                 xhci_config_descriptor[offset + 5u] == 3u &&
-                xhci_config_descriptor[offset + 7u] != 1u;
+                xhci_config_descriptor[offset + 6u] == 1u &&
+                xhci_config_descriptor[offset + 7u] == 2u;
             if (in_mouse_interface) {
                 *interface_number = current_interface;
             }
