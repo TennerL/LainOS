@@ -9,6 +9,9 @@ This is still an experimental hobby OS, but it has moved beyond the original
 "print text from a kernel" milestone. The current direction is: self-hosting
 tools, small graphical applications, and incremental kernel infrastructure.
 
+For day-to-day development practices, module/app workflows, debugging checklists,
+and desktop rendering rules, see `DEVELOPMENT_HANDBOOK.md`.
+
 ## Current Highlights
 
 - UEFI `BOOTX64.EFI` loader written in C with ELF64 kernel loading.
