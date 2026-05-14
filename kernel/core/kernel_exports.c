@@ -1,6 +1,7 @@
 #include "kernel_exports.h"
 #include "desktop.h"
 #include "kernel.h"
+#include "kmem.h"
 #include "shell.h"
 
 static int kernel_export_streq(const char *a, const char *b) {
@@ -24,6 +25,12 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("mem_free_kb", status_memory_free_kb),
     KERNEL_EXPORT("status_memory_used_kb", status_memory_used_kb),
     KERNEL_EXPORT("mem_used_kb", status_memory_used_kb),
+    KERNEL_EXPORT("kmalloc", kmalloc),
+    KERNEL_EXPORT("kzalloc", kzalloc),
+    KERNEL_EXPORT("kfree", kfree),
+    KERNEL_EXPORT("page_alloc", page_alloc),
+    KERNEL_EXPORT("page_free", page_free),
+    KERNEL_EXPORT("heap_used_bytes", kmem_heap_used_bytes),
     KERNEL_EXPORT("status_cpu_core_count", status_cpu_core_count),
     KERNEL_EXPORT("cpu_count", status_cpu_core_count),
     KERNEL_EXPORT("cpu_usage", status_cpu_usage_percent),

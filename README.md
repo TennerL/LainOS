@@ -227,10 +227,11 @@ Current rendering improvements:
 - Full desktop redraws flush from the backbuffer to the real framebuffer in a
   multicore copy pass.
 
-This hides most visible "paint the scene live" redraw artifacts. The first
-dirty-rectangle plumbing is also present: editor-only redraws and common
-window geometry commits can flush a damaged rectangle instead of the whole
-screen. This is still an incremental damage model, not a full compositor.
+This hides most visible "paint the scene live" redraw artifacts. Desktop also
+tracks dirty rectangles for window geometry, taskbar/menu changes, editor
+content, file/module actions, and module app ticks so redraws can flush bounded
+regions from the backbuffer instead of copying the whole screen. This is still
+an incremental damage model, not a full z-order-aware compositor.
 
 ### Console And Input
 
@@ -557,48 +558,44 @@ Things that are intentionally incomplete:
 - no userspace/process isolation
 - no dynamic kernel module ABI beyond the `.Z` resident module experiment
 - no NTFS driver inside the kernel
-- no general-purpose allocator yet; the DMA pool is currently a simple bump pool
+- heap is early but active: page-range allocation, `kmalloc`/`kfree`
+  classes, diagnostics, and the largest driver/UI scratch buffers are on heap
 - limited GOP pixel-format support
 - tiny `lainfs` limits and contiguous file allocation
 - early USB/xHCI enumeration
 - early AHCI and network paths
-- only partial dirty-rectangle flushing; no full window compositor yet
+- no full z-order-aware window compositor yet
 
 ## Good Next Work
 
 Here are high-leverage next steps, roughly ordered by payoff:
 
-1. Dirty rectangles for Desktop.
-   Track changed window/content regions and flush only those from the
-   backbuffer. This should make desktop interaction feel much sharper.
+1. Heap hardening.
+   Add allocation failure tests, leak checks for long desktop sessions, and
+   stronger diagnostics for fragmentation under repeated module/browser use.
 
-2. A real kernel heap.
-   Replace ad hoc static buffers and the enlarged DMA bump pool with a page
-   allocator plus `kmalloc`/`kfree` classes. Backbuffers, modules, editor
-   buffers, and filesystem caches all want this.
-
-3. Per-core data and APIC timer.
+2. Per-core data and APIC timer.
    Add per-core structures, LAPIC timer calibration, and per-core tick
    accounting. This sets up a future scheduler cleanly.
 
-4. Cooperative kernel tasks.
+3. Cooperative kernel tasks.
    Build a small task abstraction on top of the SMP executor before jumping to
    preemption. Let background jobs such as builds, file copies, and redraw
    preparation run off the BSP.
 
-5. Dirty filesystem cache.
+4. Dirty filesystem cache.
    Cache directory blocks and file data in memory, then flush deliberately.
    This would make editor/build workflows faster and reduce repeated disk reads.
 
-6. Expand `lainfs`.
+5. Expand `lainfs`.
    Lift file count/file size limits, support non-contiguous extents, and add
    more robust metadata validation.
 
-7. Desktop window damage model.
+6. Desktop window damage model.
    Extend the current dirty-rectangle path into a z-order-aware compositor so
    moving a window redraws only exposed areas and the moved window itself.
 
-8. Safer resident modules.
+7. Safer resident modules.
    Add dependency-aware unload, module ownership for resources, and better
    failure isolation when a module hook misbehaves.
 

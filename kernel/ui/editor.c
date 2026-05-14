@@ -2,13 +2,14 @@
 #include "editor.h"
 #include "kernel.h"
 #include "keyboard.h"
+#include "kmem.h"
 #include "lainfs.h"
 
 #define EDITOR_BUFFER_SIZE 262144u
 #define EDITOR_RENDER_MAX_ROWS 128u
 #define EDITOR_RENDER_MAX_COLS 256u
 
-static char buffer[EDITOR_BUFFER_SIZE];
+static char *buffer;
 static uint32_t buffer_size;
 static uint32_t cursor_index;
 static uint32_t top_line;
@@ -390,6 +391,13 @@ int editor_run_in_dir(char drive_letter, uint32_t parent_id, const char *name) {
 
     if (!name || name[0] == '\0') {
         return -1;
+    }
+
+    if (buffer == 0) {
+        buffer = (char *)kmalloc(EDITOR_BUFFER_SIZE);
+        if (buffer == 0) {
+            return -10;
+        }
     }
 
     current_drive = drive_letter;

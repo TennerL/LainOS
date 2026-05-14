@@ -1,6 +1,7 @@
 #include "zobject.h"
 #include "assembler.h"
 #include "kernel_exports.h"
+#include "kmem.h"
 
 #define ZOBJECT_MAGIC 0x4F5A4E49u
 #define ZOBJECT_VERSION 5u
@@ -33,8 +34,8 @@
 #define ZOBJECT_SECTION_DATA 2u
 #define ZOBJECT_SECTION_BSS 3u
 
-static char zo_link_asm[ZOBJECT_LINK_ASM_SIZE];
-static unsigned char zo_image[ZOBJECT_LINK_ASM_SIZE];
+static char *zo_link_asm;
+static unsigned char *zo_image;
 
 typedef struct {
     uint32_t type;
@@ -120,6 +121,22 @@ static int zo_starts_with(const char *text, const char *prefix) {
     }
 
     return 1;
+}
+
+static int zo_ensure_work_buffers(void) {
+    if (zo_link_asm == 0) {
+        zo_link_asm = (char *)kmalloc(ZOBJECT_LINK_ASM_SIZE);
+        if (zo_link_asm == 0) {
+            return -1;
+        }
+    }
+    if (zo_image == 0) {
+        zo_image = (unsigned char *)kmalloc(ZOBJECT_LINK_ASM_SIZE);
+        if (zo_image == 0) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 static int zo_name_char(char ch) {
@@ -635,6 +652,10 @@ int zobject_from_asm(const char *asm_source,
         return -1;
     }
 
+    if (zo_ensure_work_buffers() != 0) {
+        return -1;
+    }
+
     if (zo_collect_metadata_symbols(asm_source, asm_size, symbols, &symbol_count) != 0) {
         return -10;
     }
@@ -682,7 +703,7 @@ int zobject_from_asm(const char *asm_source,
     if (assembler_assemble_source_ex_relocs(asm_source,
                                             asm_size,
                                             zo_image,
-                                            sizeof(zo_image),
+                                            ZOBJECT_LINK_ASM_SIZE,
                                             0,
                                             &image_size,
                                             &asm_error_line,
@@ -988,6 +1009,10 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
     int have_legacy = 0;
 
     if (objects == 0 || object_sizes == 0 || object_count == 0 || out == 0 || out_size == 0) {
+        return -1;
+    }
+
+    if (zo_ensure_work_buffers() != 0) {
         return -1;
     }
 

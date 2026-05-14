@@ -7,6 +7,7 @@
 #include "desktop.h"
 #include "editor.h"
 #include "keyboard.h"
+#include "kmem.h"
 #include "lainfs.h"
 #include "net.h"
 #include "shell.h"
@@ -37,21 +38,22 @@
 #define ZMODULE_TICK_HZ 20u
 
 static int script_depth;
-static char script_buffers[SCRIPT_MAX_DEPTH][SCRIPT_BUFFER_SIZE + 1];
-static unsigned char exec_buffer[EXEC_BUFFER_SIZE] __attribute__((aligned(16)));
-static unsigned char asm_output[EXEC_BUFFER_SIZE];
-static char zscript_output[ASM_SOURCE_SIZE + 1];
-static char zinclude_buffers[Z_INCLUDE_MAX_DEPTH][Z_INCLUDE_BUFFER_SIZE + 1];
-static char shell_manifest_buffer[ASM_SOURCE_SIZE + 1];
-static char shell_source_buffer[ASM_SOURCE_SIZE + 1];
-static char shell_wget_buffer[LAINFS_FILE_CAPACITY + 1];
+static char (*script_buffers)[SCRIPT_BUFFER_SIZE + 1];
+static unsigned char *exec_buffer;
+static unsigned char *asm_output;
+static char *zscript_output;
+static char (*zinclude_buffers)[Z_INCLUDE_BUFFER_SIZE + 1];
+static char *shell_manifest_buffer;
+static char *shell_source_buffer;
+static char *shell_wget_buffer;
 static char zbuild_report[512];
 static char ztest_report[256];
+static int shell_work_buffers_ready;
 
 typedef struct {
     int loaded;
     char name[ZMODULE_NAME_SIZE];
-    unsigned char image[ZMODULE_IMAGE_SIZE] __attribute__((aligned(16)));
+    unsigned char *image;
     uint32_t image_size;
     uint32_t object_count;
     uint32_t export_count;
@@ -145,6 +147,47 @@ static void zero_memory(void *ptr, uint32_t size) {
     for (uint32_t i = 0; i < size; ++i) {
         p[i] = 0;
     }
+}
+
+static int shell_alloc_work_buffers(void) {
+    if (shell_work_buffers_ready) {
+        return 1;
+    }
+
+    if (script_buffers == 0) {
+        script_buffers = (char (*)[SCRIPT_BUFFER_SIZE + 1])kmalloc(sizeof(*script_buffers) * SCRIPT_MAX_DEPTH);
+    }
+    if (exec_buffer == 0) {
+        exec_buffer = (unsigned char *)kmalloc(EXEC_BUFFER_SIZE);
+    }
+    if (asm_output == 0) {
+        asm_output = (unsigned char *)kmalloc(EXEC_BUFFER_SIZE);
+    }
+    if (zscript_output == 0) {
+        zscript_output = (char *)kmalloc(ASM_SOURCE_SIZE + 1u);
+    }
+    if (zinclude_buffers == 0) {
+        zinclude_buffers = (char (*)[Z_INCLUDE_BUFFER_SIZE + 1])kmalloc(sizeof(*zinclude_buffers) * Z_INCLUDE_MAX_DEPTH);
+    }
+    if (shell_manifest_buffer == 0) {
+        shell_manifest_buffer = (char *)kmalloc(ASM_SOURCE_SIZE + 1u);
+    }
+    if (shell_source_buffer == 0) {
+        shell_source_buffer = (char *)kmalloc(ASM_SOURCE_SIZE + 1u);
+    }
+    if (shell_wget_buffer == 0) {
+        shell_wget_buffer = (char *)kmalloc(LAINFS_FILE_CAPACITY + 1u);
+    }
+
+    shell_work_buffers_ready = script_buffers != 0 &&
+                               exec_buffer != 0 &&
+                               asm_output != 0 &&
+                               zscript_output != 0 &&
+                               zinclude_buffers != 0 &&
+                               shell_manifest_buffer != 0 &&
+                               shell_source_buffer != 0 &&
+                               shell_wget_buffer != 0;
+    return shell_work_buffers_ready;
 }
 
 static int parse_color_arg(const char *args, unsigned int *color) {
@@ -1147,6 +1190,7 @@ static void cmd_resolution(const char *args, const boot_info_t *info);
 static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
+static void cmd_heap(const char *args, const boot_info_t *info);
 static void cmd_cpus(const char *args, const boot_info_t *info);
 static void cmd_smp(const char *args, const boot_info_t *info);
 static void cmd_gfx(const char *args, const boot_info_t *info);
@@ -1218,6 +1262,7 @@ static const command_t commands[] = {
     { "clear",   "clear screen",              cmd_clear },
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
+    { "heap",    "show heap diagnostics",     cmd_heap },
     { "cpus",    "show CPU topology",         cmd_cpus },
     { "smp",     "run a multicore work test", cmd_smp },
     { "gfx",     "show graphics SMP stats",   cmd_gfx },
@@ -1396,6 +1441,31 @@ static void cmd_info(const char *args, const boot_info_t *info) {
     console_kprintf2("CPU cores online/detected: %u/%u\n",
                      cpu_online_core_count(),
                      cpu_core_count());
+}
+
+static void cmd_heap(const char *args, const boot_info_t *info) {
+    kmem_stats_t stats;
+
+    (void)args;
+    (void)info;
+
+    kmem_get_stats(&stats);
+    console_puts("heap used bytes: ");
+    console_put_dec64(stats.heap_used_bytes);
+    console_puts("\nfree pages: ");
+    console_put_dec64(stats.free_pages);
+    console_puts("/");
+    console_put_dec64(stats.total_pages);
+    console_puts(" (");
+    console_put_dec64(stats.free_pages * KMEM_PAGE_SIZE);
+    console_puts(" bytes)\nfree ranges: ");
+    console_put_dec64(stats.free_ranges);
+    console_puts(" largest=");
+    console_put_dec64(stats.largest_free_range_pages);
+    console_puts(" pages\nsmall free blocks: ");
+    console_put_dec64(stats.small_free_blocks);
+    console_puts("\nshell work buffers: ");
+    console_puts(shell_work_buffers_ready ? "heap\n" : "not allocated\n");
 }
 
 static void cmd_cpus(const char *args, const boot_info_t *info) {
@@ -3508,7 +3578,7 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
     console_puts(url);
     console_puts("\n");
 
-    status = net_http_get(0, url, shell_wget_buffer, sizeof(shell_wget_buffer), &size);
+    status = net_http_get(0, url, shell_wget_buffer, LAINFS_FILE_CAPACITY + 1u, &size);
     if (status == -2) {
         console_puts("wget failed: use plain http://numeric.ip[:port]/path\n");
         return;
@@ -4082,7 +4152,7 @@ static int compile_z_source_file(const char *name,
         return status;
     }
 
-    zero_memory(zscript_output, sizeof(zscript_output));
+    zero_memory(zscript_output, ASM_SOURCE_SIZE + 1u);
 
     if (zscript_compile_source(source,
                                *source_size,
@@ -4273,7 +4343,7 @@ static void cmd_zco(const char *args, const boot_info_t *info) {
         return;
     }
 
-    zero_memory(zscript_output, sizeof(zscript_output));
+    zero_memory(zscript_output, ASM_SOURCE_SIZE + 1u);
     make_zobject_prefix(output_name, label_prefix, sizeof(label_prefix));
     if (zscript_compile_source_object(source,
                                       source_size,
@@ -4718,7 +4788,7 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
             return;
         }
 
-        zero_memory(zscript_output, sizeof(zscript_output));
+        zero_memory(zscript_output, ASM_SOURCE_SIZE + 1u);
         make_zobject_prefix(object_name, label_prefix, sizeof(label_prefix));
         if (zscript_compile_source_object(source,
                                           source_size,
@@ -5746,7 +5816,8 @@ static void zmodule_clear_slot(uint32_t slot_index) {
     }
 
     zmodule_call_unload_hook(&zmodule_slots[slot_index]);
-    zero_memory(zmodule_slots[slot_index].image, ZMODULE_IMAGE_SIZE);
+    kfree(zmodule_slots[slot_index].image);
+    zmodule_slots[slot_index].image = 0;
     zero_memory(zmodule_slots[slot_index].exports, sizeof(zmodule_slots[slot_index].exports));
     zmodule_slots[slot_index].loaded = 0;
     zmodule_slots[slot_index].name[0] = '\0';
@@ -5900,6 +5971,13 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
         ++object_count;
     }
 
+    kfree(zmodule_slots[slot_index].image);
+    zmodule_slots[slot_index].image = (unsigned char *)kmalloc(ZMODULE_IMAGE_SIZE);
+    if (zmodule_slots[slot_index].image == 0) {
+        console_puts("zmod failed: out of heap for resident module\n");
+        return;
+    }
+
     zero_memory(zmodule_slots[slot_index].image, ZMODULE_IMAGE_SIZE);
     if (zobject_link_flat_many_ex(objects,
                                   object_sizes,
@@ -5920,6 +5998,8 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
             console_put_dec64(error_line);
         }
         console_puts("\n");
+        kfree(zmodule_slots[slot_index].image);
+        zmodule_slots[slot_index].image = 0;
         return;
     }
 
@@ -6299,12 +6379,18 @@ void shell_init(void) {
 
     active_session_index = 0;
     init_session_blank(&shell_sessions[0]);
+    if (!shell_alloc_work_buffers()) {
+        console_puts("shell: out of heap for work buffers\n");
+    }
 }
 
 void shell_run_autoexec(const char *name, const boot_info_t *info) {
     int previous_drive = current_drive;
 
     if (active_drive() < 0) {
+        return;
+    }
+    if (!shell_work_buffers_ready) {
         return;
     }
 

@@ -3,7 +3,7 @@
 #define EFI_CONVENTIONAL_MEMORY 7u
 #define DMA_POOL_LIMIT 0x100000000ull
 #define DMA_POOL_MIN 0x01000000ull
-#define DMA_POOL_SIZE (32ull * 1024ull * 1024ull)
+#define DMA_POOL_SIZE (4ull * 1024ull * 1024ull)
 
 typedef struct {
     uint32_t type;
@@ -14,8 +14,8 @@ typedef struct {
     uint64_t attribute;
 } efi_memory_descriptor_t;
 
-static uint64_t dma_pool_base;
-static uint64_t dma_pool_size;
+static uint64_t dma_pool_base_addr;
+static uint64_t dma_pool_size_bytes;
 static uint64_t dma_pool_offset;
 
 static uint64_t align_up64(uint64_t value, uint64_t alignment) {
@@ -31,8 +31,8 @@ static int overlaps(uint64_t start, uint64_t end, uint64_t other_start, uint64_t
 }
 
 void dma_init(const boot_info_t *info) {
-    dma_pool_base = 0;
-    dma_pool_size = 0;
+    dma_pool_base_addr = 0;
+    dma_pool_size_bytes = 0;
     dma_pool_offset = 0;
 
     if (!info ||
@@ -76,24 +76,24 @@ void dma_init(const boot_info_t *info) {
             continue;
         }
 
-        dma_pool_base = start;
-        dma_pool_size = DMA_POOL_SIZE;
+        dma_pool_base_addr = start;
+        dma_pool_size_bytes = DMA_POOL_SIZE;
         dma_pool_offset = 0;
         return;
     }
 }
 
 void *dma_alloc(uint32_t size, uint32_t alignment) {
-    if (dma_pool_base == 0 || size == 0) {
+    if (dma_pool_base_addr == 0 || size == 0) {
         return 0;
     }
 
     uint64_t offset = align_up64(dma_pool_offset, alignment ? alignment : 16u);
-    if (offset + size > dma_pool_size) {
+    if (offset + size > dma_pool_size_bytes) {
         return 0;
     }
 
-    uint64_t addr = dma_pool_base + offset;
+    uint64_t addr = dma_pool_base_addr + offset;
     dma_pool_offset = offset + size;
 
     uint8_t *p = (uint8_t *)(uintptr_t)addr;
@@ -106,4 +106,12 @@ void *dma_alloc(uint32_t size, uint32_t alignment) {
 
 uint64_t dma_phys(const void *ptr) {
     return (uint64_t)(uintptr_t)ptr;
+}
+
+uint64_t dma_pool_base(void) {
+    return dma_pool_base_addr;
+}
+
+uint64_t dma_pool_size(void) {
+    return dma_pool_size_bytes;
 }

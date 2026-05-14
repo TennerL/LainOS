@@ -1,6 +1,7 @@
 #include "kernel.h"
 #include "dma.h"
 #include "graphics.h"
+#include "kmem.h"
 #include "net.h"
 #include "shell.h"
 #include "storage.h"
@@ -94,6 +95,10 @@ unsigned long long status_memory_total_kb(void) {
 unsigned long long status_memory_free_kb(void) {
     unsigned long long total = 0;
     unsigned long long free = 0;
+
+    if (kmem_total_pages() != 0) {
+        return kmem_free_pages() * 4ull;
+    }
 
     memory_totals_kb(&total, &free);
     (void)total;
@@ -322,6 +327,8 @@ void kernel_main(boot_info_t *info) {
     timer_init();
     boot_stage("dma");
     dma_init(info);
+    boot_stage("heap");
+    kmem_init(info);
     boot_stage("keyboard");
     keyboard_init();
     boot_stage("mouse");

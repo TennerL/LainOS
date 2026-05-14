@@ -2,6 +2,7 @@
 #include "browser.h"
 #include "kernel.h"
 #include "keyboard.h"
+#include "kmem.h"
 #include "lainfs.h"
 #include "mouse.h"
 #include "usb.h"
@@ -28,18 +29,48 @@ typedef struct {
 } browser_entry_t;
 
 static browser_pane_t panes[2];
-static browser_entry_t entries[2][BROWSER_MAX_ENTRIES];
+static browser_entry_t (*entries)[BROWSER_MAX_ENTRIES];
 static uint32_t entry_counts[2];
 static unsigned int active_pane;
 static const char *status_message;
-static char browser_copy_buffer[BROWSER_COPY_BUFFER_SIZE];
-static char rendered_cells[BROWSER_RENDER_ROWS][BROWSER_RENDER_COLS];
-static uint8_t rendered_cell_valid[BROWSER_RENDER_ROWS][BROWSER_RENDER_COLS];
+static char *browser_copy_buffer;
+static char (*rendered_cells)[BROWSER_RENDER_COLS];
+static uint8_t (*rendered_cell_valid)[BROWSER_RENDER_COLS];
 static unsigned int rendered_cols;
 static unsigned int rendered_rows;
 
 static void enter_selected(void);
 static void go_up(void);
+
+static int browser_alloc_buffers(void) {
+    if (entries == 0) {
+        entries = (browser_entry_t (*)[BROWSER_MAX_ENTRIES])kmalloc(sizeof(*entries) * 2u);
+    }
+    if (browser_copy_buffer == 0) {
+        browser_copy_buffer = (char *)kmalloc(BROWSER_COPY_BUFFER_SIZE);
+    }
+    if (rendered_cells == 0) {
+        rendered_cells = (char (*)[BROWSER_RENDER_COLS])kmalloc(sizeof(*rendered_cells) * BROWSER_RENDER_ROWS);
+    }
+    if (rendered_cell_valid == 0) {
+        rendered_cell_valid = (uint8_t (*)[BROWSER_RENDER_COLS])kmalloc(sizeof(*rendered_cell_valid) * BROWSER_RENDER_ROWS);
+    }
+    return entries != 0 &&
+           browser_copy_buffer != 0 &&
+           rendered_cells != 0 &&
+           rendered_cell_valid != 0;
+}
+
+static void browser_free_buffers(void) {
+    kfree(entries);
+    kfree(browser_copy_buffer);
+    kfree(rendered_cells);
+    kfree(rendered_cell_valid);
+    entries = 0;
+    browser_copy_buffer = 0;
+    rendered_cells = 0;
+    rendered_cell_valid = 0;
+}
 
 static uint32_t str_len(const char *s) {
     uint32_t len = 0;
@@ -542,7 +573,7 @@ static void move_to_other_pane(void) {
                                     source->dir_id,
                                     entry->name,
                                     browser_copy_buffer,
-                                    sizeof(browser_copy_buffer),
+                                    BROWSER_COPY_BUFFER_SIZE,
                                     &size) != 0 ||
             lainfs_save_file_in_dir(target->drive,
                                     target->dir_id,
@@ -602,7 +633,7 @@ static void copy_to_other_pane(void) {
                                 source->dir_id,
                                 entry->name,
                                 browser_copy_buffer,
-                                sizeof(browser_copy_buffer),
+                                BROWSER_COPY_BUFFER_SIZE,
                                 &size) != 0) {
         status_message = "copy failed: could not read source";
         return;
@@ -627,6 +658,11 @@ int browser_run(char left_drive,
                 char right_drive,
                 uint32_t right_dir,
                 const char *right_path) {
+    if (!browser_alloc_buffers()) {
+        browser_free_buffers();
+        return -10;
+    }
+
     active_pane = 0;
     status_message = 0;
 
@@ -657,6 +693,7 @@ int browser_run(char left_drive,
             if (key.type == KEY_ESC || key.type == KEY_CTRL_Q) {
                 console_cursor_enable(0);
                 console_clear();
+                browser_free_buffers();
                 return 0;
             }
 

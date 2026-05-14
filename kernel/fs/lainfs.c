@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "kmem.h"
 #include "lainfs.h"
 #include "storage.h"
 
@@ -790,11 +791,16 @@ int lainfs_read_file(char drive_letter, const char *name) {
 }
 
 int lainfs_read_file_in_dir(char drive_letter, uint32_t parent_id, const char *name) {
-    static char buffer[LAINFS_FILE_CAPACITY + 1];
+    char *buffer = (char *)kmalloc(LAINFS_FILE_CAPACITY + 1u);
     uint32_t size = 0;
+
+    if (buffer == 0) {
+        return -10;
+    }
 
     int status = lainfs_load_file_in_dir(drive_letter, parent_id, name, buffer, LAINFS_FILE_CAPACITY, &size);
     if (status != 0) {
+        kfree(buffer);
         return status;
     }
 
@@ -806,6 +812,7 @@ int lainfs_read_file_in_dir(char drive_letter, uint32_t parent_id, const char *n
     }
 
     console_puts("\n");
+    kfree(buffer);
     return 0;
 }
 

@@ -1,6 +1,6 @@
 #include "graphics.h"
-#include "dma.h"
 #include "kernel.h"
+#include "kmem.h"
 
 static uint64_t graphics_fb_base;
 static uint32_t graphics_fb_width;
@@ -222,7 +222,7 @@ int graphics_backbuffer_enable(void) {
     }
 
     if (graphics_backbuffer == 0) {
-        graphics_backbuffer = (uint32_t *)dma_alloc((uint32_t)bytes, 4096u);
+        graphics_backbuffer = (uint32_t *)kmalloc((uint32_t)bytes);
         if (graphics_backbuffer == 0) {
             return 0;
         }
