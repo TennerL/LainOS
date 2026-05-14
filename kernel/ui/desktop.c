@@ -36,6 +36,7 @@
 #define FILE_ACTION_H 28u
 #define FILE_ACTION_BUTTON_W 58u
 #define DESKTOP_WM_PREVIEW_HZ 60u
+#define DESKTOP_DAMAGE_MAX_RECTS 16u
 
 typedef enum {
     FILE_KIND_OTHER = 0,
@@ -152,6 +153,11 @@ static int editor_minimized;
 static int editor_bounds_ready;
 static int editor_focused;
 static int desktop_first_redraw = 1;
+static uint32_t desktop_damage_count;
+static uint32_t desktop_damage_x[DESKTOP_DAMAGE_MAX_RECTS];
+static uint32_t desktop_damage_y[DESKTOP_DAMAGE_MAX_RECTS];
+static uint32_t desktop_damage_w[DESKTOP_DAMAGE_MAX_RECTS];
+static uint32_t desktop_damage_h[DESKTOP_DAMAGE_MAX_RECTS];
 static char editor_name[DESKTOP_EDITOR_NAME_SIZE];
 static char editor_buffer[DESKTOP_EDITOR_BUFFER_SIZE];
 static uint32_t editor_len;
@@ -191,6 +197,10 @@ static void desktop_mouse_snapshot(uint32_t *out_x, uint32_t *out_y, int *out_bu
 
 static void desktop_terminal_draw(int fresh);
 static void desktop_redraw_all(void);
+static void desktop_damage_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+static void desktop_damage_window(const desktop_window_t *win);
+static void desktop_damage_full(void);
+static int desktop_damage_intersects_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 static void desktop_open_module_app(uint32_t index);
 static int desktop_any_module_app_open(void);
 static int desktop_any_module_app_minimized(void);
@@ -1545,6 +1555,7 @@ static void desktop_terminal_close(void) {
         return;
     }
 
+    desktop_damage_window(&terminal_window);
     console_cursor_enable(0);
     console_set_output_hook(0);
     console_reset_region();
@@ -1701,6 +1712,12 @@ static void desktop_draw_module_app(void) {
             slot->open = 0;
             slot->minimized = 0;
             slot->state.maximized = 0;
+            continue;
+        }
+        if (!desktop_damage_intersects_rect(slot->window.x,
+                                            slot->window.y,
+                                            slot->window.w + 6u,
+                                            slot->window.h + 6u)) {
             continue;
         }
 
@@ -2119,10 +2136,134 @@ static void desktop_draw_editor(void) {
     desktop_draw_editor_content();
 }
 
+static void desktop_damage_reset(void) {
+    desktop_damage_count = 0;
+}
+
+static void desktop_damage_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    uint32_t width = graphics_width();
+    uint32_t height = graphics_height();
+    uint32_t right = x + w;
+    uint32_t bottom = y + h;
+    uint32_t index;
+
+    if (w == 0u || h == 0u || x >= width || y >= height) {
+        return;
+    }
+    if (right < x || right > width) {
+        right = width;
+    }
+    if (bottom < y || bottom > height) {
+        bottom = height;
+    }
+
+    if (right <= x || bottom <= y) {
+        return;
+    }
+
+    for (index = 0; index < desktop_damage_count; ++index) {
+        uint32_t old_left = desktop_damage_x[index];
+        uint32_t old_top = desktop_damage_y[index];
+        uint32_t old_right = old_left + desktop_damage_w[index];
+        uint32_t old_bottom = old_top + desktop_damage_h[index];
+
+        if (x >= old_left && y >= old_top && right <= old_right && bottom <= old_bottom) {
+            return;
+        }
+    }
+
+    if (desktop_damage_count >= DESKTOP_DAMAGE_MAX_RECTS) {
+        desktop_damage_reset();
+        desktop_damage_x[0] = 0;
+        desktop_damage_y[0] = 0;
+        desktop_damage_w[0] = width;
+        desktop_damage_h[0] = height;
+        desktop_damage_count = 1;
+        return;
+    }
+
+    desktop_damage_x[desktop_damage_count] = x;
+    desktop_damage_y[desktop_damage_count] = y;
+    desktop_damage_w[desktop_damage_count] = right - x;
+    desktop_damage_h[desktop_damage_count] = bottom - y;
+    ++desktop_damage_count;
+}
+
+static void desktop_damage_window(const desktop_window_t *win) {
+    if (win == 0) {
+        return;
+    }
+    desktop_damage_rect(win->x, win->y, win->w + 6u, win->h + 6u);
+}
+
+static int desktop_damage_intersects_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    uint32_t right;
+    uint32_t bottom;
+
+    if (w == 0u || h == 0u || desktop_damage_count == 0u) {
+        return 1;
+    }
+
+    right = x + w;
+    bottom = y + h;
+    if (right < x) {
+        right = 0xffffffffu;
+    }
+    if (bottom < y) {
+        bottom = 0xffffffffu;
+    }
+
+    for (uint32_t i = 0; i < desktop_damage_count; ++i) {
+        uint32_t damage_left = desktop_damage_x[i];
+        uint32_t damage_top = desktop_damage_y[i];
+        uint32_t damage_right = damage_left + desktop_damage_w[i];
+        uint32_t damage_bottom = damage_top + desktop_damage_h[i];
+
+        if (x < damage_right && right > damage_left &&
+            y < damage_bottom && bottom > damage_top) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void desktop_damage_full(void) {
+    desktop_damage_reset();
+    desktop_damage_x[0] = 0;
+    desktop_damage_y[0] = 0;
+    desktop_damage_w[0] = graphics_width();
+    desktop_damage_h[0] = graphics_height();
+    desktop_damage_count = 1;
+}
+
 static void desktop_redraw_editor_only(uint32_t cursor_x_pos, uint32_t cursor_y_pos) {
+    int buffered;
+
     cursor_restore();
+    buffered = graphics_backbuffer_enable();
     desktop_draw_editor_text_area();
     desktop_draw_editor_status();
+    if (buffered) {
+        uint32_t count;
+
+        desktop_damage_reset();
+        desktop_damage_rect(editor_window.content_x,
+                            editor_window.content_y,
+                            editor_window.content_w,
+                            editor_window.content_h);
+        count = desktop_damage_count;
+        for (uint32_t i = 0; i < count; ++i) {
+            graphics_backbuffer_flush_rect(desktop_damage_x[i],
+                                           desktop_damage_y[i],
+                                           desktop_damage_w[i],
+                                           desktop_damage_h[i]);
+        }
+        graphics_backbuffer_disable();
+        desktop_damage_reset();
+    } else {
+        desktop_damage_reset();
+    }
     cursor_draw_at(cursor_x_pos, cursor_y_pos);
 }
 
@@ -2130,6 +2271,9 @@ static void desktop_redraw_all(void) {
     int buffered = desktop_first_redraw ? 0 : graphics_backbuffer_enable();
 
     desktop_first_redraw = 0;
+    if (buffered && desktop_damage_count == 0u) {
+        desktop_damage_full();
+    }
 
     desktop_draw_base();
     if (terminal_open) {
@@ -2142,8 +2286,18 @@ static void desktop_redraw_all(void) {
     desktop_draw_start_menu();
 
     if (buffered) {
-        graphics_backbuffer_flush();
+        uint32_t count = desktop_damage_count;
+
+        for (uint32_t i = 0; i < count; ++i) {
+            graphics_backbuffer_flush_rect(desktop_damage_x[i],
+                                           desktop_damage_y[i],
+                                           desktop_damage_w[i],
+                                           desktop_damage_h[i]);
+        }
         graphics_backbuffer_disable();
+        desktop_damage_reset();
+    } else {
+        desktop_damage_reset();
     }
 }
 
@@ -2621,6 +2775,8 @@ void desktop_run(const boot_info_t *info) {
             desktop_preview_restore();
             if (wm_target_window != 0) {
                 if (!desktop_window_same_geometry(wm_target_window, &wm_preview_window)) {
+                    desktop_damage_window(wm_target_window);
+                    desktop_damage_window(&wm_preview_window);
                     *wm_target_window = wm_preview_window;
                     desktop_clamp_window(wm_target_window);
                     desktop_redraw_after_geometry_change();
@@ -2688,6 +2844,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (editor_open && desktop_window_minimize_hit(&editor_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&editor_window);
                 editor_open = 0;
                 editor_minimized = 1;
                 editor_focused = 0;
@@ -2699,7 +2856,9 @@ void desktop_run(const boot_info_t *info) {
 
             if (editor_open && desktop_window_maximize_hit(&editor_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&editor_window);
                 desktop_window_toggle_maximize(&editor_window, &editor_window_state);
+                desktop_damage_window(&editor_window);
                 editor_focused = 1;
                 terminal_console_active = 0;
                 desktop_redraw_all();
@@ -2710,6 +2869,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (editor_open && desktop_window_close_hit(&editor_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&editor_window);
                 editor_open = 0;
                 editor_minimized = 0;
                 editor_focused = 0;
@@ -2828,6 +2988,7 @@ void desktop_run(const boot_info_t *info) {
             module_slot = desktop_top_module_app_window_at(x, y);
             if (module_slot != 0 && desktop_window_minimize_hit(&module_slot->window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&module_slot->window);
                 module_slot->open = 0;
                 module_slot->minimized = 1;
                 desktop_redraw_all();
@@ -2838,7 +2999,9 @@ void desktop_run(const boot_info_t *info) {
 
             if (module_slot != 0 && desktop_window_maximize_hit(&module_slot->window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&module_slot->window);
                 desktop_window_toggle_maximize(&module_slot->window, &module_slot->state);
+                desktop_damage_window(&module_slot->window);
                 terminal_console_active = 0;
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
@@ -2848,6 +3011,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (module_slot != 0 && desktop_window_close_hit(&module_slot->window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&module_slot->window);
                 module_slot->open = 0;
                 module_slot->minimized = 0;
                 module_slot->state.maximized = 0;
@@ -2897,6 +3061,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (modules_open && desktop_window_minimize_hit(&modules_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&modules_window);
                 modules_open = 0;
                 modules_minimized = 1;
                 desktop_redraw_all();
@@ -2907,7 +3072,9 @@ void desktop_run(const boot_info_t *info) {
 
             if (modules_open && desktop_window_maximize_hit(&modules_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&modules_window);
                 desktop_window_toggle_maximize(&modules_window, &modules_window_state);
+                desktop_damage_window(&modules_window);
                 terminal_console_active = 0;
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
@@ -2917,6 +3084,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (modules_open && desktop_window_close_hit(&modules_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&modules_window);
                 modules_open = 0;
                 modules_minimized = 0;
                 modules_window_state.maximized = 0;
@@ -2950,6 +3118,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (files_open && desktop_window_minimize_hit(&files_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&files_window);
                 files_open = 0;
                 files_minimized = 1;
                 desktop_redraw_all();
@@ -2960,7 +3129,9 @@ void desktop_run(const boot_info_t *info) {
 
             if (files_open && desktop_window_maximize_hit(&files_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&files_window);
                 desktop_window_toggle_maximize(&files_window, &files_window_state);
+                desktop_damage_window(&files_window);
                 terminal_console_active = 0;
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
@@ -2970,6 +3141,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (files_open && desktop_window_close_hit(&files_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&files_window);
                 files_open = 0;
                 files_minimized = 0;
                 files_window_state.maximized = 0;
@@ -3003,6 +3175,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (terminal_open && desktop_window_minimize_hit(&terminal_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&terminal_window);
                 terminal_open = 0;
                 terminal_minimized = 1;
                 terminal_console_active = 0;
@@ -3017,11 +3190,13 @@ void desktop_run(const boot_info_t *info) {
 
             if (terminal_open && desktop_window_maximize_hit(&terminal_window, x, y)) {
                 cursor_restore();
+                desktop_damage_window(&terminal_window);
                 terminal_console_active = 0;
                 console_cursor_enable(0);
                 console_set_output_hook(0);
                 console_reset_region();
                 desktop_window_toggle_maximize(&terminal_window, &terminal_window_state);
+                desktop_damage_window(&terminal_window);
                 desktop_redraw_all();
                 desktop_terminal_focus();
                 cursor_draw_at(x, y);

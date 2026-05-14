@@ -4,8 +4,8 @@
 
 #define FONT_W 8u
 #define FONT_H 8u
-#define DEFAULT_CONSOLE_MARGIN_X 16u
-#define DEFAULT_CONSOLE_MARGIN_Y 16u
+#define DEFAULT_CONSOLE_MARGIN_X 0u
+#define DEFAULT_CONSOLE_MARGIN_Y 0u
 #define CONSOLE_ROW_ADVANCE (FONT_H + 2u)
 #define DEFAULT_FG_COLOR 0x00F725FCu
 #define DEFAULT_BG_COLOR 0x0035063Eu
@@ -655,10 +655,7 @@ void console_set_region_preserve(uint32_t left, uint32_t top, uint32_t right, ui
 }
 
 void console_reset_region(void) {
-    console_set_region(DEFAULT_CONSOLE_MARGIN_X,
-                       DEFAULT_CONSOLE_MARGIN_Y,
-                       fb_width > DEFAULT_CONSOLE_MARGIN_X ? fb_width - DEFAULT_CONSOLE_MARGIN_X : fb_width,
-                       fb_height > DEFAULT_CONSOLE_MARGIN_Y ? fb_height - DEFAULT_CONSOLE_MARGIN_Y : fb_height);
+    console_set_region_preserve(0, 0, fb_width, fb_height);
 }
 
 int console_point_to_cell(uint32_t x, uint32_t y, uint32_t *col, uint32_t *row) {

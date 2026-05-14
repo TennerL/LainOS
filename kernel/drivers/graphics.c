@@ -76,6 +76,7 @@ typedef struct {
 typedef struct {
     uint32_t *dst;
     const uint32_t *src;
+    uint32_t x;
     uint32_t y;
     uint32_t width;
     uint32_t height;
@@ -140,8 +141,8 @@ static void graphics_blit_job(void *arg) {
 
     for (uint32_t yy = 0; yy < job->height; ++yy) {
         uint32_t row = job->y + yy;
-        uint32_t *dst = job->dst + (uint64_t)row * job->pitch;
-        const uint32_t *src = job->src + (uint64_t)row * job->pitch;
+        uint32_t *dst = job->dst + (uint64_t)row * job->pitch + job->x;
+        const uint32_t *src = job->src + (uint64_t)row * job->pitch + job->x;
         uint32_t xx = 0;
 
         for (; xx + 1u < job->width; xx += 2u) {
@@ -240,6 +241,10 @@ int graphics_backbuffer_active(void) {
 }
 
 void graphics_backbuffer_flush(void) {
+    graphics_backbuffer_flush_rect(0, 0, graphics_fb_width, graphics_fb_height);
+}
+
+void graphics_backbuffer_flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     uint32_t *fb = (uint32_t *)(uintptr_t)graphics_fb_base;
     uint64_t pixels;
     unsigned int workers;
@@ -249,13 +254,22 @@ void graphics_backbuffer_flush(void) {
     if (!graphics_backbuffer_active() || fb == 0) {
         return;
     }
+    if (width == 0u || height == 0u || x >= graphics_fb_width || y >= graphics_fb_height) {
+        return;
+    }
+    if (x + width < x || x + width > graphics_fb_width) {
+        width = graphics_fb_width - x;
+    }
+    if (y + height < y || y + height > graphics_fb_height) {
+        height = graphics_fb_height - y;
+    }
 
-    pixels = (uint64_t)graphics_fb_width * graphics_fb_height;
-    workers = graphics_smp_worker_count(graphics_fb_height);
+    pixels = (uint64_t)width * height;
+    workers = graphics_smp_worker_count(height);
 
     if (workers > 1u && pixels >= GRAPHICS_SMP_MIN_PIXELS) {
-        uint32_t base_rows = graphics_fb_height / workers;
-        uint32_t extra_rows = graphics_fb_height % workers;
+        uint32_t base_rows = height / workers;
+        uint32_t extra_rows = height % workers;
         uint32_t row = 0;
 
         graphics_smp_record(workers, pixels);
@@ -263,8 +277,9 @@ void graphics_backbuffer_flush(void) {
             uint32_t rows = base_rows + (i < extra_rows ? 1u : 0u);
             jobs[i].dst = fb;
             jobs[i].src = graphics_backbuffer;
-            jobs[i].y = row;
-            jobs[i].width = graphics_fb_width;
+            jobs[i].x = x;
+            jobs[i].y = y + row;
+            jobs[i].width = width;
             jobs[i].height = rows;
             jobs[i].pitch = graphics_fb_pitch;
             ids[i] = smp_submit_work(graphics_blit_job, &jobs[i]);
@@ -283,9 +298,10 @@ void graphics_backbuffer_flush(void) {
         graphics_blit_job_t job = {
             .dst = fb,
             .src = graphics_backbuffer,
-            .y = 0,
-            .width = graphics_fb_width,
-            .height = graphics_fb_height,
+            .x = x,
+            .y = y,
+            .width = width,
+            .height = height,
             .pitch = graphics_fb_pitch,
         };
         graphics_blit_job(&job);
