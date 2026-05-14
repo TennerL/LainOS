@@ -1,0 +1,273 @@
+#define ZBROWSER_URL_CAPACITY 160
+#define ZBROWSER_LINE_CAPACITY 160
+#define ZBROWSER_HTTP_CAPACITY 60000
+
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg);
+extern int os_read_file(const uint8_t *path, uint8_t *buffer, uint32_t capacity);
+extern int os_load_file_shared(const uint8_t *path);
+extern uint8_t *os_file_buffer(void);
+extern int os_http_get(const uint8_t *url, uint8_t *buffer, uint32_t capacity);
+extern int os_strlen(const uint8_t *text);
+
+global uint32_t zbrowser_enabled;
+global uint32_t zbrowser_loaded;
+global int zbrowser_size;
+global uint32_t zbrowser_has_document;
+global uint8_t zbrowser_url[160];
+global uint8_t zbrowser_status[96];
+global uint8_t zbrowser_line[160];
+global uint32_t zbrowser_line_len;
+global uint32_t zbrowser_y;
+
+void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
+    uint32_t i;
+
+    i = 0;
+    if (capacity == 0) {
+        return;
+    }
+    while (src[i] != 0 && i + 1 < capacity) {
+        dst[i] = src[i];
+        i = i + 1;
+    }
+    dst[i] = 0;
+}
+
+int starts_with(const uint8_t *text, const uint8_t *prefix) {
+    uint32_t i;
+
+    i = 0;
+    while (prefix[i] != 0) {
+        if (text[i] != prefix[i]) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+void trim_text_end(uint8_t *text) {
+    uint32_t len;
+
+    len = os_strlen(text);
+    while (len > 0 &&
+           (text[len - 1] == 9 ||
+            text[len - 1] == 10 ||
+            text[len - 1] == 13 ||
+            text[len - 1] == 32)) {
+        len = len - 1;
+        text[len] = 0;
+    }
+}
+
+void draw_shell(void) {
+    uint32_t w;
+    uint32_t h;
+
+    w = gfx_width();
+    h = gfx_height();
+    gfx_fill_rect(0, 0, w, h, 0x0d1117);
+    gfx_fill_rect(0, 0, w, 34, 0x151c22);
+    gfx_fill_rect(0, 32, w, 2, 0xe05f4f);
+    draw_text_at_pixel(8, 8, "Z Browser", 0xf7d154, 0x151c22);
+    draw_text_at_pixel(96, 8, zbrowser_url, 0xf5fbf7, 0x151c22);
+    if (h > 18) {
+        draw_text_at_pixel(8, h - 18, zbrowser_status, 0xbdd7d0, 0x0d1117);
+    }
+}
+
+void flush_line(void) {
+    uint32_t h;
+
+    h = gfx_height();
+    if (zbrowser_line_len == 0) {
+        return;
+    }
+    zbrowser_line[zbrowser_line_len] = 0;
+    if (zbrowser_y + 12 < h) {
+        draw_text_at_pixel(8, zbrowser_y, zbrowser_line, 0xe8dccd, 0x0d1117);
+    }
+    zbrowser_line_len = 0;
+    zbrowser_line[0] = 0;
+    zbrowser_y = zbrowser_y + 12;
+}
+
+void blank_line(void) {
+    flush_line();
+    zbrowser_y = zbrowser_y + 8;
+}
+
+void emit_char(uint8_t ch) {
+    uint32_t w;
+    uint32_t max_cols;
+
+    if (ch == 9 || ch == 13) {
+        ch = 32;
+    }
+    if (ch == 10) {
+        flush_line();
+        return;
+    }
+
+    w = gfx_width();
+    max_cols = 18;
+    if (w > 24) {
+        max_cols = (w - 16) / 8;
+    }
+    if (max_cols >= ZBROWSER_LINE_CAPACITY) {
+        max_cols = ZBROWSER_LINE_CAPACITY - 1;
+    }
+    if (zbrowser_line_len + 1 >= max_cols) {
+        flush_line();
+    }
+    if (!(ch == 32 && zbrowser_line_len == 0)) {
+        zbrowser_line[zbrowser_line_len] = ch;
+        zbrowser_line_len = zbrowser_line_len + 1;
+    }
+}
+
+uint32_t skip_tag(const uint8_t *html, uint32_t pos) {
+    while (html[pos] != 0 && html[pos] != 62) {
+        pos = pos + 1;
+    }
+    if (html[pos] == 62) {
+        pos = pos + 1;
+    }
+    return pos;
+}
+
+uint8_t entity_char(const uint8_t *html, uint32_t pos, uint32_t *advance) {
+    if (starts_with(html + pos, "&lt;")) {
+        *advance = 4;
+        return 60;
+    }
+    if (starts_with(html + pos, "&gt;")) {
+        *advance = 4;
+        return 62;
+    }
+    if (starts_with(html + pos, "&amp;")) {
+        *advance = 5;
+        return 38;
+    }
+    if (starts_with(html + pos, "&nbsp;")) {
+        *advance = 6;
+        return 32;
+    }
+    *advance = 1;
+    return 38;
+}
+
+void render_html(const uint8_t *html) {
+    uint32_t pos;
+    uint32_t advance;
+    uint8_t ch;
+
+    draw_shell();
+    zbrowser_y = 44;
+    zbrowser_line_len = 0;
+    zbrowser_line[0] = 0;
+    pos = 0;
+
+    while (html[pos] != 0 && zbrowser_y + 24 < gfx_height()) {
+        ch = html[pos];
+        if (ch == 60) {
+            blank_line();
+            pos = skip_tag(html, pos);
+        } else if (ch == 38) {
+            ch = entity_char(html, pos, &advance);
+            emit_char(ch);
+            pos = pos + advance;
+        } else {
+            emit_char(ch);
+            pos = pos + 1;
+        }
+    }
+    flush_line();
+}
+
+void render_help(void) {
+    draw_shell();
+    draw_text_at_pixel(8, 48, "No page loaded.", 0xe8dccd, 0x0d1117);
+    draw_text_at_pixel(8, 64, "Use browser.url with http://ip/path", 0xe8dccd, 0x0d1117);
+    draw_text_at_pixel(8, 80, "or save a local index.html file.", 0xe8dccd, 0x0d1117);
+}
+
+void load_document(void) {
+    uint8_t *buffer;
+    int size;
+
+    buffer = os_file_buffer();
+    zbrowser_has_document = 0;
+    zbrowser_size = 0;
+
+    copy_text(zbrowser_url, ZBROWSER_URL_CAPACITY, "index.html");
+    copy_text(zbrowser_status, 96, "loading");
+    draw_shell();
+
+    size = os_read_file("browser.url", zbrowser_url, ZBROWSER_URL_CAPACITY - 1);
+    if (size > 0) {
+        zbrowser_url[size] = 0;
+        trim_text_end(zbrowser_url);
+    }
+
+    if (size > 0 && starts_with(zbrowser_url, "http://")) {
+        copy_text(zbrowser_status, 96, "fetching http");
+        draw_shell();
+        size = os_http_get(zbrowser_url, buffer, ZBROWSER_HTTP_CAPACITY);
+        if (size >= 0) {
+            buffer[size] = 0;
+            zbrowser_size = size;
+            zbrowser_has_document = 1;
+            copy_text(zbrowser_status, 96, "loaded http");
+            zbrowser_loaded = 1;
+            return;
+        }
+        copy_text(zbrowser_status, 96, "http failed; trying index.html");
+    }
+
+    copy_text(zbrowser_url, ZBROWSER_URL_CAPACITY, "index.html");
+    size = os_load_file_shared("index.html");
+    if (size >= 0) {
+        buffer[size] = 0;
+        zbrowser_size = size;
+        zbrowser_has_document = 1;
+        copy_text(zbrowser_status, 96, "loaded index.html");
+    } else {
+        copy_text(zbrowser_url, ZBROWSER_URL_CAPACITY, "no document");
+        copy_text(zbrowser_status, 96, "showing help");
+    }
+    zbrowser_loaded = 1;
+}
+
+export void zmodule_redraw(void) {
+    if (zbrowser_enabled == 0) {
+        return;
+    }
+    if (zbrowser_loaded == 0) {
+        load_document();
+    }
+    if (zbrowser_has_document != 0) {
+        render_html(os_file_buffer());
+    } else {
+        render_help();
+    }
+}
+
+export void zmodule_tick(void) {
+}
+
+export void zmodule_unload(void) {
+    zbrowser_enabled = 0;
+}
+
+zbrowser_enabled = 1;
+zbrowser_loaded = 0;
+zbrowser_size = 0;
+zbrowser_has_document = 0;
+copy_text(zbrowser_url, ZBROWSER_URL_CAPACITY, "");
+copy_text(zbrowser_status, 96, "ready");
+print("zbrowser module loaded\n");
+return 0;

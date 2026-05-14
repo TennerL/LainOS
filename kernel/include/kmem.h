@@ -13,6 +13,13 @@ typedef struct {
     uint64_t small_free_blocks;
     uint64_t free_ranges;
     uint64_t largest_free_range_pages;
+    uint64_t allocation_count;
+    uint64_t free_count;
+    uint64_t live_allocations;
+    uint64_t peak_live_allocations;
+    uint64_t invalid_frees;
+    uint64_t double_frees;
+    uint64_t guard_failures;
 } kmem_stats_t;
 
 void kmem_init(const boot_info_t *info);

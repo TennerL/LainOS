@@ -146,13 +146,18 @@ static struct idt_entry64 idt64[256];
 static uint8_t ap_stacks[CPU_MAX_CORES][CPU_AP_STACK_SIZE] __attribute__((aligned(16)));
 static unsigned int detected_core_count = 1u;
 static unsigned int detected_lapic_ids[CPU_MAX_CORES];
-static volatile unsigned int online_lapic_ids[CPU_MAX_CORES];
 static unsigned long long detected_lapic_base;
 static unsigned int bsp_lapic_id;
 static volatile unsigned int online_core_count = 1u;
-static volatile uint64_t cpu_busy_ticks[CPU_MAX_CORES];
 static volatile unsigned int smp_work_lock;
 static volatile unsigned int smp_next_work_id = 1u;
+
+typedef struct {
+    volatile unsigned int online;
+    unsigned int lapic_id;
+    volatile uint64_t busy_ticks;
+    volatile uint64_t local_timer_ticks;
+} cpu_core_state_t;
 
 typedef struct {
     volatile unsigned int state;
@@ -161,6 +166,7 @@ typedef struct {
     void *arg;
 } smp_work_slot_t;
 
+static cpu_core_state_t cpu_cores[CPU_MAX_CORES];
 static smp_work_slot_t smp_work_slots[CPU_SMP_WORK_SLOTS];
 
 static void cpu_relax(void) {
@@ -255,18 +261,24 @@ static int cpu_lapic_id_known(unsigned int apic_id) {
     return 0;
 }
 
-static void cpu_mark_online(unsigned int apic_id) {
+static void cpu_reset_core_states(void) {
     for (unsigned int i = 0; i < CPU_MAX_CORES; ++i) {
-        unsigned int current = online_lapic_ids[i];
+        cpu_cores[i].online = 0;
+        cpu_cores[i].lapic_id = i < detected_core_count ? detected_lapic_ids[i] : 0xffffffffu;
+        cpu_cores[i].busy_ticks = 0;
+        cpu_cores[i].local_timer_ticks = 0;
+    }
+}
 
-        if (current == apic_id) {
-            return;
-        }
-        if (current == 0xffffffffu &&
-            __sync_bool_compare_and_swap(&online_lapic_ids[i], 0xffffffffu, apic_id)) {
-            __sync_fetch_and_add(&online_core_count, 1u);
-            return;
-        }
+static void cpu_mark_online(unsigned int apic_id) {
+    unsigned int index = cpu_index_for_lapic_id(apic_id);
+
+    if (index >= CPU_MAX_CORES) {
+        return;
+    }
+    cpu_cores[index].lapic_id = apic_id;
+    if (__sync_bool_compare_and_swap(&cpu_cores[index].online, 0u, 1u)) {
+        __sync_fetch_and_add(&online_core_count, 1u);
     }
 }
 
@@ -349,7 +361,7 @@ static void cpu_record_busy_ticks(unsigned int core, uint64_t ticks) {
         return;
     }
 
-    __sync_fetch_and_add(&cpu_busy_ticks[core], ticks);
+    __sync_fetch_and_add(&cpu_cores[core].busy_ticks, ticks);
 }
 
 static int smp_run_one_work_item(unsigned int core_index) {
@@ -752,7 +764,7 @@ unsigned long long cpu_core_busy_ticks(unsigned int core) {
         return 0;
     }
 
-    return cpu_busy_ticks[core];
+    return cpu_cores[core].busy_ticks;
 }
 
 unsigned int cpu_lapic_id(unsigned int index) {
@@ -776,16 +788,16 @@ unsigned int cpu_start_secondary_cores(void) {
     unsigned int started_before;
 
     online_core_count = 1u;
-    for (unsigned int i = 0; i < CPU_MAX_CORES; ++i) {
-        online_lapic_ids[i] = 0xffffffffu;
-    }
+    cpu_reset_core_states();
     if (detected_core_count <= 1u || trampoline_size == 0 || trampoline_size > 4096u) {
+        cpu_cores[0].online = 1u;
         return online_core_count;
     }
 
     lapic_enable();
     bsp_lapic_id = lapic_current_id();
-    online_lapic_ids[0] = bsp_lapic_id;
+    cpu_cores[cpu_index_for_lapic_id(bsp_lapic_id)].online = 1u;
+    cpu_cores[cpu_index_for_lapic_id(bsp_lapic_id)].lapic_id = bsp_lapic_id;
     cpu_copy_bytes(trampoline, ap_trampoline_start, trampoline_size);
     cpu_patch_u64(trampoline, cr3_offset, cr3);
     cpu_patch_u64(trampoline, entry_offset, (uint64_t)(uintptr_t)cpu_ap_entry);

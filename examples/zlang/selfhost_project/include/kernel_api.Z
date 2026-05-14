@@ -51,6 +51,7 @@ extern int os_file_size(const uint8_t *path);
 extern int os_read_file(const uint8_t *path, uint8_t *buffer, uint32_t capacity);
 extern int os_load_file_shared(const uint8_t *path);
 extern uint8_t *os_file_buffer(void);
+extern int os_http_get(const uint8_t *url, uint8_t *buffer, uint32_t capacity);
 extern int os_rename(const uint8_t *old_path, const uint8_t *new_path);
 extern int os_copy_file(const uint8_t *src_path, const uint8_t *dst_path);
 extern int os_strlen(const uint8_t *text);

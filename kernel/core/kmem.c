@@ -6,6 +6,8 @@
 #define KMEM_MAX_RANGES 128u
 #define KMEM_SMALL_CLASS_COUNT 8u
 #define KMEM_ALLOC_MAGIC 0x4B4D454D48454150ull
+#define KMEM_FREED_MAGIC 0x4B4D454D46524545ull
+#define KMEM_GUARD_MAGIC 0xC0FFEE42u
 
 typedef struct {
     uint32_t type;
@@ -28,8 +30,10 @@ typedef struct free_block {
 typedef struct {
     uint64_t magic;
     uint32_t bytes;
+    uint32_t allocated_bytes;
     uint16_t class_index;
     uint16_t page_count;
+    uint32_t reserved;
 } kmalloc_header_t;
 
 static page_range_t free_ranges[KMEM_MAX_RANGES];
@@ -37,6 +41,13 @@ static uint32_t free_range_count;
 static uint64_t total_page_count;
 static uint64_t free_page_count;
 static uint64_t heap_used_bytes;
+static uint64_t allocation_count;
+static uint64_t free_count;
+static uint64_t live_allocations;
+static uint64_t peak_live_allocations;
+static uint64_t invalid_frees;
+static uint64_t double_frees;
+static uint64_t guard_failures;
 static free_block_t *small_free[KMEM_SMALL_CLASS_COUNT];
 static volatile int kmem_lock;
 
@@ -71,6 +82,14 @@ static void zero_memory(void *ptr, uint64_t size) {
 
     for (uint64_t i = 0; i < size; ++i) {
         p[i] = 0;
+    }
+}
+
+static void fill_memory(void *ptr, uint64_t size, uint8_t value) {
+    uint8_t *p = (uint8_t *)ptr;
+
+    for (uint64_t i = 0; i < size; ++i) {
+        p[i] = value;
     }
 }
 
@@ -180,6 +199,13 @@ void kmem_init(const boot_info_t *info) {
     total_page_count = 0;
     free_page_count = 0;
     heap_used_bytes = 0;
+    allocation_count = 0;
+    free_count = 0;
+    live_allocations = 0;
+    peak_live_allocations = 0;
+    invalid_frees = 0;
+    double_frees = 0;
+    guard_failures = 0;
     for (uint32_t i = 0; i < KMEM_SMALL_CLASS_COUNT; ++i) {
         small_free[i] = 0;
     }
@@ -280,7 +306,13 @@ void page_free(void *ptr, uint32_t page_count) {
 }
 
 static int class_for_size(uint32_t bytes) {
-    uint32_t need = bytes + (uint32_t)sizeof(kmalloc_header_t);
+    uint32_t overhead = (uint32_t)sizeof(kmalloc_header_t) + (uint32_t)sizeof(uint32_t);
+    uint32_t need;
+
+    if (bytes > 0xffffffffu - overhead) {
+        return -1;
+    }
+    need = bytes + overhead;
 
     for (uint32_t i = 0; i < KMEM_SMALL_CLASS_COUNT; ++i) {
         if (need <= small_class_sizes[i]) {
@@ -307,6 +339,42 @@ static void populate_class(uint32_t class_index) {
     unlock();
 }
 
+static uint32_t *kmalloc_guard_for_header(kmalloc_header_t *header) {
+    return (uint32_t *)(void *)((uint8_t *)(void *)(header + 1) + header->bytes);
+}
+
+static int small_free_list_contains(void *block) {
+    for (uint32_t i = 0; i < KMEM_SMALL_CLASS_COUNT; ++i) {
+        for (free_block_t *it = small_free[i]; it != 0; it = it->next) {
+            if ((void *)it == block) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static void kmalloc_note_alloc(uint64_t charged_bytes) {
+    heap_used_bytes += charged_bytes;
+    ++allocation_count;
+    ++live_allocations;
+    if (live_allocations > peak_live_allocations) {
+        peak_live_allocations = live_allocations;
+    }
+}
+
+static void kmalloc_note_free(uint64_t charged_bytes) {
+    if (heap_used_bytes >= charged_bytes) {
+        heap_used_bytes -= charged_bytes;
+    } else {
+        heap_used_bytes = 0;
+    }
+    ++free_count;
+    if (live_allocations > 0) {
+        --live_allocations;
+    }
+}
+
 void *kmalloc(uint32_t size) {
     kmalloc_header_t *header;
     int class_index;
@@ -330,7 +398,6 @@ void *kmalloc(uint32_t size) {
         block = small_free[class_index];
         if (block != 0) {
             small_free[class_index] = block->next;
-            heap_used_bytes += small_class_sizes[class_index];
         }
         unlock();
 
@@ -341,13 +408,26 @@ void *kmalloc(uint32_t size) {
         header = (kmalloc_header_t *)(void *)block;
         header->magic = KMEM_ALLOC_MAGIC;
         header->bytes = size;
+        header->allocated_bytes = small_class_sizes[class_index];
         header->class_index = (uint16_t)class_index;
         header->page_count = 0;
+        header->reserved = 0;
+        *kmalloc_guard_for_header(header) = KMEM_GUARD_MAGIC;
+        fill_memory((uint8_t *)(void *)(header + 1), size, 0xA5u);
+        lock();
+        kmalloc_note_alloc(small_class_sizes[class_index]);
+        unlock();
         return (void *)(header + 1);
     }
 
     {
-        uint32_t pages = (size + (uint32_t)sizeof(kmalloc_header_t) + KMEM_PAGE_SIZE - 1u) / KMEM_PAGE_SIZE;
+        uint32_t overhead = (uint32_t)sizeof(kmalloc_header_t) + (uint32_t)sizeof(uint32_t);
+        uint32_t pages;
+
+        if (size > 0xffffffffu - overhead - (KMEM_PAGE_SIZE - 1u)) {
+            return 0;
+        }
+        pages = (size + overhead + KMEM_PAGE_SIZE - 1u) / KMEM_PAGE_SIZE;
         if (pages > 0xffffu) {
             return 0;
         }
@@ -357,10 +437,13 @@ void *kmalloc(uint32_t size) {
         }
         header->magic = KMEM_ALLOC_MAGIC;
         header->bytes = size;
+        header->allocated_bytes = pages * KMEM_PAGE_SIZE;
         header->class_index = 0xffffu;
         header->page_count = (uint16_t)pages;
+        header->reserved = 0;
+        *kmalloc_guard_for_header(header) = KMEM_GUARD_MAGIC;
         lock();
-        heap_used_bytes += (uint64_t)pages * KMEM_PAGE_SIZE;
+        kmalloc_note_alloc((uint64_t)pages * KMEM_PAGE_SIZE);
         unlock();
         return (void *)(header + 1);
     }
@@ -384,14 +467,28 @@ void kfree(void *ptr) {
 
     header = ((kmalloc_header_t *)ptr) - 1;
     if (header->magic != KMEM_ALLOC_MAGIC) {
+        lock();
+        if (header->magic == KMEM_FREED_MAGIC || small_free_list_contains(header)) {
+            ++double_frees;
+        } else {
+            ++invalid_frees;
+        }
+        unlock();
         return;
+    }
+    if (*kmalloc_guard_for_header(header) != KMEM_GUARD_MAGIC) {
+        lock();
+        ++guard_failures;
+        unlock();
     }
 
     if (header->class_index == 0xffffu) {
         uint32_t pages = header->page_count;
-        header->magic = 0;
+        header->magic = KMEM_FREED_MAGIC;
+        *kmalloc_guard_for_header(header) = 0;
+        fill_memory(ptr, header->bytes, 0xDDu);
         lock();
-        heap_used_bytes -= (uint64_t)pages * KMEM_PAGE_SIZE;
+        kmalloc_note_free((uint64_t)pages * KMEM_PAGE_SIZE);
         unlock();
         page_free(header, pages);
         return;
@@ -400,13 +497,21 @@ void kfree(void *ptr) {
     if (header->class_index < KMEM_SMALL_CLASS_COUNT) {
         uint16_t class_index = header->class_index;
         free_block_t *block = (free_block_t *)(void *)header;
-        header->magic = 0;
+        uint32_t block_size = small_class_sizes[class_index];
+        *kmalloc_guard_for_header(header) = 0;
+        fill_memory(ptr, header->bytes, 0xDDu);
+        header->magic = KMEM_FREED_MAGIC;
         lock();
         block->next = small_free[class_index];
         small_free[class_index] = block;
-        heap_used_bytes -= small_class_sizes[class_index];
+        kmalloc_note_free(block_size);
         unlock();
+        return;
     }
+
+    lock();
+    ++invalid_frees;
+    unlock();
 }
 
 uint64_t kmem_total_pages(void) {
@@ -447,5 +552,12 @@ void kmem_get_stats(kmem_stats_t *stats) {
     stats->small_free_blocks = small_blocks;
     stats->free_ranges = free_range_count;
     stats->largest_free_range_pages = largest;
+    stats->allocation_count = allocation_count;
+    stats->free_count = free_count;
+    stats->live_allocations = live_allocations;
+    stats->peak_live_allocations = peak_live_allocations;
+    stats->invalid_frees = invalid_frees;
+    stats->double_frees = double_frees;
+    stats->guard_failures = guard_failures;
     unlock();
 }

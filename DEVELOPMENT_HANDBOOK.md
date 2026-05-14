@@ -100,7 +100,7 @@ Heap initialization happens after DMA setup. The allocator currently provides:
 - larger page-backed allocations
 - `kzalloc`
 - `kfree`
-- heap statistics through shell command `heap`
+- heap statistics and fault counters through shell command `heap`
 
 Good practices:
 
@@ -111,6 +111,8 @@ Good practices:
 - Avoid allocating from IRQ paths unless the subsystem is explicitly designed
   for it.
 - Avoid keeping pointers into buffers that may be freed by another owner.
+- Keep per-core CPU/SMP state in the core-state table rather than adding new
+  loose per-core arrays.
 
 Useful shell commands:
 
@@ -238,6 +240,17 @@ desktop
 ```
 
 Then open the module from the Modules window or Start menu.
+
+The `zbrowser_module` example is the smallest useful web-surface: it renders
+basic tags from `index.html`, or it fetches a plain HTTP page when `browser.url`
+contains an `http://numeric.ip[:port]/path` URL. A quick loop is:
+
+```text
+write browser.url http://10.0.2.2:8000/index.html
+zbuild zbrowser_module
+zmod zbrowser_module.zo
+desktop
+```
 
 Module rendering guidelines:
 

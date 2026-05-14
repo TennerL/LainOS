@@ -202,7 +202,8 @@ busy ticks for AP-executed work, so `taskmgr_module` can show activity on
 secondary CPU rows.
 
 This is not a preemptive scheduler yet. There are no per-core run queues,
-kernel threads, TSS/IST setup, per-core timers, or userspace processes.
+kernel threads, TSS/IST setup, APIC timer interrupts, or userspace processes.
+Basic per-core state tracks LAPIC ID, online state, and busy ticks.
 
 ### Timer And Interrupts
 
@@ -467,9 +468,23 @@ zmod taskmgr_module.zo
 
 zbuild filemgr_module
 zmod filemgr_module.zo
+
+zbuild zbrowser_module
+zmod zbrowser_module.zo
 ```
 
 The example `autoexec` preloads useful modules and can enter desktop mode.
+
+The tiny Z browser module renders basic HTML from `index.html` or from a
+plain HTTP URL stored in `browser.url`. Networking currently expects numeric
+IPv4 HTTP URLs, for example:
+
+```text
+write browser.url http://10.0.2.2:8000/index.html
+zbuild zbrowser_module
+zmod zbrowser_module.zo
+desktop
+```
 
 ## Kernel Export Surface
 
@@ -488,8 +503,9 @@ objects, and resident modules. Current groups include:
 - mouse helpers
 - screen text helpers
 - status bar
-- filesystem/project APIs such as `os_write_file`, `os_read_file`, `os_zbuild`,
-  `os_ztest`, `os_zinstall`, `os_zmod`, `os_zunload`, and `os_zreload`
+- filesystem/project APIs such as `os_write_file`, `os_read_file`,
+  `os_http_get`, `os_zbuild`, `os_ztest`, `os_zinstall`, `os_zmod`,
+  `os_zunload`, and `os_zreload`
 - desktop helper: `os_open_editor`
 
 See `kernel/core/kernel_exports.c` for the authoritative list.
@@ -561,8 +577,9 @@ Things that are intentionally incomplete:
 - no userspace/process isolation
 - no dynamic kernel module ABI beyond the `.Z` resident module experiment
 - no NTFS driver inside the kernel
-- heap is early but active: page-range allocation, `kmalloc`/`kfree`
-  classes, diagnostics, and the largest driver/UI scratch buffers are on heap
+- heap is active: page-range allocation, `kmalloc`/`kfree` classes, basic
+  canary/double-free diagnostics, and the largest driver/UI scratch buffers
+  are on heap
 - limited GOP pixel-format support
 - tiny `lainfs` limits and contiguous file allocation
 - early USB/xHCI enumeration
@@ -575,11 +592,11 @@ Here are high-leverage next steps, roughly ordered by payoff:
 
 1. Heap hardening.
    Add allocation failure tests, leak checks for long desktop sessions, and
-   stronger diagnostics for fragmentation under repeated module/browser use.
+   stronger fragmentation reports under repeated module/browser use.
 
 2. Per-core data and APIC timer.
-   Add per-core structures, LAPIC timer calibration, and per-core tick
-   accounting. This sets up a future scheduler cleanly.
+   Calibrate and enable LAPIC timer interrupts, then use the existing per-core
+   state for local tick accounting. This sets up a future scheduler cleanly.
 
 3. Cooperative kernel tasks.
    Build a small task abstraction on top of the SMP executor before jumping to

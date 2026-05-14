@@ -1464,6 +1464,20 @@ static void cmd_heap(const char *args, const boot_info_t *info) {
     console_put_dec64(stats.largest_free_range_pages);
     console_puts(" pages\nsmall free blocks: ");
     console_put_dec64(stats.small_free_blocks);
+    console_puts("\nalloc/free/live/peak: ");
+    console_put_dec64(stats.allocation_count);
+    console_puts("/");
+    console_put_dec64(stats.free_count);
+    console_puts("/");
+    console_put_dec64(stats.live_allocations);
+    console_puts("/");
+    console_put_dec64(stats.peak_live_allocations);
+    console_puts("\nheap faults invalid/double/guard: ");
+    console_put_dec64(stats.invalid_frees);
+    console_puts("/");
+    console_put_dec64(stats.double_frees);
+    console_puts("/");
+    console_put_dec64(stats.guard_failures);
     console_puts("\nshell work buffers: ");
     console_puts(shell_work_buffers_ready ? "heap\n" : "not allocated\n");
 }
@@ -2641,6 +2655,27 @@ int shell_api_load_file_shared(const char *path) {
 
 uint8_t *shell_api_file_buffer(void) {
     return (uint8_t *)shell_wget_buffer;
+}
+
+int shell_api_http_get(const char *url, char *buffer, uint32_t capacity) {
+    uint32_t size = 0;
+    int status;
+
+    if (url == 0 || buffer == 0 || capacity == 0) {
+        return -1;
+    }
+    if (net_device_count() == 0) {
+        return -2;
+    }
+
+    status = net_http_get(0, url, buffer, capacity, &size);
+    if (status != 0) {
+        return status;
+    }
+    if (size < capacity) {
+        buffer[size] = '\0';
+    }
+    return (int)size;
 }
 
 int shell_api_rename(const char *old_path, const char *new_path) {
