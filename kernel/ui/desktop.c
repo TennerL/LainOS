@@ -2460,12 +2460,12 @@ static void desktop_terminal_submit(const boot_info_t *info) {
         desktop_terminal_focus();
         return;
     }
-    if (text_starts_command(terminal_line, "browse")) {
-        console_puts("Use the Files launcher or Start > Files in desktop mode.\n");
-        desktop_terminal_prompt();
-        desktop_terminal_focus();
-        return;
-    }
+    // if (text_starts_command(terminal_line, "browse")) {
+    //     console_puts("Use the Files launcher or Start > Files in desktop mode.\n");
+    //     desktop_terminal_prompt();
+    //     desktop_terminal_focus();
+    //     return;
+    // }
     if (text_starts_command(terminal_line, "edit")) {
         desktop_open_editor(skip_spaces_const(terminal_line + 4u));
         console_puts("opened editor window\n");
