@@ -92,6 +92,8 @@ int mouse_x(void);
 int mouse_y(void);
 int mouse_buttons(void);
 void mouse_snapshot(int *out_x, int *out_y, int *out_buttons);
+void mouse_set_position(int x, int y);
+void mouse_consume_motion(int *out_dx, int *out_dy, int *out_buttons);
 int mouse_dx(void);
 int mouse_dy(void);
 void timer_init(void);

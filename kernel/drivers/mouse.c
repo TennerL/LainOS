@@ -26,6 +26,10 @@
 #define MOUSE_PACKET_X_OVERFLOW 0x40u
 #define MOUSE_PACKET_Y_OVERFLOW 0x80u
 #define MOUSE_BUTTON_BITS 0x07u
+#define MOUSE_PS2_MAX_DELTA 96
+#define MOUSE_USB_MAX_DELTA 128
+#define MOUSE_PS2_RESOLUTION 2u
+#define MOUSE_PS2_SAMPLE_RATE 100u
 #define PIC1_COMMAND 0x20u
 #define PIC1_DATA 0x21u
 #define PIC2_COMMAND 0xA0u
@@ -42,8 +46,12 @@ static volatile int pos_y;
 static volatile int buttons;
 static volatile int last_dx;
 static volatile int last_dy;
+static volatile int pending_dx;
+static volatile int pending_dy;
+static volatile uint32_t rejected_packets;
 
 static int clamp_coord(int value, unsigned int limit);
+static void mouse_handle_ps2_byte_locked(uint8_t value);
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t value;
@@ -66,27 +74,20 @@ static inline void irq_restore(unsigned long flags) {
 }
 
 static void mouse_apply_state(int new_buttons, int dx, int dy, int apply_motion, int usb_motion) {
+    int screen_dy = usb_motion ? dy : -dy;
+
     buttons = new_buttons & MOUSE_BUTTON_BITS;
     if (apply_motion) {
         last_dx = dx;
-        last_dy = dy;
+        last_dy = screen_dy;
         pos_x = clamp_coord(pos_x + dx, graphics_width());
-        pos_y = clamp_coord(pos_y + (usb_motion ? dy : -dy), graphics_height());
+        pos_y = clamp_coord(pos_y + screen_dy, graphics_height());
+        pending_dx += dx;
+        pending_dy += screen_dy;
     } else {
         last_dx = 0;
         last_dy = 0;
     }
-}
-
-static void mouse_apply_rejected_motion_state(int new_buttons) {
-    int next_buttons = new_buttons & MOUSE_BUTTON_BITS;
-
-    last_dx = 0;
-    last_dy = 0;
-    if ((buttons & MOUSE_LEFT) != 0 && (next_buttons & MOUSE_LEFT) == 0) {
-        return;
-    }
-    buttons = next_buttons;
 }
 
 static int wait_input_empty(void) {
@@ -222,8 +223,54 @@ static int sign_extend_byte(uint8_t value, uint8_t sign_bit) {
     return result;
 }
 
-void mouse_handle_byte(uint8_t value) {
+static int abs_int(int value) {
+    return value < 0 ? -value : value;
+}
+
+static int mouse_ps2_header_valid(uint8_t value) {
+    if ((value & MOUSE_PACKET_ALWAYS_ONE) == 0) {
+        return 0;
+    }
+    if ((value & (MOUSE_PACKET_X_OVERFLOW | MOUSE_PACKET_Y_OVERFLOW)) != 0) {
+        return 0;
+    }
+    return 1;
+}
+
+static int mouse_ps2_packet_valid(void) {
+    int x_sign;
+    int y_sign;
+
+    if (!mouse_ps2_header_valid(packet[0])) {
+        return 0;
+    }
+
+    x_sign = (packet[0] & MOUSE_PACKET_X_SIGN) != 0;
+    y_sign = (packet[0] & MOUSE_PACKET_Y_SIGN) != 0;
+    if (((packet[1] & 0x80u) != 0) != x_sign) {
+        return 0;
+    }
+    if (((packet[2] & 0x80u) != 0) != y_sign) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static void mouse_reject_packet(void) {
+    packet_index = 0;
+    last_dx = 0;
+    last_dy = 0;
+    ++rejected_packets;
+}
+
+static void mouse_handle_ps2_byte_locked(uint8_t value) {
     if (packet_index == 0 && (value & MOUSE_PACKET_ALWAYS_ONE) == 0) {
+        return;
+    }
+
+    if (packet_index == 0 && !mouse_ps2_header_valid(value)) {
+        mouse_reject_packet();
         return;
     }
 
@@ -232,26 +279,45 @@ void mouse_handle_byte(uint8_t value) {
         return;
     }
 
-    if ((packet[0] & (MOUSE_PACKET_X_OVERFLOW | MOUSE_PACKET_Y_OVERFLOW)) != 0) {
-        packet_index = 0;
-        mouse_apply_rejected_motion_state(packet[0]);
+    if (!mouse_ps2_packet_valid()) {
+        mouse_reject_packet();
         return;
     }
 
     int dx = sign_extend_byte(packet[1], packet[0] & MOUSE_PACKET_X_SIGN);
     int dy = sign_extend_byte(packet[2], packet[0] & MOUSE_PACKET_Y_SIGN);
 
+    if (abs_int(dx) > MOUSE_PS2_MAX_DELTA || abs_int(dy) > MOUSE_PS2_MAX_DELTA) {
+        mouse_reject_packet();
+        return;
+    }
+
     mouse_apply_state(packet[0], dx, dy, 1, 0);
     packet_index = 0;
 }
 
+void mouse_handle_byte(uint8_t value) {
+    unsigned long flags = irq_save();
+
+    mouse_handle_ps2_byte_locked(value);
+    irq_restore(flags);
+}
+
 void mouse_apply_usb_report(uint8_t report_buttons, int dx, int dy) {
+    unsigned long flags;
+
     if (ps2_enabled) {
         return;
     }
 
+    if (abs_int(dx) > MOUSE_USB_MAX_DELTA || abs_int(dy) > MOUSE_USB_MAX_DELTA) {
+        return;
+    }
+
+    flags = irq_save();
     mouse_apply_state(report_buttons, dx, dy, 1, 1);
     enabled = 1;
+    irq_restore(flags);
 }
 
 int mouse_init(void) {
@@ -263,6 +329,9 @@ int mouse_init(void) {
     buttons = 0;
     last_dx = 0;
     last_dy = 0;
+    pending_dx = 0;
+    pending_dy = 0;
+    rejected_packets = 0;
     pos_x = (int)(graphics_width() / 2u);
     pos_y = (int)(graphics_height() / 2u);
 
@@ -285,8 +354,8 @@ int mouse_init(void) {
         return -1;
     }
     (void)write_mouse(MOUSE_CMD_SET_SCALING_1_1);
-    (void)write_mouse_arg(MOUSE_CMD_SET_RESOLUTION, 3u);
-    (void)write_mouse_arg(MOUSE_CMD_SET_SAMPLE_RATE, 200u);
+    (void)write_mouse_arg(MOUSE_CMD_SET_RESOLUTION, MOUSE_PS2_RESOLUTION);
+    (void)write_mouse_arg(MOUSE_CMD_SET_SAMPLE_RATE, MOUSE_PS2_SAMPLE_RATE);
     if (write_mouse(MOUSE_CMD_ENABLE_STREAMING) != 0) {
         return -1;
     }
@@ -346,6 +415,39 @@ void mouse_snapshot(int *out_x, int *out_y, int *out_buttons) {
     }
     if (out_y != 0) {
         *out_y = y;
+    }
+    if (out_buttons != 0) {
+        *out_buttons = b;
+    }
+}
+
+void mouse_set_position(int x, int y) {
+    unsigned long flags = irq_save();
+
+    pos_x = clamp_coord(x, graphics_width());
+    pos_y = clamp_coord(y, graphics_height());
+    last_dx = 0;
+    last_dy = 0;
+    pending_dx = 0;
+    pending_dy = 0;
+    irq_restore(flags);
+}
+
+void mouse_consume_motion(int *out_dx, int *out_dy, int *out_buttons) {
+    unsigned long flags = irq_save();
+    int dx = pending_dx;
+    int dy = pending_dy;
+    int b = buttons;
+
+    pending_dx = 0;
+    pending_dy = 0;
+    irq_restore(flags);
+
+    if (out_dx != 0) {
+        *out_dx = dx;
+    }
+    if (out_dy != 0) {
+        *out_dy = dy;
     }
     if (out_buttons != 0) {
         *out_buttons = b;

@@ -38,6 +38,11 @@
 #define FILE_ACTION_BUTTON_W 58u
 #define DESKTOP_WM_PREVIEW_HZ 60u
 #define DESKTOP_DAMAGE_MAX_RECTS 16u
+#define DESKTOP_MOUSE_IDLE_REDRAW_HZ 20u
+#define DESKTOP_MOUSE_DRAG_MAX_STEP 64
+#define TERMINAL_CARET_W 8u
+#define TERMINAL_CARET_H 2u
+#define TERMINAL_CARET_BLINK_HZ 2u
 
 typedef enum {
     FILE_KIND_OTHER = 0,
@@ -105,7 +110,7 @@ static uint32_t cursor_y;
 static int cursor_drawn;
 static void cursor_restore(void);
 static void cursor_draw_at(uint32_t x, uint32_t y);
-static void desktop_terminal_draw(int fresh);
+static void desktop_begin_paint(void);
 static desktop_window_t terminal_window;
 static desktop_window_state_t terminal_window_state;
 static int terminal_open;
@@ -113,6 +118,8 @@ static int terminal_minimized;
 static int terminal_ready;
 static int terminal_console_active;
 static int terminal_bounds_ready;
+static unsigned long long terminal_caret_last_tick;
+static int terminal_caret_visible;
 static desktop_wm_action_t wm_action;
 static desktop_window_t *wm_target_window;
 static int wm_drag_dx;
@@ -168,6 +175,7 @@ static const char *editor_status;
 static char editor_output[DESKTOP_EDITOR_OUTPUT_SIZE];
 static uint32_t editor_output_len;
 static int editor_scroll_drag;
+static unsigned long long desktop_mouse_last_activity_tick;
 static const desktop_launcher_t launchers[] = {
     { 20u, 48u, 54u, 54u, DESKTOP_APP_TERMINAL, "Terminal" },
     { 20u, 124u, 54u, 54u, DESKTOP_APP_BROWSER, "Files" },
@@ -206,6 +214,7 @@ static void desktop_mouse_snapshot(uint32_t *out_x, uint32_t *out_y, int *out_bu
     int buttons;
 
     mouse_snapshot(&x, &y, &buttons);
+
     if (out_x != 0) {
         *out_x = x < 0 ? 0u : (uint32_t)x;
     }
@@ -213,8 +222,78 @@ static void desktop_mouse_snapshot(uint32_t *out_x, uint32_t *out_y, int *out_bu
         *out_y = y < 0 ? 0u : (uint32_t)y;
     }
     if (out_buttons != 0) {
-        *out_buttons = buttons;
+        *out_buttons = buttons & (MOUSE_LEFT | MOUSE_RIGHT | MOUSE_MIDDLE);
     }
+}
+
+static void desktop_begin_paint(void) {
+    cursor_restore();
+    console_cursor_enable(0);
+}
+
+static int desktop_mouse_background_redraw_ready(void) {
+    unsigned int hz = timer_frequency();
+    unsigned long long interval;
+    unsigned long long now;
+
+    if (hz == 0u) {
+        hz = 100u;
+    }
+    interval = hz / DESKTOP_MOUSE_IDLE_REDRAW_HZ;
+    if (interval == 0ull) {
+        interval = 1ull;
+    }
+
+    now = timer_ticks();
+    return now - desktop_mouse_last_activity_tick >= interval;
+}
+
+static void desktop_mouse_apply_drag_motion(uint32_t *x,
+                                            uint32_t *y,
+                                            uint32_t last_x,
+                                            uint32_t last_y,
+                                            int motion_dx,
+                                            int motion_dy) {
+    int next_x;
+    int next_y;
+
+    if (x == 0 || y == 0) {
+        return;
+    }
+
+    if (motion_dx > DESKTOP_MOUSE_DRAG_MAX_STEP) {
+        motion_dx = DESKTOP_MOUSE_DRAG_MAX_STEP;
+    } else if (motion_dx < -DESKTOP_MOUSE_DRAG_MAX_STEP) {
+        motion_dx = -DESKTOP_MOUSE_DRAG_MAX_STEP;
+    }
+
+    if (motion_dy > DESKTOP_MOUSE_DRAG_MAX_STEP) {
+        motion_dy = DESKTOP_MOUSE_DRAG_MAX_STEP;
+    } else if (motion_dy < -DESKTOP_MOUSE_DRAG_MAX_STEP) {
+        motion_dy = -DESKTOP_MOUSE_DRAG_MAX_STEP;
+    }
+
+    next_x = (int)last_x + motion_dx;
+    next_y = (int)last_y + motion_dy;
+
+    if (next_x < 0) {
+        next_x = 0;
+    }
+    if (next_y < 0) {
+        next_y = 0;
+    }
+    if (graphics_width() != 0u && (uint32_t)next_x >= graphics_width()) {
+        next_x = (int)(graphics_width() - 1u);
+    }
+    if (graphics_height() != 0u && (uint32_t)next_y >= graphics_height()) {
+        next_y = (int)(graphics_height() - 1u);
+    }
+
+    if ((uint32_t)next_x != *x || (uint32_t)next_y != *y) {
+        mouse_set_position(next_x, next_y);
+    }
+    *x = (uint32_t)next_x;
+    *y = (uint32_t)next_y;
 }
 
 static void desktop_terminal_draw(int fresh);
@@ -227,12 +306,20 @@ static void desktop_damage_app(desktop_app_t app);
 static void desktop_damage_full(void);
 static int desktop_damage_intersects_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 static void desktop_start_menu_rect(uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h);
+static void desktop_terminal_open(void);
+static void desktop_terminal_sync_console_cursor(void);
+static void desktop_terminal_after_output(void);
+static void desktop_terminal_damage_caret(void);
+static void desktop_terminal_draw_caret(void);
+static void desktop_terminal_erase_caret(void);
+static int desktop_terminal_caret_tick_due(void);
 static void desktop_open_module_app(uint32_t index);
 static int desktop_any_module_app_open(void);
 static int desktop_any_module_app_minimized(void);
 static desktop_module_window_t *desktop_find_module_app_window(uint32_t index);
 static desktop_module_window_t *desktop_allocate_module_app_window(void);
 static desktop_module_window_t *desktop_top_module_app_window_at(uint32_t x, uint32_t y);
+static void desktop_terminal_blur(void);
 static int point_in_rect(uint32_t px, uint32_t py, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 static uint32_t desktop_taskbar_height(void);
 
@@ -364,6 +451,13 @@ static void desktop_draw_base(void) {
 
 static int point_in_rect(uint32_t px, uint32_t py, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     return px >= x && py >= y && px < x + w && py < y + h;
+}
+
+static int desktop_rects_intersect(uint32_t ax, uint32_t ay, uint32_t aw, uint32_t ah,
+                                   uint32_t bx, uint32_t by, uint32_t bw, uint32_t bh) {
+    return aw != 0u && ah != 0u && bw != 0u && bh != 0u &&
+           ax < bx + bw && ax + aw > bx &&
+           ay < by + bh && ay + ah > by;
 }
 
 static uint32_t desktop_taskbar_height(void) {
@@ -720,10 +814,12 @@ static int desktop_preview_due(const desktop_window_t *win, int force) {
     return now - wm_preview_last_tick >= interval;
 }
 
-static void desktop_preview_update(const desktop_window_t *win, int force) {
+static int desktop_preview_update(const desktop_window_t *win, int force) {
     if (desktop_preview_due(win, force)) {
         desktop_preview_draw(win);
+        return 1;
     }
+    return 0;
 }
 
 static int text_equals(const char *a, const char *b) {
@@ -1329,12 +1425,22 @@ static void desktop_launch_app(desktop_app_t app, const boot_info_t *info) {
         if (was_open || was_minimized) {
             desktop_damage_window(&terminal_window);
         }
-        terminal_open = 1;
         if (!was_open && !was_minimized) {
-            terminal_ready = 0;
+            desktop_terminal_open();
+            desktop_damage_full();
+        } else {
+            terminal_open = 1;
+            if (!terminal_bounds_ready) {
+                desktop_make_terminal_window(&terminal_window);
+                terminal_bounds_ready = 1;
+                desktop_damage_full();
+            }
         }
         terminal_minimized = 0;
         desktop_damage_window(&terminal_window);
+        if (was_minimized) {
+            desktop_damage_full();
+        }
     } else if (app == DESKTOP_APP_BROWSER) {
         int module_index;
         (void)info;
@@ -1522,6 +1628,7 @@ static void desktop_restore_task_app(desktop_app_t app) {
         desktop_damage_window(&terminal_window);
         terminal_open = 1;
         terminal_minimized = 0;
+        desktop_damage_full();
     } else if (app == DESKTOP_APP_BROWSER) {
         desktop_damage_window(&files_window);
         files_open = 1;
@@ -1552,15 +1659,24 @@ static void desktop_terminal_focus(void) {
         return;
     }
 
-    if (!terminal_console_active) {
-        console_set_region_preserve(terminal_window.content_x,
-                                    terminal_window.content_y,
-                                    terminal_window.content_x + terminal_window.content_w,
-                                    terminal_window.content_y + terminal_window.content_h);
-        terminal_console_active = 1;
-    }
-    console_cursor_enable(1);
+    console_set_region_preserve(terminal_window.content_x,
+                                terminal_window.content_y,
+                                terminal_window.content_x + terminal_window.content_w,
+                                terminal_window.content_y + terminal_window.content_h);
+    terminal_console_active = 1;
+    desktop_terminal_sync_console_cursor();
+    console_cursor_enable(0);
     console_set_output_hook(desktop_terminal_capture);
+    terminal_caret_visible = 1;
+    terminal_caret_last_tick = timer_ticks();
+    desktop_terminal_draw_caret();
+}
+
+static void desktop_terminal_blur(void) {
+    console_cursor_enable(0);
+    console_set_output_hook(0);
+    console_reset_region();
+    terminal_console_active = 0;
 }
 
 static void desktop_terminal_prompt(void) {
@@ -1574,6 +1690,9 @@ static void desktop_terminal_open(void) {
 
     terminal_open = 1;
     terminal_ready = 0;
+    terminal_console_active = 1;
+    terminal_caret_visible = 1;
+    terminal_caret_last_tick = timer_ticks();
     if (!was_open) {
         desktop_terminal_buffer_clear();
     }
@@ -1581,6 +1700,153 @@ static void desktop_terminal_open(void) {
         desktop_make_terminal_window(&terminal_window);
         terminal_bounds_ready = 1;
     }
+}
+
+static void desktop_terminal_sync_console_cursor(void) {
+    uint32_t visible_rows = console_rows();
+    uint32_t visible_cols = console_columns();
+    uint32_t first_row = 0;
+    uint32_t cursor_row;
+    uint32_t cursor_col;
+
+    if (visible_rows > TERMINAL_BUFFER_ROWS) {
+        visible_rows = TERMINAL_BUFFER_ROWS;
+    }
+    if (visible_cols > TERMINAL_BUFFER_COLS) {
+        visible_cols = TERMINAL_BUFFER_COLS;
+    }
+
+    if (terminal_buffer_row + 1u > visible_rows) {
+        first_row = terminal_buffer_row + 1u - visible_rows;
+    }
+
+    cursor_row = terminal_buffer_row >= first_row ? terminal_buffer_row - first_row : 0;
+    cursor_col = terminal_buffer_col < visible_cols ? terminal_buffer_col : (visible_cols > 0u ? visible_cols - 1u : 0u);
+    if (visible_rows > 0u && cursor_row >= visible_rows) {
+        cursor_row = visible_rows - 1u;
+    }
+
+    console_set_cursor(cursor_col, cursor_row);
+    console_cursor_enable(0);
+}
+
+static void desktop_terminal_after_output(void) {
+    if (!terminal_open) {
+        return;
+    }
+
+    console_set_region_preserve(terminal_window.content_x,
+                                terminal_window.content_y,
+                                terminal_window.content_x + terminal_window.content_w,
+                                terminal_window.content_y + terminal_window.content_h);
+    terminal_console_active = 1;
+    terminal_caret_visible = 1;
+    terminal_caret_last_tick = timer_ticks();
+    desktop_terminal_sync_console_cursor();
+    console_cursor_enable(0);
+    console_set_output_hook(desktop_terminal_capture);
+    desktop_damage_full();
+    desktop_redraw_all();
+}
+
+static void desktop_terminal_caret_rect(uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h) {
+    uint32_t visible_rows = terminal_window.content_h / 10u;
+    uint32_t visible_cols = terminal_window.content_w / 8u;
+    uint32_t first_row = 0;
+    uint32_t cursor_row;
+    uint32_t cursor_col;
+
+    if (visible_rows == 0u) {
+        visible_rows = 1u;
+    } else if (visible_rows > TERMINAL_BUFFER_ROWS) {
+        visible_rows = TERMINAL_BUFFER_ROWS;
+    }
+    if (visible_cols == 0u) {
+        visible_cols = 1u;
+    } else if (visible_cols > TERMINAL_BUFFER_COLS) {
+        visible_cols = TERMINAL_BUFFER_COLS;
+    }
+    if (terminal_buffer_row + 1u > visible_rows) {
+        first_row = terminal_buffer_row + 1u - visible_rows;
+    }
+
+    cursor_row = terminal_buffer_row >= first_row ? terminal_buffer_row - first_row : 0;
+    cursor_col = terminal_buffer_col < visible_cols ? terminal_buffer_col : (visible_cols > 0u ? visible_cols - 1u : 0u);
+    if (visible_rows > 0u && cursor_row >= visible_rows) {
+        cursor_row = visible_rows - 1u;
+    }
+
+    if (x != 0) {
+        *x = terminal_window.content_x + cursor_col * 8u;
+    }
+    if (y != 0) {
+        *y = terminal_window.content_y + cursor_row * 10u + 8u;
+    }
+    if (w != 0) {
+        *w = TERMINAL_CARET_W;
+    }
+    if (h != 0) {
+        *h = TERMINAL_CARET_H;
+    }
+}
+
+static void desktop_terminal_damage_caret(void) {
+    uint32_t x;
+    uint32_t y;
+    uint32_t w;
+    uint32_t h;
+
+    if (!terminal_open || !terminal_console_active || editor_focused) {
+        return;
+    }
+
+    desktop_terminal_caret_rect(&x, &y, &w, &h);
+    desktop_damage_rect(x, y, w, h);
+}
+
+static void desktop_terminal_draw_caret(void) {
+    uint32_t x;
+    uint32_t y;
+    uint32_t w;
+    uint32_t h;
+
+    if (!terminal_open || !terminal_console_active || editor_focused || !terminal_caret_visible) {
+        return;
+    }
+
+    desktop_terminal_caret_rect(&x, &y, &w, &h);
+    graphics_fill_rect(x, y, w, h, 0xf6eadbu);
+}
+
+static void desktop_terminal_erase_caret(void) {
+    desktop_terminal_damage_caret();
+}
+
+static int desktop_terminal_caret_tick_due(void) {
+    unsigned int hz;
+    unsigned long long interval;
+    unsigned long long now;
+
+    if (!terminal_open || !terminal_console_active || editor_focused) {
+        return 0;
+    }
+
+    hz = timer_frequency();
+    if (hz == 0u) {
+        hz = 100u;
+    }
+    interval = hz / TERMINAL_CARET_BLINK_HZ;
+    if (interval == 0ull) {
+        interval = 1ull;
+    }
+
+    now = timer_ticks();
+    if (now - terminal_caret_last_tick < interval) {
+        return 0;
+    }
+    terminal_caret_last_tick = now;
+    terminal_caret_visible = !terminal_caret_visible;
+    return 1;
 }
 
 static void desktop_terminal_draw(int fresh) {
@@ -1595,7 +1861,12 @@ static void desktop_terminal_draw(int fresh) {
         desktop_clamp_window(&terminal_window);
     }
     desktop_draw_window(&terminal_window, "Terminal");
-    desktop_terminal_focus();
+    console_set_region_preserve(terminal_window.content_x,
+                                terminal_window.content_y,
+                                terminal_window.content_x + terminal_window.content_w,
+                                terminal_window.content_y + terminal_window.content_h);
+    console_cursor_enable(0);
+    console_set_output_hook(0);
 
     if (fresh || !terminal_ready) {
         console_set_output_hook(0);
@@ -1629,15 +1900,25 @@ static void desktop_terminal_draw(int fresh) {
                 console_put_char_at(col, row, terminal_buffer[source_row][col]);
             }
         }
-        uint32_t cursor_row = terminal_buffer_row >= first_row ? terminal_buffer_row - first_row : 0;
-        uint32_t cursor_col = terminal_buffer_col < visible_cols ? terminal_buffer_col : (visible_cols > 0u ? visible_cols - 1u : 0u);
-        if (visible_rows > 0u && cursor_row >= visible_rows) {
-            cursor_row = visible_rows - 1u;
+        desktop_terminal_sync_console_cursor();
+        if (terminal_console_active && !editor_focused) {
+            console_set_output_hook(desktop_terminal_capture);
+        } else {
+            console_set_output_hook(0);
+            console_reset_region();
+            terminal_console_active = 0;
         }
-        console_set_cursor(cursor_col, cursor_row);
-        console_set_output_hook(desktop_terminal_capture);
         terminal_ready = 1;
+    } else if (terminal_console_active && !editor_focused) {
+        console_cursor_enable(0);
+        console_set_output_hook(desktop_terminal_capture);
+    } else {
+        console_cursor_enable(0);
+        console_set_output_hook(0);
+        console_reset_region();
+        terminal_console_active = 0;
     }
+    desktop_terminal_draw_caret();
 }
 
 static void desktop_redraw_after_geometry_change(void) {
@@ -1776,33 +2057,87 @@ static int desktop_module_app_tick_due(const desktop_module_window_t *slot, int 
     return 1;
 }
 
+static int desktop_module_content_occluded(const desktop_module_window_t *slot) {
+    uint32_t menu_x;
+    uint32_t menu_y;
+    uint32_t menu_w;
+    uint32_t menu_h;
+    uint32_t first;
+
+    if (slot == 0 ||
+        slot < module_app_windows ||
+        slot >= module_app_windows + DESKTOP_MODULE_APP_WINDOWS_MAX) {
+        return 1;
+    }
+
+    if (editor_open &&
+        desktop_rects_intersect(slot->window.content_x,
+                                slot->window.content_y,
+                                slot->window.content_w,
+                                slot->window.content_h,
+                                editor_window.x,
+                                editor_window.y,
+                                editor_window.w,
+                                editor_window.h)) {
+        return 1;
+    }
+
+    if (start_menu_open) {
+        desktop_start_menu_rect(&menu_x, &menu_y, &menu_w, &menu_h);
+        if (desktop_rects_intersect(slot->window.content_x,
+                                    slot->window.content_y,
+                                    slot->window.content_w,
+                                    slot->window.content_h,
+                                    menu_x,
+                                    menu_y,
+                                    menu_w,
+                                    menu_h)) {
+            return 1;
+        }
+    }
+
+    first = (uint32_t)(slot - module_app_windows) + 1u;
+    for (uint32_t i = first; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+        if (module_app_windows[i].open &&
+            desktop_rects_intersect(slot->window.content_x,
+                                    slot->window.content_y,
+                                    slot->window.content_w,
+                                    slot->window.content_h,
+                                    module_app_windows[i].window.x,
+                                    module_app_windows[i].window.y,
+                                    module_app_windows[i].window.w,
+                                    module_app_windows[i].window.h)) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static int desktop_tick_module_app(desktop_module_window_t *slot, int force) {
     unsigned long long now = timer_ticks();
-    int buffered;
 
     if (!desktop_module_app_tick_due(slot, force, now)) {
         return 0;
     }
     slot->last_tick = now;
 
-    cursor_restore();
-    buffered = graphics_backbuffer_enable();
-    graphics_viewport_push(slot->window.content_x,
-                           slot->window.content_y,
-                           slot->window.content_w,
-                           slot->window.content_h);
-    (void)shell_module_tick(slot->module_index);
-    graphics_viewport_pop();
-    if (buffered) {
-        graphics_backbuffer_flush_rect(slot->window.content_x,
-                                       slot->window.content_y,
-                                       slot->window.content_w,
-                                       slot->window.content_h);
-        graphics_backbuffer_disable();
+    if (!desktop_module_content_occluded(slot)) {
+        desktop_begin_paint();
+        graphics_viewport_push(slot->window.content_x,
+                               slot->window.content_y,
+                               slot->window.content_w,
+                               slot->window.content_h);
+        console_cursor_enable(0);
+        console_set_output_hook(0);
+        console_reset_region();
+        (void)shell_module_tick(slot->module_index);
+        graphics_viewport_pop();
     }
+
     if (desktop_deferred_redraw) {
         desktop_deferred_redraw = 0;
-        desktop_damage_window(&slot->window);
+        desktop_damage_full();
         desktop_redraw_all();
     }
     return 1;
@@ -1841,6 +2176,9 @@ static void desktop_draw_module_app(void) {
                                slot->window.content_y,
                                slot->window.content_w,
                                slot->window.content_h);
+        console_cursor_enable(0);
+        console_set_output_hook(0);
+        console_reset_region();
         if (shell_module_call(slot->module_index, "zmodule_redraw") != 0) {
             (void)shell_module_tick(slot->module_index);
         }
@@ -2382,42 +2720,18 @@ static void desktop_damage_full(void) {
 }
 
 static void desktop_redraw_editor_only(uint32_t cursor_x_pos, uint32_t cursor_y_pos) {
-    int buffered;
-
-    cursor_restore();
-    buffered = graphics_backbuffer_enable();
-    desktop_draw_editor_text_area();
-    desktop_draw_editor_status();
-    if (buffered) {
-        uint32_t count;
-
-        desktop_damage_reset();
-        desktop_damage_rect(editor_window.content_x,
-                            editor_window.content_y,
-                            editor_window.content_w,
-                            editor_window.content_h);
-        count = desktop_damage_count;
-        for (uint32_t i = 0; i < count; ++i) {
-            graphics_backbuffer_flush_rect(desktop_damage_x[i],
-                                           desktop_damage_y[i],
-                                           desktop_damage_w[i],
-                                           desktop_damage_h[i]);
-        }
-        graphics_backbuffer_disable();
-        desktop_damage_reset();
-    } else {
-        desktop_damage_reset();
-    }
+    desktop_damage_full();
+    desktop_redraw_all();
     cursor_draw_at(cursor_x_pos, cursor_y_pos);
 }
 
 static void desktop_redraw_all(void) {
-    int buffered = desktop_first_redraw ? 0 : graphics_backbuffer_enable();
+    int buffered;
 
+    desktop_begin_paint();
+    buffered = desktop_first_redraw ? 0 : graphics_backbuffer_enable();
     desktop_first_redraw = 0;
-    if (buffered && desktop_damage_count == 0u) {
-        desktop_damage_full();
-    }
+    desktop_damage_full();
 
     desktop_draw_base();
     if (terminal_open) {
@@ -2430,19 +2744,10 @@ static void desktop_redraw_all(void) {
     desktop_draw_start_menu();
 
     if (buffered) {
-        uint32_t count = desktop_damage_count;
-
-        for (uint32_t i = 0; i < count; ++i) {
-            graphics_backbuffer_flush_rect(desktop_damage_x[i],
-                                           desktop_damage_y[i],
-                                           desktop_damage_w[i],
-                                           desktop_damage_h[i]);
-        }
+        graphics_backbuffer_flush();
         graphics_backbuffer_disable();
-        desktop_damage_reset();
-    } else {
-        desktop_damage_reset();
     }
+    desktop_damage_reset();
 }
 
 static void desktop_terminal_submit(const boot_info_t *info) {
@@ -2471,8 +2776,6 @@ static void desktop_terminal_submit(const boot_info_t *info) {
         console_puts("opened editor window\n");
         desktop_terminal_prompt();
         desktop_terminal_focus();
-        desktop_damage_window(&terminal_window);
-        desktop_redraw_all();
         return;
     }
 
@@ -2491,8 +2794,10 @@ static void desktop_terminal_key(const key_event_t *key, const boot_info_t *info
     }
 
     desktop_terminal_focus();
+    desktop_terminal_erase_caret();
     if (key->type == KEY_ENTER) {
         desktop_terminal_submit(info);
+        desktop_terminal_after_output();
         return;
     }
 
@@ -2502,6 +2807,7 @@ static void desktop_terminal_key(const key_event_t *key, const boot_info_t *info
             terminal_line[terminal_len] = '\0';
             console_puts("\b");
         }
+        desktop_terminal_after_output();
         return;
     }
 
@@ -2511,10 +2817,15 @@ static void desktop_terminal_key(const key_event_t *key, const boot_info_t *info
             terminal_line[terminal_len] = '\0';
             console_puts(" ");
         }
+        desktop_terminal_after_output();
         return;
     }
 
     if (key->type != KEY_CHAR || terminal_len + 1u >= sizeof(terminal_line)) {
+        terminal_caret_visible = 1;
+        terminal_caret_last_tick = timer_ticks();
+        desktop_terminal_sync_console_cursor();
+        desktop_terminal_draw_caret();
         return;
     }
 
@@ -2523,6 +2834,7 @@ static void desktop_terminal_key(const key_event_t *key, const boot_info_t *info
     out[0] = key->ch;
     out[1] = '\0';
     console_puts(out);
+    desktop_terminal_after_output();
 }
 
 static void desktop_editor_save(void) {
@@ -2820,6 +3132,7 @@ static void cursor_draw_at(uint32_t x, uint32_t y) {
     uint32_t width = graphics_width();
     uint32_t height = graphics_height();
 
+    cursor_restore();
     cursor_x = x;
     cursor_y = y;
     for (uint32_t cy = 0; cy < CURSOR_H; ++cy) {
@@ -2873,6 +3186,7 @@ void desktop_run(const boot_info_t *info) {
     int exit_requested = 0;
 
     desktop_mouse_snapshot(&last_x, &last_y, &last_buttons);
+    desktop_mouse_last_activity_tick = timer_ticks();
     cursor_draw_at(last_x, last_y);
 
     for (;;) {
@@ -2880,9 +3194,12 @@ void desktop_run(const boot_info_t *info) {
         uint32_t x;
         uint32_t y;
         int buttons;
+        int motion_dx = 0;
+        int motion_dy = 0;
 
         usb_poll();
         desktop_mouse_snapshot(&x, &y, &buttons);
+        mouse_consume_motion(&motion_dx, &motion_dy, 0);
         int left_pressed = (buttons & MOUSE_LEFT) != 0;
         int left_was_pressed = (last_buttons & MOUSE_LEFT) != 0;
 
@@ -2911,6 +3228,12 @@ void desktop_run(const boot_info_t *info) {
             desktop_mouse_snapshot(&x, &y, &buttons);
         }
         left_pressed = (buttons & MOUSE_LEFT) != 0;
+        if (left_pressed && (wm_action != DESKTOP_WM_IDLE || editor_scroll_drag)) {
+            desktop_mouse_apply_drag_motion(&x, &y, last_x, last_y, motion_dx, motion_dy);
+        }
+        if (x != last_x || y != last_y || buttons != last_buttons) {
+            desktop_mouse_last_activity_tick = timer_ticks();
+        }
 
         if (exit_requested) {
             break;
@@ -2942,7 +3265,7 @@ void desktop_run(const boot_info_t *info) {
             cursor_restore();
             editor_scroll_to_point(y);
             editor_focused = 1;
-            terminal_console_active = 0;
+            desktop_terminal_blur();
             if (editor_top_line != old_top) {
                 desktop_redraw_editor_only(x, y);
             } else {
@@ -2955,21 +3278,24 @@ void desktop_run(const boot_info_t *info) {
         }
 
         if (left_pressed && wm_action == DESKTOP_WM_DRAG && wm_target_window != 0) {
-            cursor_restore();
+            int pointer_changed = x != last_x || y != last_y;
             wm_preview_window = *wm_target_window;
             wm_preview_window.x = (int)x - wm_drag_dx < 0 ? 0u : (uint32_t)((int)x - wm_drag_dx);
             wm_preview_window.y = (int)y - wm_drag_dy < 0 ? 0u : (uint32_t)((int)y - wm_drag_dy);
             desktop_clamp_window(&wm_preview_window);
-            desktop_preview_update(&wm_preview_window, 0);
+            if (pointer_changed || desktop_preview_due(&wm_preview_window, 0) || !cursor_drawn) {
+                cursor_restore();
+                (void)desktop_preview_update(&wm_preview_window, 0);
+                cursor_draw_at(x, y);
+            }
             last_x = x;
             last_y = y;
             last_buttons = buttons;
-            cursor_draw_at(last_x, last_y);
             continue;
         }
 
         if (left_pressed && wm_action == DESKTOP_WM_RESIZE && wm_target_window != 0) {
-            cursor_restore();
+            int pointer_changed = x != last_x || y != last_y;
             wm_preview_window = *wm_target_window;
             {
                 int new_w = (int)x - (int)wm_preview_window.x + 1;
@@ -2978,11 +3304,14 @@ void desktop_run(const boot_info_t *info) {
                 wm_preview_window.h = new_h < (int)WINDOW_MIN_H ? WINDOW_MIN_H : (uint32_t)new_h;
             }
             desktop_clamp_window(&wm_preview_window);
-            desktop_preview_update(&wm_preview_window, 0);
+            if (pointer_changed || desktop_preview_due(&wm_preview_window, 0) || !cursor_drawn) {
+                cursor_restore();
+                (void)desktop_preview_update(&wm_preview_window, 0);
+                cursor_draw_at(x, y);
+            }
             last_x = x;
             last_y = y;
             last_buttons = buttons;
-            cursor_draw_at(last_x, last_y);
             continue;
         }
 
@@ -3006,7 +3335,7 @@ void desktop_run(const boot_info_t *info) {
                 cursor_restore();
                 desktop_window_toggle_maximize(&editor_window, &editor_window_state);
                 editor_focused = 1;
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 desktop_redraw_after_geometry_change();
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
@@ -3052,7 +3381,7 @@ void desktop_run(const boot_info_t *info) {
                 editor_scroll_drag = 1;
                 editor_scroll_to_point(y);
                 editor_focused = 1;
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 desktop_redraw_editor_only(x, y);
                 last_buttons = buttons;
                 continue;
@@ -3115,7 +3444,7 @@ void desktop_run(const boot_info_t *info) {
                 cursor_restore();
                 editor_place_cursor_at(x, y);
                 editor_focused = 1;
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 if (editor_cursor != old_cursor) {
                     desktop_redraw_editor_only(x, y);
                 } else {
@@ -3128,7 +3457,7 @@ void desktop_run(const boot_info_t *info) {
             if (editor_open && point_in_rect(x, y, editor_window.x, editor_window.y, editor_window.w, editor_window.h)) {
                 cursor_restore();
                 editor_focused = 1;
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 desktop_damage_window(&editor_window);
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
@@ -3151,7 +3480,7 @@ void desktop_run(const boot_info_t *info) {
             if (module_slot != 0 && desktop_window_maximize_hit(&module_slot->window, x, y)) {
                 cursor_restore();
                 desktop_window_toggle_maximize(&module_slot->window, &module_slot->state);
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 desktop_redraw_after_geometry_change();
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
@@ -3194,7 +3523,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (module_slot != 0) {
                 cursor_restore();
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 if (point_in_rect(x,
                                   y,
                                   module_slot->window.content_x,
@@ -3222,7 +3551,7 @@ void desktop_run(const boot_info_t *info) {
             if (modules_open && desktop_window_maximize_hit(&modules_window, x, y)) {
                 cursor_restore();
                 desktop_window_toggle_maximize(&modules_window, &modules_window_state);
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 desktop_redraw_after_geometry_change();
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
@@ -3277,7 +3606,7 @@ void desktop_run(const boot_info_t *info) {
             if (files_open && desktop_window_maximize_hit(&files_window, x, y)) {
                 cursor_restore();
                 desktop_window_toggle_maximize(&files_window, &files_window_state);
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 desktop_redraw_after_geometry_change();
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
@@ -3323,10 +3652,7 @@ void desktop_run(const boot_info_t *info) {
                 desktop_damage_full();
                 terminal_open = 0;
                 terminal_minimized = 1;
-                terminal_console_active = 0;
-                console_cursor_enable(0);
-                console_set_output_hook(0);
-                console_reset_region();
+                desktop_terminal_blur();
                 desktop_redraw_all();
                 cursor_draw_at(x, y);
                 last_buttons = buttons;
@@ -3335,10 +3661,7 @@ void desktop_run(const boot_info_t *info) {
 
             if (terminal_open && desktop_window_maximize_hit(&terminal_window, x, y)) {
                 cursor_restore();
-                terminal_console_active = 0;
-                console_cursor_enable(0);
-                console_set_output_hook(0);
-                console_reset_region();
+                desktop_terminal_blur();
                 desktop_window_toggle_maximize(&terminal_window, &terminal_window_state);
                 desktop_redraw_after_geometry_change();
                 desktop_terminal_focus();
@@ -3388,7 +3711,7 @@ void desktop_run(const boot_info_t *info) {
                 cursor_restore();
                 desktop_damage_app(app);
                 desktop_restore_task_app(app);
-                terminal_console_active = 0;
+                desktop_terminal_blur();
                 desktop_redraw_all();
                 if (app == DESKTOP_APP_TERMINAL) {
                     desktop_terminal_focus();
@@ -3402,8 +3725,13 @@ void desktop_run(const boot_info_t *info) {
             if (app != DESKTOP_APP_NONE) {
                 cursor_restore();
                 desktop_launch_app(app, info);
-                terminal_console_active = 0;
+                if (app != DESKTOP_APP_TERMINAL) {
+                    desktop_terminal_blur();
+                }
                 desktop_redraw_all();
+                if (app == DESKTOP_APP_TERMINAL) {
+                    desktop_terminal_focus();
+                }
                 desktop_mouse_snapshot(&last_x, &last_y, &last_buttons);
                 cursor_draw_at(last_x, last_y);
                 continue;
@@ -3429,9 +3757,14 @@ void desktop_run(const boot_info_t *info) {
                     if (menu_app == DESKTOP_APP_MODULES && module_index != DESKTOP_MODULE_INDEX_NONE) {
                         desktop_open_module_app(module_index);
                     }
-                    terminal_console_active = 0;
+                    if (menu_app != DESKTOP_APP_TERMINAL) {
+                        desktop_terminal_blur();
+                    }
                     desktop_damage_full();
                     desktop_redraw_all();
+                    if (menu_app == DESKTOP_APP_TERMINAL) {
+                        desktop_terminal_focus();
+                    }
                     desktop_mouse_snapshot(&last_x, &last_y, &last_buttons);
                     cursor_draw_at(last_x, last_y);
                     continue;
@@ -3599,17 +3932,6 @@ void desktop_run(const boot_info_t *info) {
             }
         }
 
-        if (wm_action == DESKTOP_WM_IDLE && !left_pressed && buttons == 0) {
-            for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
-                desktop_module_window_t *slot = &module_app_windows[i];
-                if (desktop_module_app_tick_due(slot, 0, timer_ticks())) {
-                    cursor_restore();
-                    (void)desktop_tick_module_app(slot, 0);
-                    cursor_draw_at(x, y);
-                }
-            }
-        }
-
         if (x != last_x || y != last_y) {
             cursor_restore();
             cursor_draw_at(x, y);
@@ -3619,12 +3941,35 @@ void desktop_run(const boot_info_t *info) {
         if (!cursor_drawn) {
             cursor_draw_at(x, y);
         }
+
+        if (wm_action == DESKTOP_WM_IDLE &&
+            !left_pressed &&
+            buttons == 0 &&
+            desktop_mouse_background_redraw_ready()) {
+            if (desktop_terminal_caret_tick_due()) {
+                cursor_restore();
+                desktop_terminal_damage_caret();
+                desktop_redraw_all();
+                cursor_draw_at(x, y);
+            }
+            for (uint32_t i = 0; i < DESKTOP_MODULE_APP_WINDOWS_MAX; ++i) {
+                desktop_module_window_t *slot = &module_app_windows[i];
+                if (desktop_module_app_tick_due(slot, 0, timer_ticks())) {
+                    cursor_restore();
+                    (void)desktop_tick_module_app(slot, 0);
+                    cursor_draw_at(x, y);
+                    break;
+                }
+            }
+        }
+
         last_buttons = buttons;
 
         cpu_pause();
     }
 
     cursor_restore();
+    console_set_output_hook(0);
     console_cursor_enable(1);
     console_reset_region();
     terminal_console_active = 0;
