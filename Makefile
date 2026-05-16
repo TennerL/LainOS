@@ -44,9 +44,10 @@ BOOT_RES_HEIGHT ?= 0
 
 PROJECT_CFLAGS := -Iboot/shared -Ibuild
 KERNEL_INC := -Ikernel/include
+BEARSSL_INC := -Ithird_party/bearssl/inc -Ithird_party/bearssl/src
 NASMFLAGS := -Iboot/shared/ -Ikernel/include/
 CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER -DBOOT_RES_WIDTH=$(BOOT_RES_WIDTH) -DBOOT_RES_HEIGHT=$(BOOT_RES_HEIGHT)
-KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
+KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
 HOST_CFLAGS := -Iboot/shared $(KERNEL_INC) -Ikernel -std=c11 -Wall -Wextra -Wno-unused-function
 LDFLAGS_EFI := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_LIBDIR) $(EFI_CRT0)
 LDLIBS_EFI := -lefi -lgnuefi
@@ -56,9 +57,11 @@ KERNEL_C_SOURCES := \
 	kernel/core/main.c \
 	kernel/core/kernel_exports.c \
 	kernel/core/timer.c \
+	kernel/core/clock.c \
 	kernel/core/cpu.c \
 	kernel/core/dma.c \
 	kernel/core/kmem.c \
+	kernel/core/libc.c \
 	kernel/core/power.c \
 	kernel/drivers/graphics.c \
 	kernel/drivers/console.c \
@@ -66,6 +69,8 @@ KERNEL_C_SOURCES := \
 	kernel/drivers/mouse.c \
 	kernel/drivers/pci.c \
 	kernel/drivers/net.c \
+	kernel/drivers/tls.c \
+	kernel/drivers/tls_roots.c \
 	kernel/drivers/e1000.c \
 	kernel/drivers/ahci.c \
 	kernel/drivers/usb.c \
@@ -82,9 +87,12 @@ KERNEL_ASM_SOURCES := \
 	kernel/arch/x86_64/entry.asm \
 	kernel/arch/x86_64/cpu_low.asm \
 	kernel/arch/x86_64/interrupts.asm
+BEARSSL_C_SOURCES_ALL := $(shell find third_party/bearssl/src -type f -name '*.c' | sort)
+BEARSSL_C_SOURCES := $(filter-out %/rand/sysrng.c %x86ni%.c %pwr8%.c %sse2%.c %pclmul%.c,$(BEARSSL_C_SOURCES_ALL))
 KERNEL_C_OBJECTS := $(patsubst kernel/%.c,build/kernel/%.o,$(KERNEL_C_SOURCES))
+BEARSSL_C_OBJECTS := $(patsubst third_party/bearssl/src/%.c,build/third_party/bearssl/%.o,$(BEARSSL_C_SOURCES))
 KERNEL_ASM_OBJECTS := $(patsubst kernel/%.asm,build/kernel/%.o,$(KERNEL_ASM_SOURCES))
-KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) build/kernel/z/zlink_probe.o
+KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) $(BEARSSL_C_OBJECTS) build/kernel/z/zlink_probe.o
 
 all: build/$(BOOTLOADER) build/$(KERNEL_BIN) build/$(KERNEL_ELF) image build/$(ESP_IMG) build/$(BOOTDISK_IMG) build/$(BOOTDISK_GPT_IMG) build/$(DATA_IMG) build/$(ISO_IMG)
 
@@ -136,6 +144,10 @@ pxe: build/pxe/$(PXE_BOOTLOADER)
 build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED_H) | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+build/third_party/bearssl/%.o: third_party/bearssl/src/%.c | build
+	$(MKDIR_P) $(@D)
+	$(CC) $(KERNEL_CFLAGS) -Wno-unused-parameter -Wno-unused-function -c $< -o $@
 
 build/kernel/%.o: kernel/%.asm | build
 	$(MKDIR_P) $(@D)

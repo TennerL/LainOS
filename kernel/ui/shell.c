@@ -1222,6 +1222,7 @@ static void cmd_wget(const char *args, const boot_info_t *info);
 static void cmd_mouse(const char *args, const boot_info_t *info);
 static void cmd_usb(const char *args, const boot_info_t *info);
 static void cmd_ticks(const char *args, const boot_info_t *info);
+static void cmd_date(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
 static void cmd_exec(const char *args, const boot_info_t *info);
 static void cmd_asm(const char *args, const boot_info_t *info);
@@ -1296,10 +1297,11 @@ static const command_t commands[] = {
     { "keymap",  "set keyboard layout",       cmd_keymap },
     { "ahci",    "show AHCI status",          cmd_ahci },
     { "net",     "show network devices",      cmd_net },
-    { "wget",    "fetch http://IP/path to a file", cmd_wget },
+    { "wget",    "fetch http(s)://host/path to a file", cmd_wget },
     { "mouse",   "show mouse diagnostics",    cmd_mouse },
     { "usb",     "show USB controllers",      cmd_usb },
     { "ticks",   "show timer ticks",          cmd_ticks },
+    { "date",    "show CMOS RTC time",        cmd_date },
     { "run",     "run a script file",         cmd_run },
     { "exec",    "run a flat binary file",     cmd_exec },
     { "asm",     "assemble a tiny asm file",   cmd_asm },
@@ -3303,6 +3305,20 @@ static void cmd_net_print_debug(void) {
     cmd_net_print_ipv4(debug.last_arp_sender_ip);
     console_puts(" target=");
     cmd_net_print_ipv4(debug.last_arp_target_ip);
+    console_puts(" tcpstream tx=");
+    console_put_dec64(debug.tcp_stream_tx);
+    console_puts(" rx=");
+    console_put_dec64(debug.tcp_stream_rx);
+    console_puts(" retx=");
+    console_put_dec64(debug.tcp_stream_retx);
+    console_puts(" tls_state=0x");
+    console_put_hex32(debug.tls_last_state);
+    console_puts(" tls_err=");
+    console_put_dec64(debug.tls_last_error);
+    console_puts(" tls_got=");
+    console_put_dec64(debug.tls_last_got);
+    console_puts(" tls_body=");
+    console_put_dec64(debug.tls_last_body_size);
     console_puts("\n");
 
     if (e1000_debug_info(0, &hw) == 0) {
@@ -3734,7 +3750,7 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
     split_first_arg((char *)args, &url, &output);
     split_first_arg(output, &output, &extra);
     if (*url == '\0' || *extra != '\0') {
-        console_puts("usage: wget http://host[:port]/path [output]\n");
+        console_puts("usage: wget URL [output]\n");
         return;
     }
 
@@ -3769,7 +3785,29 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
 
     status = net_http_get(0, url, shell_wget_buffer, LAINFS_FILE_CAPACITY + 1u, &size);
     if (status == -2) {
-        console_puts("wget failed: use plain http://host[:port]/path\n");
+        console_puts("wget failed: use http://host[:port]/path or https://host[:port]/path\n");
+        return;
+    }
+    if (status == -9) {
+        console_puts("wget failed: https unavailable\n");
+        return;
+    }
+    if (status == -10) {
+        net_debug_info_t debug;
+        net_debug_info(&debug);
+        console_puts("wget failed: tls handshake failed state=0x");
+        console_put_hex32(debug.tls_last_state);
+        console_puts(" err=");
+        console_put_dec64(debug.tls_last_error);
+        console_puts("\n");
+        return;
+    }
+    if (status == -11) {
+        console_puts("wget failed: out of memory\n");
+        return;
+    }
+    if (status == -12) {
+        console_puts("wget failed: RTC time unavailable for certificate validation\n");
         return;
     }
     if (status == -3) {
@@ -3789,7 +3827,17 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
         return;
     }
     if (status == -6) {
-        console_puts("wget failed: http receive timed out\n");
+        net_debug_info_t debug;
+        net_debug_info(&debug);
+        console_puts("wget failed: http receive timed out state=0x");
+        console_put_hex32(debug.tls_last_state);
+        console_puts(" err=");
+        console_put_dec64(debug.tls_last_error);
+        console_puts(" got=");
+        console_put_dec64(debug.tls_last_got);
+        console_puts(" body=");
+        console_put_dec64(debug.tls_last_body_size);
+        console_puts("\n");
         return;
     }
     if (status != 0) {
@@ -4238,6 +4286,40 @@ static void cmd_ticks(const char *args, const boot_info_t *info) {
     console_put_dec64(timer_ticks());
     console_puts(" hz=");
     console_put_dec64(timer_frequency());
+    console_puts("\n");
+}
+
+static void shell_put_2digits(unsigned int value) {
+    if (value < 10u) {
+        console_puts("0");
+    }
+    console_put_dec64(value);
+}
+
+static void cmd_date(const char *args, const boot_info_t *info) {
+    rtc_time_t now;
+
+    (void)args;
+    (void)info;
+
+    if (clock_get_rtc_time(&now) != 0) {
+        console_puts("date failed: RTC time unavailable\n");
+        return;
+    }
+
+    console_put_dec64(now.year);
+    console_puts("-");
+    shell_put_2digits(now.month);
+    console_puts("-");
+    shell_put_2digits(now.day);
+    console_puts(" ");
+    shell_put_2digits(now.hour);
+    console_puts(":");
+    shell_put_2digits(now.minute);
+    console_puts(":");
+    shell_put_2digits(now.second);
+    console_puts(" UTC unix=");
+    console_put_dec64(clock_unix_time_from_rtc(&now));
     console_puts("\n");
 }
 

@@ -359,6 +359,8 @@ void kernel_main(boot_info_t *info) {
     interrupts_init();
     boot_stage("timer");
     timer_init();
+    boot_stage("clock");
+    clock_init();
     boot_stage("local APIC timer");
     cpu_enable_lapic_timer(timer_frequency());
     boot_stage("dma");

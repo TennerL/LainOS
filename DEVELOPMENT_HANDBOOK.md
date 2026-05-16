@@ -252,9 +252,11 @@ there first; the built-in desktop Files window is fallback UI.
 Then open the module from the Modules window or Start menu.
 
 The `zbrowser_module` example is the smallest useful web-surface: it renders
-basic tags from `index.html`, or it fetches a plain HTTP page when `browser.url`
-contains an `http://host[:port]/path` URL. Run `net dhcp` first when a DHCP
-server is available, or set `net ip` and `net dns` manually. A quick loop is:
+basic tags from `index.html`, or it fetches a page when `browser.url` contains
+an `http://host[:port]/path` or `https://host[:port]/path` URL. HTTPS uses the
+in-kernel TLS client with SNI, CMOS RTC time, and a small built-in CA anchor
+set for certificate validation. Run `net dhcp` first when a DHCP server is
+available, or set `net ip` and `net dns` manually. A quick loop is:
 
 ```text
 write browser.url http://10.0.2.2:8000/index.html

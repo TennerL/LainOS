@@ -114,9 +114,28 @@ typedef struct {
     uint32_t out_capacity;
     uint32_t out_size;
     int header_done;
+    int full;
     char header_tail[4];
     uint32_t header_tail_count;
 } net_tcp_get_t;
+
+typedef struct {
+    int active;
+    uint32_t device;
+    uint32_t remote_ip;
+    uint16_t local_port;
+    uint16_t remote_port;
+    uint32_t seq;
+    uint32_t ack;
+    uint32_t tx_acked;
+    uint8_t remote_mac[6];
+    int connected;
+    int closed;
+    int reset;
+    uint8_t *rx_buffer;
+    uint32_t rx_capacity;
+    uint32_t rx_size;
+} net_tcp_stream_t;
 
 typedef struct {
     int active;
@@ -142,6 +161,7 @@ typedef struct {
 
 static net_arp_wait_t arp_wait;
 static net_tcp_get_t tcp_get;
+static net_tcp_stream_t tcp_stream;
 static net_dhcp_wait_t dhcp_wait;
 static net_dns_wait_t dns_wait;
 static uint16_t next_ip_id = 1u;
@@ -470,14 +490,20 @@ static int net_parse_url(const char *url,
                          uint16_t *port,
                          char *host,
                          uint32_t host_capacity,
-                         const char **path) {
+                         const char **path,
+                         int *is_https) {
     const char *s = url;
     uint32_t host_len = 0;
 
-    if (!net_starts_with(s, "http://")) {
+    if (net_starts_with(s, "http://")) {
+        s += 7;
+        *is_https = 0;
+    } else if (net_starts_with(s, "https://")) {
+        s += 8;
+        *is_https = 1;
+    } else {
         return -1;
     }
-    s += 7;
 
     while (s[host_len] &&
            s[host_len] != ':' &&
@@ -496,7 +522,7 @@ static int net_parse_url(const char *url,
         *ip = 0;
     }
 
-    *port = 80u;
+    *port = *is_https ? 443u : 80u;
     if (*s == ':') {
         ++s;
         if (net_parse_port(&s, port) != 0) {
@@ -742,10 +768,16 @@ static void net_http_copy_body_byte(net_tcp_get_t *ctx, char ch) {
         return;
     }
 
-    if (ctx->out_size + 1u < ctx->out_capacity) {
-        ctx->out[ctx->out_size++] = ch;
-        ctx->out[ctx->out_size] = '\0';
+    if (ctx->out_size + 1u >= ctx->out_capacity) {
+        ctx->full = 1;
+        return;
     }
+    ctx->out[ctx->out_size++] = ch;
+    ctx->out[ctx->out_size] = '\0';
+}
+
+static void net_service_background(void) {
+    statusbar_update_if_due();
 }
 
 static void net_dhcp_add_option(uint8_t *options, uint32_t *pos, uint8_t code, const void *data, uint8_t size) {
@@ -890,9 +922,10 @@ static void net_handle_tcp(uint32_t index,
     uint32_t tcp_header_size;
     uint32_t payload_size;
     uint32_t seq;
+    uint32_t ack;
     uint32_t src_ip;
 
-    if (!tcp_get.active || tcp_get.device != index || ip_total_size < ip_header_size + sizeof(net_tcp_header_t)) {
+    if (ip_total_size < ip_header_size + sizeof(net_tcp_header_t)) {
         return;
     }
 
@@ -904,6 +937,86 @@ static void net_handle_tcp(uint32_t index,
     }
 
     src_ip = net_ntohl(ip->src);
+    seq = net_ntohl(tcp->seq);
+    ack = net_ntohl(tcp->ack);
+    payload = (const uint8_t *)tcp + tcp_header_size;
+    payload_size = ip_total_size - ip_header_size - tcp_header_size;
+
+    if (tcp_stream.active &&
+        tcp_stream.device == index &&
+        src_ip == tcp_stream.remote_ip &&
+        net_ntohs(tcp->src_port) == tcp_stream.remote_port &&
+        net_ntohs(tcp->dst_port) == tcp_stream.local_port) {
+        if (tcp->flags & 0x04u) {
+            tcp_stream.reset = 1;
+            return;
+        }
+
+        if ((tcp->flags & 0x10u) != 0 && ack > tcp_stream.tx_acked) {
+            tcp_stream.tx_acked = ack;
+        }
+
+        if (!tcp_stream.connected && (tcp->flags & 0x12u) == 0x12u) {
+            tcp_stream.ack = seq + 1u;
+            tcp_stream.tx_acked = ack;
+            tcp_stream.connected = 1;
+            (void)net_send_tcp(index,
+                               tcp_stream.remote_mac,
+                               tcp_stream.remote_ip,
+                               tcp_stream.local_port,
+                               tcp_stream.remote_port,
+                               tcp_stream.seq,
+                               tcp_stream.ack,
+                               0x10u,
+                               0,
+                               0);
+            return;
+        }
+
+        if (payload_size != 0 && seq == tcp_stream.ack) {
+            uint32_t room = tcp_stream.rx_capacity - tcp_stream.rx_size;
+            uint32_t copy_size = payload_size < room ? payload_size : room;
+
+            if (copy_size != 0) {
+                net_copy(tcp_stream.rx_buffer + tcp_stream.rx_size, payload, copy_size);
+                tcp_stream.rx_size += copy_size;
+            }
+            ++debug_info.tcp_stream_rx;
+            tcp_stream.ack += payload_size;
+            (void)net_send_tcp(index,
+                               tcp_stream.remote_mac,
+                               tcp_stream.remote_ip,
+                               tcp_stream.local_port,
+                               tcp_stream.remote_port,
+                               tcp_stream.seq,
+                               tcp_stream.ack,
+                               0x10u,
+                               0,
+                               0);
+        }
+
+        if (tcp->flags & 0x01u) {
+            tcp_stream.ack = seq + payload_size + 1u;
+            tcp_stream.closed = 1;
+            (void)net_send_tcp(index,
+                               tcp_stream.remote_mac,
+                               tcp_stream.remote_ip,
+                               tcp_stream.local_port,
+                               tcp_stream.remote_port,
+                               tcp_stream.seq,
+                               tcp_stream.ack,
+                               0x11u,
+                               0,
+                               0);
+            ++tcp_stream.seq;
+        }
+        return;
+    }
+
+    if (!tcp_get.active || tcp_get.device != index) {
+        return;
+    }
+
     if (src_ip != tcp_get.remote_ip ||
         net_ntohs(tcp->src_port) != tcp_get.remote_port ||
         net_ntohs(tcp->dst_port) != tcp_get.local_port) {
@@ -914,10 +1027,6 @@ static void net_handle_tcp(uint32_t index,
         tcp_get.reset = 1;
         return;
     }
-
-    seq = net_ntohl(tcp->seq);
-    payload = (const uint8_t *)tcp + tcp_header_size;
-    payload_size = ip_total_size - ip_header_size - tcp_header_size;
 
     if (!tcp_get.connected && (tcp->flags & 0x12u) == 0x12u) {
         tcp_get.ack = seq + 1u;
@@ -1235,10 +1344,28 @@ static int net_wait_for_tcp_connected(uint32_t index) {
 
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
         (void)net_poll_device(index);
+        net_service_background();
         if (tcp_get.connected) {
             return 0;
         }
         if (tcp_get.reset) {
+            return -1;
+        }
+    }
+
+    return -1;
+}
+
+static int net_wait_for_tcp_stream_connected(uint32_t index) {
+    unsigned long long start = timer_ticks();
+
+    while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
+        (void)net_poll_device(index);
+        net_service_background();
+        if (tcp_stream.connected) {
+            return 0;
+        }
+        if (tcp_stream.reset) {
             return -1;
         }
     }
@@ -1252,7 +1379,11 @@ static int net_wait_for_tcp_done(uint32_t index) {
 
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
         (void)net_poll_device(index);
+        net_service_background();
         if (tcp_get.closed) {
+            return 0;
+        }
+        if (tcp_get.full) {
             return 0;
         }
         if (tcp_get.reset) {
@@ -1265,6 +1396,179 @@ static int net_wait_for_tcp_done(uint32_t index) {
     }
 
     return tcp_get.header_done ? 0 : -1;
+}
+
+int net_tcp_stream_connect(uint32_t index,
+                           uint32_t ip,
+                           uint16_t port,
+                           uint8_t *rx_buffer,
+                           uint32_t rx_capacity) {
+    uint8_t mac[6];
+    uint32_t arp_ip;
+
+    if (index >= device_count || ip == 0 || port == 0 || rx_buffer == 0 || rx_capacity == 0) {
+        return -1;
+    }
+
+    if ((ip & local_netmask) == (local_ip & local_netmask)) {
+        arp_ip = ip;
+    } else if (local_gateway != 0) {
+        arp_ip = local_gateway;
+    } else {
+        return -7;
+    }
+
+    if (net_arp_resolve(index, arp_ip, mac) != 0) {
+        return -3;
+    }
+
+    net_zero(&tcp_stream, sizeof(tcp_stream));
+    tcp_stream.active = 1;
+    tcp_stream.device = index;
+    tcp_stream.remote_ip = ip;
+    tcp_stream.remote_port = port;
+    tcp_stream.local_port = next_local_port++;
+    tcp_stream.seq = 0x20000000u + (uint32_t)timer_ticks();
+    tcp_stream.tx_acked = tcp_stream.seq;
+    net_copy(tcp_stream.remote_mac, mac, 6u);
+    tcp_stream.rx_buffer = rx_buffer;
+    tcp_stream.rx_capacity = rx_capacity;
+
+    if (net_send_tcp(index, mac, ip, tcp_stream.local_port, port, tcp_stream.seq, 0, 0x02u, 0, 0) != 0) {
+        tcp_stream.active = 0;
+        return -4;
+    }
+    ++tcp_stream.seq;
+
+    if (net_wait_for_tcp_stream_connected(index) != 0) {
+        tcp_stream.active = 0;
+        return -5;
+    }
+
+    return 0;
+}
+
+int net_tcp_stream_send(const void *data, uint32_t size) {
+    const uint8_t *p = (const uint8_t *)data;
+
+    if (!tcp_stream.active || !tcp_stream.connected || data == 0) {
+        return -1;
+    }
+
+    while (size != 0) {
+        uint32_t chunk = size;
+        uint32_t send_seq;
+        uint32_t target_ack;
+        unsigned long long start;
+        unsigned long long last_send;
+
+        if (chunk > 1200u) {
+            chunk = 1200u;
+        }
+        send_seq = tcp_stream.seq;
+        target_ack = send_seq + chunk;
+        start = timer_ticks();
+        last_send = 0;
+
+        while (tcp_stream.tx_acked < target_ack) {
+            if (last_send == 0 || timer_ticks() - last_send >= 60ull) {
+                if (net_send_tcp(tcp_stream.device,
+                                 tcp_stream.remote_mac,
+                                 tcp_stream.remote_ip,
+                                 tcp_stream.local_port,
+                                 tcp_stream.remote_port,
+                                 send_seq,
+                                 tcp_stream.ack,
+                                 0x18u,
+                                 p,
+                                 chunk) != 0) {
+                    return -2;
+                }
+                if (tcp_stream.seq < target_ack) {
+                    tcp_stream.seq = target_ack;
+                }
+                ++debug_info.tcp_stream_tx;
+                if (last_send != 0) {
+                    ++debug_info.tcp_stream_retx;
+                }
+                last_send = timer_ticks();
+            }
+            (void)net_poll_device(tcp_stream.device);
+            net_service_background();
+            if (tcp_stream.reset) {
+                return -3;
+            }
+            if (timer_ticks() - start >= NET_TIMEOUT_TICKS) {
+                return -4;
+            }
+        }
+        p += chunk;
+        size -= chunk;
+    }
+
+    return 0;
+}
+
+void net_tls_debug_set(uint32_t state,
+                       uint32_t error,
+                       uint32_t last_got,
+                       uint32_t body_size) {
+    debug_info.tls_last_state = state;
+    debug_info.tls_last_error = error;
+    debug_info.tls_last_got = last_got;
+    debug_info.tls_last_body_size = body_size;
+}
+
+int net_tcp_stream_recv(void *out, uint32_t capacity, uint32_t timeout_ticks) {
+    uint8_t *dst = (uint8_t *)out;
+    unsigned long long start;
+    uint32_t copy_size;
+
+    if (!tcp_stream.active || out == 0 || capacity == 0) {
+        return -1;
+    }
+
+    start = timer_ticks();
+    while (tcp_stream.rx_size == 0) {
+        (void)net_poll_device(tcp_stream.device);
+        net_service_background();
+        if (tcp_stream.reset) {
+            return -2;
+        }
+        if (tcp_stream.closed) {
+            return 0;
+        }
+        if (timer_ticks() - start >= timeout_ticks) {
+            return 0;
+        }
+    }
+
+    copy_size = tcp_stream.rx_size < capacity ? tcp_stream.rx_size : capacity;
+    net_copy(dst, tcp_stream.rx_buffer, copy_size);
+    if (copy_size < tcp_stream.rx_size) {
+        for (uint32_t i = copy_size; i < tcp_stream.rx_size; ++i) {
+            tcp_stream.rx_buffer[i - copy_size] = tcp_stream.rx_buffer[i];
+        }
+    }
+    tcp_stream.rx_size -= copy_size;
+    return (int)copy_size;
+}
+
+void net_tcp_stream_close(void) {
+    if (tcp_stream.active && tcp_stream.connected && !tcp_stream.closed) {
+        (void)net_send_tcp(tcp_stream.device,
+                           tcp_stream.remote_mac,
+                           tcp_stream.remote_ip,
+                           tcp_stream.local_port,
+                           tcp_stream.remote_port,
+                           tcp_stream.seq,
+                           tcp_stream.ack,
+                           0x11u,
+                           0,
+                           0);
+        ++tcp_stream.seq;
+    }
+    tcp_stream.active = 0;
 }
 
 static int net_build_http_request(const char *path,
@@ -1320,6 +1624,7 @@ static int net_wait_for_dhcp(uint32_t index) {
 
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
         (void)net_poll_device(index);
+        net_service_background();
         if (dhcp_wait.found) {
             return 0;
         }
@@ -1476,6 +1781,7 @@ int net_dns_resolve(uint32_t index, const char *name, uint32_t *out_ip) {
     start = timer_ticks();
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
         (void)net_poll_device(index);
+        net_service_background();
         if (dns_wait.found) {
             *out_ip = dns_wait.ip;
             dns_wait.active = 0;
@@ -1500,6 +1806,7 @@ int net_http_get(uint32_t index,
     uint32_t arp_ip = 0;
     char request[512];
     uint32_t request_size;
+    int is_https = 0;
 
     if (out_size) {
         *out_size = 0;
@@ -1509,11 +1816,14 @@ int net_http_get(uint32_t index,
     }
     out[0] = '\0';
 
-    if (net_parse_url(url, &ip, &port, host, sizeof(host), &path) != 0) {
+    if (net_parse_url(url, &ip, &port, host, sizeof(host), &path, &is_https) != 0) {
         return -2;
     }
     if (ip == 0 && net_dns_resolve(index, host, &ip) != 0) {
         return -8;
+    }
+    if (is_https) {
+        return net_tls_http_get(index, ip, port, host, path, out, out_capacity, out_size);
     }
 
     if ((ip & local_netmask) == (local_ip & local_netmask)) {

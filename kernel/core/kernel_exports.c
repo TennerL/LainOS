@@ -19,6 +19,8 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("put_hex64", console_put_hex64),
     KERNEL_EXPORT("put_dec64", console_put_dec64),
     KERNEL_EXPORT("ticks", timer_ticks),
+    KERNEL_EXPORT("clock_unix_time", clock_unix_time),
+    KERNEL_EXPORT("clock_get_rtc_time", clock_get_rtc_time),
     KERNEL_EXPORT("status_memory_total_kb", status_memory_total_kb),
     KERNEL_EXPORT("mem_total_kb", status_memory_total_kb),
     KERNEL_EXPORT("status_memory_free_kb", status_memory_free_kb),

@@ -325,6 +325,7 @@ Core commands:
 - `cpus`
 - `smp`
 - `ticks`
+- `date`
 - `reboot`
 - `poweroff` / `shutdown`
 - `bgcolor 0xRRGGBB`
@@ -489,9 +490,11 @@ The example `autoexec` preloads useful modules and can enter desktop mode.
 The file manager module supports toolbar deletion and a right-click Delete menu
 for files and empty directories.
 
-The tiny Z browser module renders basic HTML from `index.html` or from a
-plain HTTP URL stored in `browser.url`. Use `net dhcp` first when QEMU or the
-LAN can provide an address; numeric IPv4 URLs and DNS names are both accepted.
+The tiny Z browser module renders basic HTML from `index.html` or from an HTTP
+or HTTPS URL stored in `browser.url`. HTTPS uses the in-kernel TLS client with
+SNI, CMOS RTC time, and a small built-in CA anchor set for certificate
+validation. Use `net dhcp` first when QEMU or the LAN can provide an address;
+numeric IPv4 URLs and DNS names are both accepted.
 For example:
 
 ```text
@@ -507,7 +510,7 @@ The kernel export table exposes selected symbols to assembler, `.Z`, linked
 objects, and resident modules. Current groups include:
 
 - console output: `puts`, `put_hex64`, `put_dec64`
-- timer: `ticks`
+- timer/clock: `ticks`, `clock_unix_time`, `clock_get_rtc_time`
 - memory status: `mem_total_kb`, `mem_free_kb`, `mem_used_kb`
 - CPU status: `cpu_count`, `cpu_usage`
 - SMP work queue: `smp_submit_work`, `smp_work_done`, `smp_wait_work`,

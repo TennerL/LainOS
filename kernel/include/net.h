@@ -48,6 +48,15 @@ typedef struct {
     uint32_t last_arp_requested_ip;
     uint32_t last_arp_sender_ip;
     uint32_t last_arp_target_ip;
+    uint64_t tcp_stream_rx;
+    uint64_t tcp_stream_tx;
+    uint64_t tcp_stream_retx;
+    uint32_t tcp_stream_last_state;
+    uint32_t tcp_stream_last_error;
+    uint32_t tls_last_state;
+    uint32_t tls_last_error;
+    uint32_t tls_last_got;
+    uint32_t tls_last_body_size;
 } net_debug_info_t;
 
 typedef struct {
@@ -143,6 +152,26 @@ int net_http_get(uint32_t index,
                  char *out,
                  uint32_t out_capacity,
                  uint32_t *out_size);
+int net_tls_http_get(uint32_t index,
+                     uint32_t ip,
+                     uint16_t port,
+                     const char *host,
+                     const char *path,
+                     char *out,
+                     uint32_t out_capacity,
+                     uint32_t *out_size);
+int net_tcp_stream_connect(uint32_t index,
+                           uint32_t ip,
+                           uint16_t port,
+                           uint8_t *rx_buffer,
+                           uint32_t rx_capacity);
+int net_tcp_stream_send(const void *data, uint32_t size);
+int net_tcp_stream_recv(void *out, uint32_t capacity, uint32_t timeout_ticks);
+void net_tcp_stream_close(void);
+void net_tls_debug_set(uint32_t state,
+                       uint32_t error,
+                       uint32_t last_got,
+                       uint32_t body_size);
 int net_arp_probe(uint32_t index, uint32_t ip, uint8_t mac[NET_MAC_SIZE]);
 void net_debug_info(net_debug_info_t *out);
 void e1000_init(void);
