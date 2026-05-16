@@ -34,6 +34,8 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("status_cpu_core_count", status_cpu_core_count),
     KERNEL_EXPORT("cpu_count", status_cpu_core_count),
     KERNEL_EXPORT("cpu_usage", status_cpu_usage_percent),
+    KERNEL_EXPORT("cpu_local_timer_ticks", cpu_core_local_timer_ticks),
+    KERNEL_EXPORT("cpu_lapic_timer_frequency", cpu_lapic_timer_frequency),
     KERNEL_EXPORT("smp_submit_work", smp_submit_work),
     KERNEL_EXPORT("smp_work_done", smp_work_done),
     KERNEL_EXPORT("smp_wait_work", smp_wait_work),

@@ -197,19 +197,24 @@ submit function-pointer jobs to online APs:
 - `smp_work_done(id)`
 - `smp_pending_work_count()`
 
-The shell command `smp` submits visible test work. CPU usage accounting records
-busy ticks for AP-executed work, so `taskmgr_module` can show activity on
-secondary CPU rows.
+The shell command `smp` submits visible test work. CPU usage accounting uses
+cycle-based idle/busy sampling on the bootstrap CPU and records busy ticks for
+AP-executed work, so `taskmgr_module` can show foreground activity and
+secondary CPU queue work without charging whole PIT ticks for tiny redraws.
 
 This is not a preemptive scheduler yet. There are no per-core run queues,
 kernel threads, TSS/IST setup, APIC timer interrupts, or userspace processes.
-Basic per-core state tracks LAPIC ID, online state, and busy ticks.
+Basic per-core state tracks LAPIC ID, online state, busy ticks, and local timer
+ticks.
 
 ### Timer And Interrupts
 
 The kernel uses the legacy PIT at `250 Hz`, remaps the PIC to IRQ vectors
-starting at 32, and installs IRQ0 for timer ticks. The IDT also contains CPU
-exception stubs, PS/2 mouse IRQ handling, and the SMP IPI vector.
+starting at 32, and installs IRQ0 for global timer ticks. After the PIT is
+running, it calibrates the local APIC timer, enables a periodic LAPIC timer
+interrupt on online cores, and records per-core local timer ticks. The IDT also
+contains CPU exception stubs, PS/2 mouse IRQ handling, the LAPIC timer vector,
+and the SMP IPI vector.
 
 Useful shell command:
 
@@ -306,8 +311,8 @@ usb start 0
 usb enum 0
 ```
 
-AHCI is early but integrated with the block-device API. E1000 and basic network
-diagnostics exist for experimentation.
+AHCI is early but integrated with the block-device API. E1000 networking can
+use DHCP, ARP, DNS, and plain HTTP fetches.
 
 ## Shell Commands
 
@@ -345,19 +350,24 @@ Storage and files:
 - `cd \`
 - `pwd`
 - `mkdir name`
-- `rm name` / `del name`
+- `rm path` / `del path`
 - `rename old new` / `mv old new`
 - `cp source dest`
 - `write name text`
 - `cat name`
 - `browse [path-or-drive:]`
 
+In the console file browser, use `D` to delete the selected file or empty
+directory. Right-click an entry for the same delete action.
+
 Hardware and UI:
 
 - `ahci`
 - `usb [subcommand]`
 - `net`
-- `wget http://IP/path output`
+- `net dhcp`
+- `net resolve host`
+- `wget http://host/path output`
 - `desktop`
 
 Toolchain:
@@ -393,6 +403,7 @@ Desktop features:
 - Terminal window running the real shell.
 - Start menu and taskbar.
 - File browser window.
+- File browser delete support from the `Del` button or right-click menu.
 - Modules window and module app windows.
 - Native `.Z` editor with Save, Build, Inst, Load, and Log buttons.
 - Mouse drag/resize with lightweight outline previews.
@@ -475,10 +486,13 @@ zmod zbrowser_module.zo
 ```
 
 The example `autoexec` preloads useful modules and can enter desktop mode.
+The file manager module supports toolbar deletion and a right-click Delete menu
+for files and empty directories.
 
 The tiny Z browser module renders basic HTML from `index.html` or from a
-plain HTTP URL stored in `browser.url`. Networking currently expects numeric
-IPv4 HTTP URLs, for example:
+plain HTTP URL stored in `browser.url`. Use `net dhcp` first when QEMU or the
+LAN can provide an address; numeric IPv4 URLs and DNS names are both accepted.
+For example:
 
 ```text
 write browser.url http://10.0.2.2:8000/index.html
@@ -579,8 +593,8 @@ Things that are intentionally incomplete:
 - no dynamic kernel module ABI beyond the `.Z` resident module experiment
 - no NTFS driver inside the kernel
 - heap is active: page-range allocation, `kmalloc`/`kfree` classes, basic
-  canary/double-free diagnostics, and the largest driver/UI scratch buffers
-  are on heap
+  canary/double-free diagnostics, fragmentation/failure reporting, a bounded
+  `heaptest` diagnostic, and the largest driver/UI scratch buffers are on heap
 - limited GOP pixel-format support
 - tiny `lainfs` limits and contiguous file allocation
 - early USB/xHCI enumeration

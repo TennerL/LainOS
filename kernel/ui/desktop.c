@@ -145,6 +145,10 @@ static int files_bounds_ready;
 static char files_path[FILE_BROWSER_PATH_SIZE];
 static char files_selected_name[32];
 static file_kind_t files_selected_kind;
+static uint32_t files_selected_type;
+static int files_context_open;
+static uint32_t files_context_x;
+static uint32_t files_context_y;
 static char desktop_image_path[FILE_BROWSER_PATH_SIZE];
 static int start_menu_open;
 static desktop_window_t modules_window;
@@ -1088,6 +1092,8 @@ static void files_child_path(const char *name, char *out, uint32_t out_size) {
 static void files_clear_selection(void) {
     files_selected_name[0] = '\0';
     files_selected_kind = FILE_KIND_OTHER;
+    files_selected_type = 0;
+    files_context_open = 0;
 }
 
 static file_kind_t files_kind_for_name(const char *name) {
@@ -1162,6 +1168,23 @@ static int files_action_hit(uint32_t x, uint32_t y, uint32_t index) {
     uint32_t button_y = files_window.content_y + 28u;
 
     return point_in_rect(x, y, button_x, button_y, FILE_ACTION_BUTTON_W, START_MENU_ITEM_H - 2u);
+}
+
+static int files_context_delete_hit(uint32_t x, uint32_t y) {
+    return files_context_open &&
+           point_in_rect(x, y, files_context_x + 4u, files_context_y + 4u, 84u, START_MENU_ITEM_H - 2u);
+}
+
+static int files_delete_button_hit(uint32_t x, uint32_t y) {
+    if (!files_open || files_window.content_w < 80u) {
+        return 0;
+    }
+    return point_in_rect(x,
+                         y,
+                         files_window.content_x + files_window.content_w - 70u,
+                         files_window.content_y + 28u,
+                         FILE_ACTION_BUTTON_W,
+                         START_MENU_ITEM_H - 2u);
 }
 
 static int desktop_editor_target_name(char *out, uint32_t out_size) {
@@ -1978,6 +2001,11 @@ static void desktop_draw_files(void) {
         } else if (files_selected_kind == FILE_KIND_BINARY) {
             desktop_draw_button(files_window.content_x + 82u, files_window.content_y + 28u, FILE_ACTION_BUTTON_W, "Run", 0);
         }
+        desktop_draw_button(files_window.content_x + files_window.content_w - 70u,
+                            files_window.content_y + 28u,
+                            FILE_ACTION_BUTTON_W,
+                            "Del",
+                            0);
     }
 
     int count = shell_api_dir_count(files_path);
@@ -2006,6 +2034,24 @@ static void desktop_draw_files(void) {
         }
         console_draw_text_at_pixel(files_window.content_x + 8u, row_y + 6u, files_badge_for_kind(kind, (uint32_t)type), 0xd9e4deu, i & 1 ? 0x26323au : 0x202a31u);
         console_draw_text_at_pixel(files_window.content_x + 64u, row_y + 6u, name, 0xf5fbf7u, i & 1 ? 0x26323au : 0x202a31u);
+    }
+
+    if (files_context_open && files_selected_name[0] != '\0') {
+        uint32_t menu_x = files_context_x;
+        uint32_t menu_y = files_context_y;
+
+        if (menu_x + 92u > files_window.x + files_window.w) {
+            menu_x = files_window.x + files_window.w > 96u ? files_window.x + files_window.w - 96u : files_window.x;
+        }
+        if (menu_y + START_MENU_ITEM_H > files_window.y + files_window.h) {
+            menu_y = files_window.y + files_window.h > START_MENU_ITEM_H + 4u ?
+                     files_window.y + files_window.h - START_MENU_ITEM_H - 4u :
+                     files_window.y;
+        }
+        files_context_x = menu_x;
+        files_context_y = menu_y;
+        desktop_panel(menu_x, menu_y, 92u, START_MENU_ITEM_H + 8u, 0x221a2du);
+        desktop_draw_button(menu_x + 4u, menu_y + 4u, 84u, "Delete", 0);
     }
 }
 
@@ -3020,6 +3066,27 @@ static int desktop_files_view_selected(void) {
     return desktop_api_open_image(path);
 }
 
+static void desktop_files_delete_selected(void) {
+    char path[FILE_BROWSER_PATH_SIZE];
+    int status;
+
+    if (files_selected_name[0] == '\0') {
+        return;
+    }
+
+    files_child_path(files_selected_name, path, sizeof(path));
+    status = shell_api_delete(path);
+    files_context_open = 0;
+    if (status == 0) {
+        files_clear_selection();
+        editor_status = "deleted";
+    } else if (status == -9) {
+        editor_status = "delete failed: directory not empty";
+    } else {
+        editor_status = "delete failed";
+    }
+}
+
 static int desktop_editor_button_hit(uint32_t x, uint32_t y, uint32_t index) {
     uint32_t button_x = editor_window.content_x + 6u + index * (DESKTOP_EDITOR_BUTTON_W + 6u);
     uint32_t button_y = editor_window.content_y + 3u;
@@ -3237,6 +3304,8 @@ void desktop_run(const boot_info_t *info) {
         wheel_delta = mouse_consume_wheel();
         int left_pressed = (buttons & MOUSE_LEFT) != 0;
         int left_was_pressed = (last_buttons & MOUSE_LEFT) != 0;
+        int right_pressed = (buttons & MOUSE_RIGHT) != 0;
+        int right_was_pressed = (last_buttons & MOUSE_RIGHT) != 0;
 
         while (keyboard_poll_key(&key)) {
             if (editor_open && editor_focused) {
@@ -3263,6 +3332,7 @@ void desktop_run(const boot_info_t *info) {
             desktop_mouse_snapshot(&x, &y, &buttons);
         }
         left_pressed = (buttons & MOUSE_LEFT) != 0;
+        right_pressed = (buttons & MOUSE_RIGHT) != 0;
         if (wheel_delta != 0) {
             desktop_mouse_last_activity_tick = timer_ticks();
             if (editor_open &&
@@ -3313,6 +3383,47 @@ void desktop_run(const boot_info_t *info) {
             desktop_mouse_snapshot(&last_x, &last_y, &last_buttons);
             cursor_draw_at(last_x, last_y);
             continue;
+        }
+
+        if (right_pressed && !right_was_pressed && files_open &&
+            point_in_rect(x, y, files_window.content_x, files_window.content_y + 58u, files_window.content_w, files_window.content_h)) {
+            uint32_t row = (y - (files_window.content_y + 58u)) / 22u;
+            char name[32];
+
+            if (shell_api_dir_name(files_path, row, name, sizeof(name)) == 0) {
+                int type = shell_api_dir_type(files_path, row);
+                cursor_restore();
+                files_context_open = 1;
+                files_context_x = x;
+                files_context_y = y;
+                text_copy_limited(files_selected_name, sizeof(files_selected_name), name);
+                files_selected_kind = files_kind_for_name(name);
+                files_selected_type = (uint32_t)type;
+                desktop_damage_window(&files_window);
+                desktop_redraw_all();
+                cursor_draw_at(x, y);
+                last_buttons = buttons;
+                continue;
+            }
+        }
+
+        if (right_pressed && !right_was_pressed) {
+            desktop_module_window_t *module_slot = desktop_top_module_app_window_at(x, y);
+
+            if (module_slot != 0 &&
+                point_in_rect(x,
+                              y,
+                              module_slot->window.content_x,
+                              module_slot->window.content_y,
+                              module_slot->window.content_w,
+                              module_slot->window.content_h)) {
+                cursor_restore();
+                desktop_terminal_blur();
+                (void)desktop_tick_module_app(module_slot, 1);
+                cursor_draw_at(x, y);
+                last_buttons = buttons;
+                continue;
+            }
         }
 
         if (left_pressed && editor_scroll_drag) {
@@ -3373,6 +3484,20 @@ void desktop_run(const boot_info_t *info) {
         if (left_pressed && !left_was_pressed) {
             desktop_app_t app;
             desktop_module_window_t *module_slot;
+
+            if (files_context_open) {
+                cursor_restore();
+                if (files_context_delete_hit(x, y)) {
+                    desktop_files_delete_selected();
+                } else {
+                    files_context_open = 0;
+                }
+                desktop_damage_window(&files_window);
+                desktop_redraw_all();
+                cursor_draw_at(x, y);
+                last_buttons = buttons;
+                continue;
+            }
 
             if (editor_open && desktop_window_minimize_hit(&editor_window, x, y)) {
                 cursor_restore();
@@ -3845,6 +3970,16 @@ void desktop_run(const boot_info_t *info) {
             }
 
             if (files_open && files_selected_name[0] != '\0') {
+                if (files_delete_button_hit(x, y)) {
+                    cursor_restore();
+                    desktop_damage_window(&files_window);
+                    desktop_files_delete_selected();
+                    desktop_damage_window(&files_window);
+                    desktop_redraw_all();
+                    cursor_draw_at(x, y);
+                    last_buttons = buttons;
+                    continue;
+                }
                 if ((files_selected_kind == FILE_KIND_SOURCE ||
                      files_selected_kind == FILE_KIND_MANIFEST ||
                      files_selected_kind == FILE_KIND_LOG) &&
@@ -3942,6 +4077,8 @@ void desktop_run(const boot_info_t *info) {
                     } else {
                         text_copy_limited(files_selected_name, sizeof(files_selected_name), name);
                         files_selected_kind = files_kind_for_name(name);
+                        files_selected_type = (uint32_t)type;
+                        files_context_open = 0;
                         if (files_selected_kind == FILE_KIND_IMAGE) {
                             char path[FILE_BROWSER_PATH_SIZE];
                             files_child_path(name, path, sizeof(path));

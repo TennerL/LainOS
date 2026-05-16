@@ -1191,6 +1191,7 @@ static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
 static void cmd_heap(const char *args, const boot_info_t *info);
+static void cmd_heaptest(const char *args, const boot_info_t *info);
 static void cmd_cpus(const char *args, const boot_info_t *info);
 static void cmd_smp(const char *args, const boot_info_t *info);
 static void cmd_gfx(const char *args, const boot_info_t *info);
@@ -1264,6 +1265,7 @@ static const command_t commands[] = {
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
     { "heap",    "show heap diagnostics",     cmd_heap },
+    { "heaptest", "run heap stress diagnostics", cmd_heaptest },
     { "cpus",    "show CPU topology",         cmd_cpus },
     { "smp",     "run a multicore work test", cmd_smp },
     { "gfx",     "show graphics SMP stats",   cmd_gfx },
@@ -1464,8 +1466,15 @@ static void cmd_heap(const char *args, const boot_info_t *info) {
     console_put_dec64(stats.free_ranges);
     console_puts(" largest=");
     console_put_dec64(stats.largest_free_range_pages);
+    console_puts(" smallest=");
+    console_put_dec64(stats.smallest_free_range_pages);
+    console_puts(" frag=");
+    console_put_dec64(stats.fragmentation_percent);
+    console_puts("%");
     console_puts(" pages\nsmall free blocks: ");
     console_put_dec64(stats.small_free_blocks);
+    console_puts("\nallocation failures: ");
+    console_put_dec64(stats.allocation_failures);
     console_puts("\nalloc/free/live/peak: ");
     console_put_dec64(stats.allocation_count);
     console_puts("/");
@@ -1484,6 +1493,50 @@ static void cmd_heap(const char *args, const boot_info_t *info) {
     console_puts(shell_work_buffers_ready ? "heap\n" : "not allocated\n");
 }
 
+static void cmd_heaptest(const char *args, const boot_info_t *info) {
+    kmem_test_result_t result;
+
+    (void)args;
+    (void)info;
+
+    console_puts("running heap diagnostics...\n");
+    kmem_run_selftest(&result);
+    console_puts(result.passed ? "heaptest: PASS\n" : "heaptest: FAIL\n");
+    console_puts("alloc attempts/successes: ");
+    console_put_dec64(result.alloc_attempts);
+    console_puts("/");
+    console_put_dec64(result.alloc_successes);
+    console_puts("\nexpected allocation failures: ");
+    console_put_dec64(result.expected_failures);
+    console_puts(" unexpected successes: ");
+    console_put_dec64(result.unexpected_successes);
+    console_puts("\nlive allocations before/after: ");
+    console_put_dec64(result.live_allocations_before);
+    console_puts("/");
+    console_put_dec64(result.live_allocations_after);
+    console_puts("\nheap used before/after: ");
+    console_put_dec64(result.heap_used_before);
+    console_puts("/");
+    console_put_dec64(result.heap_used_after);
+    console_puts("\nfree pages before/after: ");
+    console_put_dec64(result.free_pages_before);
+    console_puts("/");
+    console_put_dec64(result.free_pages_after);
+    console_puts("\nlargest free range before/after: ");
+    console_put_dec64(result.largest_free_range_before);
+    console_puts("/");
+    console_put_dec64(result.largest_free_range_after);
+    console_puts("\nsmall free blocks before/after: ");
+    console_put_dec64(result.small_free_blocks_before);
+    console_puts("/");
+    console_put_dec64(result.small_free_blocks_after);
+    console_puts("\nheap fault counters before/after: ");
+    console_put_dec64(result.fault_count_before);
+    console_puts("/");
+    console_put_dec64(result.fault_count_after);
+    console_puts("\n");
+}
+
 static void cmd_cpus(const char *args, const boot_info_t *info) {
     unsigned int count = cpu_core_count();
 
@@ -1497,6 +1550,10 @@ static void cmd_cpus(const char *args, const boot_info_t *info) {
     console_put_dec64(cpu_online_core_count());
     console_puts("\ncores: ");
     console_put_dec64(count);
+    console_puts("\nlocal APIC timer hz/count: ");
+    console_put_dec64(cpu_lapic_timer_frequency());
+    console_puts("/");
+    console_put_dec64(cpu_lapic_timer_init_count());
     console_puts("\n");
 
     for (unsigned int i = 0; i < count; ++i) {
@@ -1507,6 +1564,10 @@ static void cmd_cpus(const char *args, const boot_info_t *info) {
         if (i == 0) {
             console_puts(" (bootstrap)");
         }
+        console_puts(" timer=");
+        console_puts(cpu_core_local_timer_configured(i) ? "on" : "off");
+        console_puts(" ticks=");
+        console_put_dec64(cpu_core_local_timer_ticks(i));
         console_puts("\n");
     }
 }
@@ -2249,20 +2310,21 @@ static void cmd_rm(const char *args, const boot_info_t *info) {
     (void)info;
 
     int drive = active_drive();
-    const char *name = skip_const_spaces(args);
+    const char *path = skip_const_spaces(args);
+    int status;
 
     if (drive < 0) {
         console_puts("select a mounted drive first, for example C:\n");
         return;
     }
 
-    if (*name == '\0') {
-        console_puts("usage: rm name\n");
+    if (*path == '\0') {
+        console_puts("usage: rm path\n");
         return;
     }
 
-    int status = lainfs_delete_in_dir((char)('A' + drive), cwd_dirs[drive], name);
-    if (status == -2) {
+    status = shell_api_delete(path);
+    if (status == -1 || status == -2) {
         console_puts("delete failed: invalid name\n");
     } else if (status == -3) {
         console_puts("drive is not formatted as lainfs\n");
@@ -2544,12 +2606,12 @@ int shell_api_delete(const char *path) {
     char name[32];
 
     if (drive < 0 || path == 0 ||
-        resolve_file_path((char)('A' + drive),
-                          cwd_dirs[drive],
-                          path,
-                          &parent,
-                          name,
-                          sizeof(name)) != 0) {
+        resolve_file_path_with_drive(path,
+                                     drive,
+                                     &drive,
+                                     &parent,
+                                     name,
+                                     sizeof(name)) != 0) {
         return -1;
     }
 
@@ -3207,6 +3269,8 @@ static void cmd_net_print_debug(void) {
     console_put_dec64(debug.arp_requests);
     console_puts(" arp_txerr=");
     console_put_dec64(debug.arp_tx_errors);
+    console_puts(" udp_txerr=");
+    console_put_dec64(debug.udp_tx_errors);
     console_puts(" arp_rx=");
     console_put_dec64(debug.arp_replies);
     console_puts(" arp_bad=");
@@ -3215,8 +3279,18 @@ static void cmd_net_print_debug(void) {
     console_put_dec64(debug.rx_arp);
     console_puts(" rx_ip=");
     console_put_dec64(debug.rx_ipv4);
+    console_puts(" rx_udp=");
+    console_put_dec64(debug.rx_udp);
     console_puts(" rx_other=");
     console_put_dec64(debug.rx_other);
+    console_puts(" dhcp=");
+    console_put_dec64(debug.dhcp_tx);
+    console_puts("/");
+    console_put_dec64(debug.dhcp_rx);
+    console_puts(" dns=");
+    console_put_dec64(debug.dns_tx);
+    console_puts("/");
+    console_put_dec64(debug.dns_rx);
     console_puts(" last_type=0x");
     console_put_hex32(debug.last_eth_type);
     console_puts(" inner=0x");
@@ -3474,11 +3548,87 @@ static void cmd_net(const char *args, const boot_info_t *info) {
             return;
         }
 
+        if (streq(command, "dns")) {
+            uint32_t dns = 0;
+
+            if (*index_text == '\0') {
+                console_puts("dns=");
+                cmd_net_print_ipv4(net_dns_server());
+                console_puts("\n");
+                return;
+            }
+
+            if (*extra != '\0' || net_parse_ipv4_addr(index_text, &dns) != 0) {
+                console_puts("usage: net dns [server]\n");
+                return;
+            }
+
+            net_set_dns_server(dns);
+            console_puts("net: dns=");
+            cmd_net_print_ipv4(net_dns_server());
+            console_puts("\n");
+            return;
+        }
+
+        if (streq(command, "dhcp")) {
+            if (*index_text != '\0' || *extra != '\0') {
+                console_puts("usage: net dhcp\n");
+                return;
+            }
+
+            if (net_device_count() == 0) {
+                console_puts("net: no supported network device\n");
+                return;
+            }
+
+            console_puts("net: dhcp on eth0\n");
+            if (net_dhcp_configure(0) != 0) {
+                console_puts("net: dhcp failed\n");
+                cmd_net_print_debug();
+                return;
+            }
+            console_puts("net: ip=");
+            cmd_net_print_ipv4(net_ipv4_address());
+            console_puts(" mask=");
+            cmd_net_print_ipv4(net_ipv4_netmask());
+            console_puts(" gateway=");
+            cmd_net_print_ipv4(net_ipv4_gateway());
+            console_puts(" dns=");
+            cmd_net_print_ipv4(net_dns_server());
+            console_puts("\n");
+            return;
+        }
+
+        if (streq(command, "resolve")) {
+            uint32_t ip = 0;
+
+            if (*index_text == '\0' || *extra != '\0') {
+                console_puts("usage: net resolve host\n");
+                return;
+            }
+
+            if (net_device_count() == 0) {
+                console_puts("net: no supported network device\n");
+                return;
+            }
+
+            if (net_dns_resolve(0, index_text, &ip) != 0) {
+                console_puts("net: resolve failed\n");
+                return;
+            }
+            console_puts("net: ");
+            console_puts(index_text);
+            console_puts("=");
+            cmd_net_print_ipv4(ip);
+            console_puts("\n");
+            return;
+        }
+
         if ((!streq(command, "poll") && !streq(command, "send")) ||
             *index_text == '\0' ||
             *extra != '\0' ||
             parse_u64_arg(index_text, &index) != 0) {
-            console_puts("usage: net [poll|send] index | net arp ip | net reset | net ip [address mask [gateway]]\n");
+            console_puts("usage: net [poll|send] index | net arp ip | net dhcp | net dns [server] | net resolve host | net reset | net ip [address mask [gateway]]\n");
             return;
         }
 
@@ -3519,6 +3669,8 @@ static void cmd_net(const char *args, const boot_info_t *info) {
     cmd_net_print_ipv4(net_ipv4_netmask());
     console_puts(" gateway=");
     cmd_net_print_ipv4(net_ipv4_gateway());
+    console_puts(" dns=");
+    cmd_net_print_ipv4(net_dns_server());
     console_puts("\n");
 
     cmd_net_print_debug();
@@ -3582,7 +3734,7 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
     split_first_arg((char *)args, &url, &output);
     split_first_arg(output, &output, &extra);
     if (*url == '\0' || *extra != '\0') {
-        console_puts("usage: wget http://IP[:port]/path [output]\n");
+        console_puts("usage: wget http://host[:port]/path [output]\n");
         return;
     }
 
@@ -3617,7 +3769,7 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
 
     status = net_http_get(0, url, shell_wget_buffer, LAINFS_FILE_CAPACITY + 1u, &size);
     if (status == -2) {
-        console_puts("wget failed: use plain http://numeric.ip[:port]/path\n");
+        console_puts("wget failed: use plain http://host[:port]/path\n");
         return;
     }
     if (status == -3) {
@@ -3626,6 +3778,10 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
     }
     if (status == -7) {
         console_puts("wget failed: no route; set net ip address mask gateway\n");
+        return;
+    }
+    if (status == -8) {
+        console_puts("wget failed: dns lookup failed; try net dhcp or net dns server\n");
         return;
     }
     if (status == -5) {

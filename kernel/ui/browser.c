@@ -38,6 +38,11 @@ static char (*rendered_cells)[BROWSER_RENDER_COLS];
 static uint8_t (*rendered_cell_valid)[BROWSER_RENDER_COLS];
 static unsigned int rendered_cols;
 static unsigned int rendered_rows;
+static int context_menu_open;
+static unsigned int context_menu_pane;
+static uint32_t context_menu_index;
+static unsigned int context_menu_col;
+static unsigned int context_menu_row;
 
 static void enter_selected(void);
 static void go_up(void);
@@ -388,8 +393,60 @@ static void draw_browser(void) {
     }
 
     fill_line(line, cols);
-    put_text(line, cols, &col, status_message ? status_message : "Tab pane  Enter open  Backspace up  C copy  M move  Esc exit");
+    put_text(line, cols, &col, status_message ? status_message : "Tab pane  Enter open  Backspace up  C copy  M move  D delete  Esc exit");
     draw_line_at(0, rows - 1u, line, cols);
+
+    if (context_menu_open) {
+        unsigned int menu_w = 12u;
+        unsigned int menu_h = 3u;
+        unsigned int menu_col = context_menu_col;
+        unsigned int menu_row = context_menu_row;
+
+        if (menu_col + menu_w >= cols) {
+            menu_col = cols > menu_w ? cols - menu_w : 0u;
+        }
+        if (menu_row + menu_h >= rows) {
+            menu_row = rows > menu_h ? rows - menu_h : 0u;
+        }
+
+        fill_line(line, menu_w);
+        col = 0;
+        put_text(line, menu_w, &col, "+----------+");
+        draw_line_at(menu_col, menu_row, line, menu_w);
+        fill_line(line, menu_w);
+        col = 0;
+        put_text(line, menu_w, &col, "| Delete  |");
+        draw_line_at(menu_col, menu_row + 1u, line, menu_w);
+        fill_line(line, menu_w);
+        col = 0;
+        put_text(line, menu_w, &col, "+----------+");
+        draw_line_at(menu_col, menu_row + 2u, line, menu_w);
+    }
+}
+
+static void delete_selected(void) {
+    browser_pane_t *pane = &panes[active_pane];
+    browser_entry_t *entry;
+    int status;
+
+    context_menu_open = 0;
+    status_message = 0;
+    if (entry_counts[active_pane] == 0u || pane->selected >= entry_counts[active_pane]) {
+        return;
+    }
+
+    entry = &entries[active_pane][pane->selected];
+    status = lainfs_delete_in_dir(pane->drive, pane->dir_id, entry->name);
+    if (status == 0) {
+        status_message = "deleted";
+        reload_all();
+    } else if (status == -9) {
+        status_message = "delete failed: directory is not empty";
+    } else if (status == -5) {
+        status_message = "delete failed: not found";
+    } else {
+        status_message = "delete failed";
+    }
 }
 
 static int browser_click(uint32_t mouse_x, uint32_t mouse_y, int buttons) {
@@ -417,6 +474,26 @@ static int browser_click(uint32_t mouse_x, uint32_t mouse_y, int buttons) {
         return 0;
     }
 
+    if (context_menu_open && (buttons & MOUSE_LEFT) != 0) {
+        unsigned int menu_col = context_menu_col;
+        unsigned int menu_row = context_menu_row;
+
+        if (menu_col + 12u >= cols) {
+            menu_col = cols > 12u ? cols - 12u : 0u;
+        }
+        if (menu_row + 3u >= rows) {
+            menu_row = rows > 3u ? rows - 3u : 0u;
+        }
+        if (col >= menu_col && col < menu_col + 12u && row == menu_row + 1u) {
+            active_pane = context_menu_pane;
+            panes[active_pane].selected = context_menu_index;
+            delete_selected();
+            return 1;
+        }
+        context_menu_open = 0;
+        return 1;
+    }
+
     left_width = cols / 2u;
     right_x = left_width + 1u;
     body_rows = rows - 3u;
@@ -437,7 +514,25 @@ static int browser_click(uint32_t mouse_x, uint32_t mouse_y, int buttons) {
 
     if ((buttons & MOUSE_RIGHT) != 0) {
         active_pane = pane_index;
-        go_up();
+        context_menu_open = 0;
+        if (row < 2u) {
+            go_up();
+            return 1;
+        }
+        row -= 2u;
+        if (row >= body_rows) {
+            return 0;
+        }
+        index = panes[pane_index].top + row;
+        if (index >= entry_counts[pane_index]) {
+            return 1;
+        }
+        panes[pane_index].selected = index;
+        context_menu_open = 1;
+        context_menu_pane = pane_index;
+        context_menu_index = index;
+        context_menu_col = col;
+        context_menu_row = row + 2u;
         return 1;
     }
 
@@ -445,6 +540,7 @@ static int browser_click(uint32_t mouse_x, uint32_t mouse_y, int buttons) {
         return 0;
     }
 
+    context_menu_open = 0;
     if (row < 2u) {
         status_message = 0;
         active_pane = pane_index;
@@ -716,6 +812,9 @@ int browser_run(char left_drive,
                 changed = 1;
             } else if (key.type == KEY_CHAR && (key.ch == 'c' || key.ch == 'C')) {
                 copy_to_other_pane();
+                changed = 1;
+            } else if (key.type == KEY_CHAR && (key.ch == 'd' || key.ch == 'D')) {
+                delete_selected();
                 changed = 1;
             }
         }

@@ -16,6 +16,8 @@
 #define CONSOLE_MAX_PANES 2u
 #define CONSOLE_SPLIT_GAP 16u
 #define CONSOLE_SPLIT_DIVIDER_WIDTH 2u
+#define CONSOLE_SHADOW_MAX_COLS 512u
+#define CONSOLE_SHADOW_MAX_ROWS 256u
 
 typedef struct {
     uint32_t left;
@@ -40,6 +42,10 @@ static uint32_t current_fg_color = DEFAULT_FG_COLOR;
 static uint32_t current_bg_color = DEFAULT_BG_COLOR;
 static char dec_buffer[32];
 static void (*console_output_hook)(char ch);
+static char console_shadow[CONSOLE_MAX_PANES][CONSOLE_SHADOW_MAX_ROWS][CONSOLE_SHADOW_MAX_COLS];
+
+static uint32_t console_pane_index(const console_pane_t *pane);
+static void console_shadow_clear(uint32_t pane_index);
 
 static console_pane_t *active_pane(void) {
     return &console_panes[active_console_pane];
@@ -88,6 +94,7 @@ static void clear_region(uint32_t left, uint32_t top, uint32_t right, uint32_t b
 
 static void clear_pane(const console_pane_t *pane) {
     clear_region(pane->left, pane->top, pane->right, pane->bottom);
+    console_shadow_clear(console_pane_index(pane));
 }
 
 static void draw_split_divider(void) {
@@ -166,6 +173,141 @@ void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     graphics_put_pixel(x, y, color);
 }
 
+static uint32_t console_pane_index(const console_pane_t *pane) {
+    for (uint32_t i = 0; i < CONSOLE_MAX_PANES; ++i) {
+        if (pane == &console_panes[i]) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+static uint32_t console_pane_cols(const console_pane_t *pane) {
+    if (pane->right <= pane->left + FONT_W) {
+        return 0;
+    }
+    return (pane->right - pane->left) / FONT_W;
+}
+
+static uint32_t console_pane_rows(const console_pane_t *pane) {
+    if (pane->bottom <= pane->top + FONT_H) {
+        return 0;
+    }
+    return (pane->bottom - pane->top) / CONSOLE_ROW_ADVANCE;
+}
+
+static int console_pane_shadow_fits(const console_pane_t *pane) {
+    return console_pane_cols(pane) <= CONSOLE_SHADOW_MAX_COLS &&
+           console_pane_rows(pane) <= CONSOLE_SHADOW_MAX_ROWS;
+}
+
+static void console_shadow_clear(uint32_t pane_index) {
+    if (pane_index >= CONSOLE_MAX_PANES) {
+        return;
+    }
+    for (uint32_t row = 0; row < CONSOLE_SHADOW_MAX_ROWS; ++row) {
+        for (uint32_t col = 0; col < CONSOLE_SHADOW_MAX_COLS; ++col) {
+            console_shadow[pane_index][row][col] = ' ';
+        }
+    }
+}
+
+static void console_shadow_clear_all(void) {
+    for (uint32_t i = 0; i < CONSOLE_MAX_PANES; ++i) {
+        console_shadow_clear(i);
+    }
+}
+
+static void console_shadow_set_cell(const console_pane_t *pane, uint32_t col, uint32_t row, char ch) {
+    uint32_t pane_index;
+
+    if (!console_pane_shadow_fits(pane)) {
+        return;
+    }
+    if (col >= console_pane_cols(pane) || row >= console_pane_rows(pane)) {
+        return;
+    }
+    if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT) {
+        ch = ' ';
+    }
+
+    pane_index = console_pane_index(pane);
+    console_shadow[pane_index][row][col] = ch;
+}
+
+static void console_draw_shadow_cell(const console_pane_t *pane, uint32_t col, uint32_t row, char ch) {
+    uint32_t x = pane->left + col * FONT_W;
+    uint32_t y = pane->top + row * CONSOLE_ROW_ADVANCE;
+    uint32_t glyph;
+    uint32_t packed_fg;
+    uint32_t packed_bg;
+    uint32_t *fb;
+
+    if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT) {
+        ch = ' ';
+    }
+    glyph = (uint8_t)ch - ASCII_FIRST;
+
+    if (!graphics_backbuffer_active() && !graphics_viewport_active() &&
+        fb_base != 0u && x + FONT_W <= fb_width && y + CONSOLE_ROW_ADVANCE <= fb_height) {
+        fb = (uint32_t *)(uintptr_t)fb_base;
+        packed_fg = graphics_pack_color(current_fg_color);
+        packed_bg = graphics_pack_color(current_bg_color);
+
+        for (uint32_t py = 0; py < CONSOLE_ROW_ADVANCE; ++py) {
+            uint8_t bits = py < FONT_H ? font_data[glyph][py] : 0;
+            uint32_t *dst = fb + (uint64_t)(y + py) * fb_pitch + x;
+            for (uint32_t px = 0; px < FONT_W; ++px) {
+                dst[px] = (bits & (1u << (7u - px))) ? packed_fg : packed_bg;
+            }
+        }
+        return;
+    }
+
+    for (uint32_t py = 0; py < CONSOLE_ROW_ADVANCE; ++py) {
+        uint8_t bits = py < FONT_H ? font_data[glyph][py] : 0;
+        for (uint32_t px = 0; px < FONT_W; ++px) {
+            uint32_t color = (bits & (1u << (7u - px))) ? current_fg_color : current_bg_color;
+            put_pixel(x + px, y + py, color);
+        }
+    }
+}
+
+static void console_shadow_redraw_pane(const console_pane_t *pane) {
+    uint32_t pane_index = console_pane_index(pane);
+    uint32_t cols = console_pane_cols(pane);
+    uint32_t rows = console_pane_rows(pane);
+
+    if (!console_pane_shadow_fits(pane)) {
+        return;
+    }
+
+    for (uint32_t row = 0; row < rows; ++row) {
+        for (uint32_t col = 0; col < cols; ++col) {
+            console_draw_shadow_cell(pane, col, row, console_shadow[pane_index][row][col]);
+        }
+    }
+}
+
+static void console_shadow_scroll_up(const console_pane_t *pane) {
+    uint32_t pane_index = console_pane_index(pane);
+    uint32_t cols = console_pane_cols(pane);
+    uint32_t rows = console_pane_rows(pane);
+
+    if (!console_pane_shadow_fits(pane) || rows == 0u || cols == 0u) {
+        return;
+    }
+
+    for (uint32_t row = 0; row + 1u < rows; ++row) {
+        for (uint32_t col = 0; col < cols; ++col) {
+            console_shadow[pane_index][row][col] = console_shadow[pane_index][row + 1u][col];
+        }
+    }
+    for (uint32_t col = 0; col < cols; ++col) {
+        console_shadow[pane_index][rows - 1u][col] = ' ';
+    }
+}
+
 static void draw_cursor(void) {
     console_pane_t *pane = active_pane();
 
@@ -228,6 +370,13 @@ static void scroll_screen(void) {
         return;
     }
 
+    if (console_pane_shadow_fits(pane)) {
+        console_shadow_scroll_up(pane);
+        console_shadow_redraw_pane(pane);
+        pane->cursor_y = pane->top + (console_pane_rows(pane) - 1u) * CONSOLE_ROW_ADVANCE;
+        return;
+    }
+
     for (uint32_t y = text_top; y + CONSOLE_ROW_ADVANCE < text_bottom; ++y) {
         for (uint32_t x = pane->left; x < text_right; ++x) {
             fb[y * fb_pitch + x] = fb[(y + CONSOLE_ROW_ADVANCE) * fb_pitch + x];
@@ -263,6 +412,10 @@ static void putc_raw(char ch) {
             put_pixel(pane->cursor_x + col, pane->cursor_y + row, color);
         }
     }
+    console_shadow_set_cell(pane,
+                            (pane->cursor_x - pane->left) / FONT_W,
+                            (pane->cursor_y - pane->top) / CONSOLE_ROW_ADVANCE,
+                            ch);
     pane->cursor_x += FONT_W;
     draw_cursor();
 }
@@ -276,6 +429,10 @@ static void backspace(void) {
         return;
     }
     pane->cursor_x -= FONT_W;
+    console_shadow_set_cell(pane,
+                            (pane->cursor_x - pane->left) / FONT_W,
+                            (pane->cursor_y - pane->top) / CONSOLE_ROW_ADVANCE,
+                            ' ');
     for (uint32_t row = 0; row < FONT_H; ++row) {
         for (uint32_t col = 0; col < FONT_W; ++col) {
             put_pixel(pane->cursor_x + col, pane->cursor_y + row, current_bg_color);
@@ -301,6 +458,7 @@ void console_init(unsigned long long framebuffer_base,
     active_console_pane = 0;
     console_pane_count = 1;
     cursor_enabled = 1;
+    console_shadow_clear_all();
     fill_screen_color(current_bg_color);
 }
 
@@ -324,6 +482,7 @@ void console_set_bg_color(uint32_t color) {
     }
 
     current_bg_color = color;
+    console_shadow_clear_all();
     fill_screen_color(current_bg_color);
     if (console_pane_count > 1u) {
         draw_split_divider();
@@ -424,6 +583,7 @@ void console_put_char_at(unsigned int col, unsigned int row, char ch){
     uint32_t y = console_text_top() + row * CONSOLE_ROW_ADVANCE;
 
     console_put_char_at_pixel(x, y, ch);
+    console_shadow_set_cell(active_pane_const(), col, row, ch);
 }
 
 void console_put_char_at_screen(unsigned int col, unsigned int row, char ch) {
@@ -508,6 +668,13 @@ void console_clear_line(unsigned int row) {
 
         for (uint32_t x = pane->left; x < console_text_right(); ++x) {
             put_pixel(x, y + py, current_bg_color);
+        }
+    }
+    if (console_pane_shadow_fits(pane) && row < console_pane_rows(pane)) {
+        uint32_t pane_index = console_pane_index(pane);
+        uint32_t cols = console_pane_cols(pane);
+        for (uint32_t col = 0; col < cols; ++col) {
+            console_shadow[pane_index][row][col] = ' ';
         }
     }
 
@@ -612,6 +779,10 @@ static void console_set_region_internal(uint32_t left,
                                         int clear) {
     console_pane_t *pane;
     int redraw_cursor = cursor_enabled && cursor_visible;
+    uint32_t old_left = console_panes[0].left;
+    uint32_t old_top = console_panes[0].top;
+    uint32_t old_right = console_panes[0].right;
+    uint32_t old_bottom = console_panes[0].bottom;
 
     if(redraw_cursor) {
         erase_cursor();
@@ -640,6 +811,8 @@ static void console_set_region_internal(uint32_t left,
 
     if (clear) {
         clear_pane(pane);
+    } else if (old_left != left || old_top != top || old_right != right || old_bottom != bottom) {
+        console_shadow_clear(console_pane_index(pane));
     }
     if(redraw_cursor) {
         draw_cursor();
@@ -711,6 +884,7 @@ int console_split_enable(void) {
     console_init_pane(&console_panes[1], right_left, outer_top, outer_right, outer_bottom);
     console_pane_count = 2;
     active_console_pane = 0;
+    console_shadow_clear_all();
 
     clear_pane(&console_panes[0]);
     clear_pane(&console_panes[1]);
@@ -753,6 +927,7 @@ void console_split_disable(void) {
     active_console_pane = 0;
     cursor_visible = 1;
     last_cursor_blink_tick = timer_ticks();
+    console_shadow_clear_all();
 
     if (cursor_enabled) {
         draw_cursor();

@@ -48,6 +48,7 @@ static uint64_t peak_live_allocations;
 static uint64_t invalid_frees;
 static uint64_t double_frees;
 static uint64_t guard_failures;
+static uint64_t allocation_failures;
 static free_block_t *small_free[KMEM_SMALL_CLASS_COUNT];
 static volatile int kmem_lock;
 
@@ -206,6 +207,7 @@ void kmem_init(const boot_info_t *info) {
     invalid_frees = 0;
     double_frees = 0;
     guard_failures = 0;
+    allocation_failures = 0;
     for (uint32_t i = 0; i < KMEM_SMALL_CLASS_COUNT; ++i) {
         small_free[i] = 0;
     }
@@ -279,6 +281,12 @@ void *page_alloc(uint32_t page_count) {
         break;
     }
     unlock();
+
+    if (addr == 0) {
+        lock();
+        ++allocation_failures;
+        unlock();
+    }
 
     if (addr != 0) {
         zero_memory((void *)(uintptr_t)addr, (uint64_t)page_count * KMEM_PAGE_SIZE);
@@ -402,6 +410,9 @@ void *kmalloc(uint32_t size) {
         unlock();
 
         if (block == 0) {
+            lock();
+            ++allocation_failures;
+            unlock();
             return 0;
         }
 
@@ -425,10 +436,16 @@ void *kmalloc(uint32_t size) {
         uint32_t pages;
 
         if (size > 0xffffffffu - overhead - (KMEM_PAGE_SIZE - 1u)) {
+            lock();
+            ++allocation_failures;
+            unlock();
             return 0;
         }
         pages = (size + overhead + KMEM_PAGE_SIZE - 1u) / KMEM_PAGE_SIZE;
         if (pages > 0xffffu) {
+            lock();
+            ++allocation_failures;
+            unlock();
             return 0;
         }
         header = (kmalloc_header_t *)page_alloc(pages);
@@ -528,6 +545,7 @@ uint64_t kmem_heap_used_bytes(void) {
 
 void kmem_get_stats(kmem_stats_t *stats) {
     uint64_t largest = 0;
+    uint64_t smallest = 0;
     uint64_t small_blocks = 0;
 
     if (stats == 0) {
@@ -538,6 +556,9 @@ void kmem_get_stats(kmem_stats_t *stats) {
     for (uint32_t i = 0; i < free_range_count; ++i) {
         if (free_ranges[i].pages > largest) {
             largest = free_ranges[i].pages;
+        }
+        if (smallest == 0 || free_ranges[i].pages < smallest) {
+            smallest = free_ranges[i].pages;
         }
     }
     for (uint32_t i = 0; i < KMEM_SMALL_CLASS_COUNT; ++i) {
@@ -552,6 +573,14 @@ void kmem_get_stats(kmem_stats_t *stats) {
     stats->small_free_blocks = small_blocks;
     stats->free_ranges = free_range_count;
     stats->largest_free_range_pages = largest;
+    stats->smallest_free_range_pages = smallest;
+    stats->allocation_failures = allocation_failures;
+    if (free_page_count == 0 || largest >= free_page_count) {
+        stats->fragmentation_percent = 0;
+    } else {
+        stats->fragmentation_percent =
+            (uint32_t)(((free_page_count - largest) * 100ull) / free_page_count);
+    }
     stats->allocation_count = allocation_count;
     stats->free_count = free_count;
     stats->live_allocations = live_allocations;
@@ -560,4 +589,128 @@ void kmem_get_stats(kmem_stats_t *stats) {
     stats->double_frees = double_frees;
     stats->guard_failures = guard_failures;
     unlock();
+}
+
+static uint64_t kmem_fault_total(const kmem_stats_t *stats) {
+    return stats->invalid_frees + stats->double_frees + stats->guard_failures;
+}
+
+void kmem_run_selftest(kmem_test_result_t *result) {
+    enum { BLOCK_COUNT = 64, GAP_COUNT = 16 };
+    static const uint32_t sizes[BLOCK_COUNT] = {
+        1u, 7u, 16u, 24u, 33u, 48u, 63u, 80u,
+        96u, 127u, 160u, 191u, 224u, 255u, 300u, 384u,
+        511u, 600u, 700u, 900u, 1023u, 1200u, 1500u, 1800u,
+        2040u, 2500u, 3000u, 3500u, 4090u, 5000u, 7000u, 9000u,
+        12000u, 32u, 64u, 128u, 256u, 512u, 1024u, 2048u,
+        3072u, 4096u, 8192u, 12288u, 5u, 17u, 65u, 129u,
+        257u, 513u, 1025u, 1536u, 2049u, 4097u, 6144u, 10000u,
+        31u, 62u, 124u, 248u, 496u, 992u, 1984u, 3968u
+    };
+    void *blocks[BLOCK_COUNT];
+    void *gaps[GAP_COUNT];
+    kmem_stats_t before;
+    kmem_stats_t after;
+    uint8_t *zero_block;
+    void *too_large;
+    void *too_many_pages;
+    uint32_t bad = 0;
+
+    if (result == 0) {
+        return;
+    }
+
+    zero_memory(result, sizeof(*result));
+    for (uint32_t i = 0; i < BLOCK_COUNT; ++i) {
+        blocks[i] = 0;
+    }
+    for (uint32_t i = 0; i < GAP_COUNT; ++i) {
+        gaps[i] = 0;
+    }
+
+    kmem_get_stats(&before);
+    result->live_allocations_before = before.live_allocations;
+    result->heap_used_before = before.heap_used_bytes;
+    result->free_pages_before = before.free_pages;
+    result->largest_free_range_before = before.largest_free_range_pages;
+    result->small_free_blocks_before = before.small_free_blocks;
+    result->fault_count_before = kmem_fault_total(&before);
+
+    too_large = kmalloc(0xfffffff0u);
+    ++result->expected_failures;
+    if (too_large != 0) {
+        ++result->unexpected_successes;
+        kfree(too_large);
+    }
+
+    too_many_pages = page_alloc(before.free_pages < 0xffffffffull ?
+                               (uint32_t)before.free_pages + 1u :
+                               0xffffffffu);
+    ++result->expected_failures;
+    if (too_many_pages != 0) {
+        ++result->unexpected_successes;
+        page_free(too_many_pages, before.free_pages < 0xffffffffull ?
+                  (uint32_t)before.free_pages + 1u :
+                  0xffffffffu);
+    }
+
+    zero_block = (uint8_t *)kzalloc(257u);
+    ++result->alloc_attempts;
+    if (zero_block == 0) {
+        bad = 1;
+    } else {
+        ++result->alloc_successes;
+        for (uint32_t i = 0; i < 257u; ++i) {
+            if (zero_block[i] != 0) {
+                bad = 1;
+                break;
+            }
+        }
+        kfree(zero_block);
+    }
+
+    for (uint32_t i = 0; i < BLOCK_COUNT; ++i) {
+        blocks[i] = kmalloc(sizes[i]);
+        ++result->alloc_attempts;
+        if (blocks[i] != 0) {
+            ++result->alloc_successes;
+        } else {
+            bad = 1;
+        }
+    }
+
+    for (uint32_t i = 0; i < BLOCK_COUNT; i += 2u) {
+        kfree(blocks[i]);
+        blocks[i] = 0;
+    }
+
+    for (uint32_t i = 0; i < GAP_COUNT; ++i) {
+        gaps[i] = kmalloc(96u + i * 37u);
+        ++result->alloc_attempts;
+        if (gaps[i] != 0) {
+            ++result->alloc_successes;
+        } else {
+            bad = 1;
+        }
+    }
+
+    for (uint32_t i = 0; i < GAP_COUNT; ++i) {
+        kfree(gaps[i]);
+    }
+    for (uint32_t i = 0; i < BLOCK_COUNT; ++i) {
+        kfree(blocks[i]);
+    }
+
+    kmem_get_stats(&after);
+    result->live_allocations_after = after.live_allocations;
+    result->heap_used_after = after.heap_used_bytes;
+    result->free_pages_after = after.free_pages;
+    result->largest_free_range_after = after.largest_free_range_pages;
+    result->small_free_blocks_after = after.small_free_blocks;
+    result->fault_count_after = kmem_fault_total(&after);
+    result->passed = !bad &&
+                     result->unexpected_successes == 0u &&
+                     result->live_allocations_after == result->live_allocations_before &&
+                     result->heap_used_after == result->heap_used_before &&
+                     result->fault_count_after == result->fault_count_before;
 }

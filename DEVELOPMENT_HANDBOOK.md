@@ -100,7 +100,9 @@ Heap initialization happens after DMA setup. The allocator currently provides:
 - larger page-backed allocations
 - `kzalloc`
 - `kfree`
-- heap statistics and fault counters through shell command `heap`
+- heap statistics, fragmentation hints, and fault counters through shell command
+  `heap`
+- bounded allocation/failure stress diagnostics through shell command `heaptest`
 
 Good practices:
 
@@ -118,6 +120,7 @@ Useful shell commands:
 
 ```text
 heap
+heaptest
 info
 cpus
 ```
@@ -177,6 +180,10 @@ The shell is the integration hub. It owns:
 When developing filesystem features, preserve old images where possible, or add
 clear format-version handling. The shell should print specific errors for disk
 full, directory full, malformed paths, and missing files.
+
+Delete behavior is intentionally conservative: `rm`, the console browser, and
+the desktop Files window delete files and empty directories, while non-empty
+directories are refused until recursive delete has explicit UI/confirmation.
 
 ## Z Language Development
 
@@ -239,11 +246,15 @@ zmod taskmgr_module.zo
 desktop
 ```
 
+The `.Z` file manager module is the primary desktop file UI. Keep file actions
+there first; the built-in desktop Files window is fallback UI.
+
 Then open the module from the Modules window or Start menu.
 
 The `zbrowser_module` example is the smallest useful web-surface: it renders
 basic tags from `index.html`, or it fetches a plain HTTP page when `browser.url`
-contains an `http://numeric.ip[:port]/path` URL. A quick loop is:
+contains an `http://host[:port]/path` URL. Run `net dhcp` first when a DHCP
+server is available, or set `net ip` and `net dns` manually. A quick loop is:
 
 ```text
 write browser.url http://10.0.2.2:8000/index.html

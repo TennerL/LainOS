@@ -385,24 +385,16 @@ int console_read_line(char *buffer, unsigned int max_len) {
 
 key_event_t keyboard_read_key(void) {
     key_event_t none = { KEY_NONE, 0 };
-    int idle = 0;
 
     for (;;) {
         while (!ps2_has_data()) {
-            if (!idle) {
-                status_cpu_enter_idle();
-                idle = 1;
-            }
-            __asm__ __volatile__("pause");
             console_cursor_tick();
             statusbar_update_if_due();
             shell_modules_tick();
             usb_poll();
-        }
-
-        if (idle) {
+            status_cpu_enter_idle();
+            __asm__ __volatile__("sti; hlt");
             status_cpu_leave_idle();
-            idle = 0;
         }
 
         uint8_t status = 0;

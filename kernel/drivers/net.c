@@ -6,12 +6,17 @@
 #define NET_ETH_TYPE_VLAN 0x8100u
 #define NET_ETH_TYPE_QINQ 0x88A8u
 #define NET_IP_PROTO_TCP 6u
+#define NET_IP_PROTO_UDP 17u
 #define NET_ARP_OP_REQUEST 1u
 #define NET_ARP_OP_REPLY 2u
 #define NET_TIMEOUT_TICKS 500ull
 #define NET_DEFAULT_IP ((10u << 24) | (0u << 16) | (2u << 8) | 15u)
 #define NET_DEFAULT_MASK ((255u << 24) | (255u << 16) | (255u << 8))
 #define NET_DEFAULT_GATEWAY ((10u << 24) | (0u << 16) | (2u << 8) | 2u)
+#define NET_DEFAULT_DNS ((10u << 24) | (0u << 16) | (2u << 8) | 3u)
+#define NET_DHCP_CLIENT_PORT 68u
+#define NET_DHCP_SERVER_PORT 67u
+#define NET_DNS_PORT 53u
 
 static net_device_t devices[NET_MAX_DEVICES];
 static uint32_t device_count;
@@ -59,6 +64,32 @@ typedef struct __attribute__((packed)) {
     uint16_t urgent;
 } net_tcp_header_t;
 
+typedef struct __attribute__((packed)) {
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint16_t length;
+    uint16_t checksum;
+} net_udp_header_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t op;
+    uint8_t htype;
+    uint8_t hlen;
+    uint8_t hops;
+    uint32_t xid;
+    uint16_t secs;
+    uint16_t flags;
+    uint32_t ciaddr;
+    uint32_t yiaddr;
+    uint32_t siaddr;
+    uint32_t giaddr;
+    uint8_t chaddr[16];
+    uint8_t sname[64];
+    uint8_t file[128];
+    uint32_t magic;
+    uint8_t options[312];
+} net_dhcp_packet_t;
+
 typedef struct {
     int active;
     uint32_t device;
@@ -87,16 +118,42 @@ typedef struct {
     uint32_t header_tail_count;
 } net_tcp_get_t;
 
+typedef struct {
+    int active;
+    uint32_t device;
+    uint32_t xid;
+    uint8_t wanted_type;
+    int found;
+    uint32_t offered_ip;
+    uint32_t server_ip;
+    uint32_t subnet_mask;
+    uint32_t router;
+    uint32_t dns;
+} net_dhcp_wait_t;
+
+typedef struct {
+    int active;
+    uint32_t device;
+    uint16_t id;
+    uint16_t local_port;
+    int found;
+    uint32_t ip;
+} net_dns_wait_t;
+
 static net_arp_wait_t arp_wait;
 static net_tcp_get_t tcp_get;
+static net_dhcp_wait_t dhcp_wait;
+static net_dns_wait_t dns_wait;
 static uint16_t next_ip_id = 1u;
 static uint16_t next_local_port = 49152u;
 static uint32_t local_ip = NET_DEFAULT_IP;
 static uint32_t local_netmask = NET_DEFAULT_MASK;
 static uint32_t local_gateway = NET_DEFAULT_GATEWAY;
+static uint32_t local_dns = NET_DEFAULT_DNS;
 static net_debug_info_t debug_info;
 
 static void net_zero(void *ptr, uint32_t size);
+static int net_hostname_is_ipv4(const char *name, uint32_t *out);
 
 static void copy_name(char *dst, const char *src) {
     uint32_t i = 0;
@@ -146,6 +203,14 @@ uint32_t net_ipv4_netmask(void) {
 
 uint32_t net_ipv4_gateway(void) {
     return local_gateway;
+}
+
+void net_set_dns_server(uint32_t dns) {
+    local_dns = dns;
+}
+
+uint32_t net_dns_server(void) {
+    return local_dns;
 }
 
 int net_register_device(const char *name,
@@ -403,16 +468,32 @@ static int net_parse_port(const char **text, uint16_t *out) {
 static int net_parse_url(const char *url,
                          uint32_t *ip,
                          uint16_t *port,
+                         char *host,
+                         uint32_t host_capacity,
                          const char **path) {
     const char *s = url;
+    uint32_t host_len = 0;
 
     if (!net_starts_with(s, "http://")) {
         return -1;
     }
     s += 7;
 
-    if (net_parse_ipv4(&s, ip) != 0) {
+    while (s[host_len] &&
+           s[host_len] != ':' &&
+           s[host_len] != '/' &&
+           host_len + 1u < host_capacity) {
+        host[host_len] = s[host_len];
+        ++host_len;
+    }
+    host[host_len] = '\0';
+    if (host_len == 0u) {
         return -1;
+    }
+    s += host_len;
+
+    if (!net_hostname_is_ipv4(host, ip)) {
+        *ip = 0;
     }
 
     *port = 80u;
@@ -469,6 +550,72 @@ static int net_send_arp_request(uint32_t index, uint32_t target_ip) {
 
     if (net_send_frame(index, frame, sizeof(frame)) != 0) {
         ++debug_info.arp_tx_errors;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int net_send_udp(uint32_t index,
+                        const uint8_t dst_mac[6],
+                        uint32_t dst_ip,
+                        uint16_t src_port,
+                        uint16_t dst_port,
+                        const void *payload,
+                        uint32_t payload_size) {
+    uint8_t frame[NET_MAX_FRAME_SIZE];
+    net_eth_header_t *eth = (net_eth_header_t *)frame;
+    net_ipv4_header_t *ip = (net_ipv4_header_t *)(frame + sizeof(net_eth_header_t));
+    net_udp_header_t *udp = (net_udp_header_t *)((uint8_t *)ip + sizeof(net_ipv4_header_t));
+    const net_device_t *dev = net_get_device_const(index);
+    uint32_t udp_size = sizeof(net_udp_header_t) + payload_size;
+    uint32_t ip_size = sizeof(net_ipv4_header_t) + udp_size;
+    uint32_t frame_size = sizeof(net_eth_header_t) + ip_size;
+    uint32_t sum = 0;
+
+    if (!dev || !dst_mac || frame_size > NET_MAX_FRAME_SIZE) {
+        ++debug_info.udp_tx_errors;
+        return -1;
+    }
+
+    net_zero(frame, sizeof(frame));
+    net_copy(eth->dst, dst_mac, 6u);
+    net_copy(eth->src, dev->mac, 6u);
+    eth->type = net_htons(NET_ETH_TYPE_IPV4);
+
+    ip->ver_ihl = 0x45u;
+    ip->total_length = net_htons((uint16_t)ip_size);
+    ip->id = net_htons(next_ip_id++);
+    ip->flags_fragment = net_htons(0x4000u);
+    ip->ttl = 64u;
+    ip->proto = NET_IP_PROTO_UDP;
+    ip->src = net_htonl(local_ip);
+    ip->dst = net_htonl(dst_ip);
+    ip->checksum = net_htons(net_checksum(ip, sizeof(net_ipv4_header_t)));
+
+    udp->src_port = net_htons(src_port);
+    udp->dst_port = net_htons(dst_port);
+    udp->length = net_htons((uint16_t)udp_size);
+    udp->checksum = 0;
+    if (payload_size != 0) {
+        net_copy((uint8_t *)udp + sizeof(net_udp_header_t), payload, payload_size);
+    }
+
+    sum += (uint16_t)(local_ip >> 16);
+    sum += (uint16_t)(local_ip & 0xFFFFu);
+    sum += (uint16_t)(dst_ip >> 16);
+    sum += (uint16_t)(dst_ip & 0xFFFFu);
+    sum += NET_IP_PROTO_UDP;
+    sum += udp_size;
+    sum = net_checksum_add(sum, udp, udp_size);
+    udp->checksum = net_htons(net_checksum_finish(sum));
+
+    if (frame_size < NET_MIN_FRAME_SIZE) {
+        frame_size = NET_MIN_FRAME_SIZE;
+    }
+
+    if (net_send_frame(index, frame, frame_size) != 0) {
+        ++debug_info.udp_tx_errors;
         return -1;
     }
 
@@ -599,6 +746,70 @@ static void net_http_copy_body_byte(net_tcp_get_t *ctx, char ch) {
         ctx->out[ctx->out_size++] = ch;
         ctx->out[ctx->out_size] = '\0';
     }
+}
+
+static void net_dhcp_add_option(uint8_t *options, uint32_t *pos, uint8_t code, const void *data, uint8_t size) {
+    if (*pos + 2u + size >= 312u) {
+        return;
+    }
+    options[(*pos)++] = code;
+    options[(*pos)++] = size;
+    net_copy(&options[*pos], data, size);
+    *pos += size;
+}
+
+static int net_send_dhcp(uint32_t index,
+                         uint8_t message_type,
+                         uint32_t xid,
+                         uint32_t requested_ip,
+                         uint32_t server_ip) {
+    static const uint8_t broadcast_mac[6] = { 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu };
+    static const uint8_t parameter_request[] = { 1u, 3u, 6u };
+    net_dhcp_packet_t packet;
+    const net_device_t *dev = net_get_device_const(index);
+    uint32_t pos = 0;
+    uint8_t type = message_type;
+    uint8_t client_id[7];
+    uint32_t network_value;
+
+    if (!dev) {
+        return -1;
+    }
+
+    net_zero(&packet, sizeof(packet));
+    packet.op = 1u;
+    packet.htype = 1u;
+    packet.hlen = NET_MAC_SIZE;
+    packet.xid = net_htonl(xid);
+    packet.flags = net_htons(0x8000u);
+    packet.magic = net_htonl(0x63825363u);
+    net_copy(packet.chaddr, dev->mac, NET_MAC_SIZE);
+
+    client_id[0] = 1u;
+    net_copy(&client_id[1], dev->mac, NET_MAC_SIZE);
+    net_dhcp_add_option(packet.options, &pos, 53u, &type, 1u);
+    net_dhcp_add_option(packet.options, &pos, 61u, client_id, sizeof(client_id));
+    net_dhcp_add_option(packet.options, &pos, 55u, parameter_request, sizeof(parameter_request));
+    if (requested_ip != 0) {
+        network_value = net_htonl(requested_ip);
+        net_dhcp_add_option(packet.options, &pos, 50u, &network_value, 4u);
+    }
+    if (server_ip != 0) {
+        network_value = net_htonl(server_ip);
+        net_dhcp_add_option(packet.options, &pos, 54u, &network_value, 4u);
+    }
+    if (pos < sizeof(packet.options)) {
+        packet.options[pos++] = 255u;
+    }
+
+    ++debug_info.dhcp_tx;
+    return net_send_udp(index,
+                        broadcast_mac,
+                        0xFFFFFFFFu,
+                        NET_DHCP_CLIENT_PORT,
+                        NET_DHCP_SERVER_PORT,
+                        &packet,
+                        sizeof(packet));
 }
 
 static int net_send_arp_reply(uint32_t index, const uint8_t target_mac[6], uint32_t target_ip) {
@@ -759,6 +970,182 @@ static void net_handle_tcp(uint32_t index,
 
 }
 
+static void net_handle_dhcp(uint32_t index, const uint8_t *payload, uint32_t size) {
+    const net_dhcp_packet_t *packet;
+    uint32_t options_offset = 0;
+    uint8_t message_type = 0;
+    uint32_t server_ip = 0;
+    uint32_t subnet_mask = 0;
+    uint32_t router = 0;
+    uint32_t dns = 0;
+
+    if (!dhcp_wait.active ||
+        dhcp_wait.device != index ||
+        size < 240u ||
+        size < sizeof(net_dhcp_packet_t) - sizeof(((net_dhcp_packet_t *)0)->options)) {
+        return;
+    }
+
+    packet = (const net_dhcp_packet_t *)payload;
+    if (packet->op != 2u ||
+        packet->htype != 1u ||
+        packet->hlen != NET_MAC_SIZE ||
+        net_ntohl(packet->xid) != dhcp_wait.xid ||
+        net_ntohl(packet->magic) != 0x63825363u) {
+        return;
+    }
+
+    options_offset = 240u;
+    while (options_offset < size) {
+        uint8_t code = payload[options_offset++];
+        uint8_t len;
+
+        if (code == 0u) {
+            continue;
+        }
+        if (code == 255u || options_offset >= size) {
+            break;
+        }
+        len = payload[options_offset++];
+        if (options_offset + len > size) {
+            break;
+        }
+
+        if (code == 53u && len >= 1u) {
+            message_type = payload[options_offset];
+        } else if (code == 54u && len >= 4u) {
+            server_ip = ((uint32_t)payload[options_offset] << 24) |
+                        ((uint32_t)payload[options_offset + 1u] << 16) |
+                        ((uint32_t)payload[options_offset + 2u] << 8) |
+                        payload[options_offset + 3u];
+        } else if (code == 1u && len >= 4u) {
+            subnet_mask = ((uint32_t)payload[options_offset] << 24) |
+                          ((uint32_t)payload[options_offset + 1u] << 16) |
+                          ((uint32_t)payload[options_offset + 2u] << 8) |
+                          payload[options_offset + 3u];
+        } else if (code == 3u && len >= 4u) {
+            router = ((uint32_t)payload[options_offset] << 24) |
+                     ((uint32_t)payload[options_offset + 1u] << 16) |
+                     ((uint32_t)payload[options_offset + 2u] << 8) |
+                     payload[options_offset + 3u];
+        } else if (code == 6u && len >= 4u) {
+            dns = ((uint32_t)payload[options_offset] << 24) |
+                  ((uint32_t)payload[options_offset + 1u] << 16) |
+                  ((uint32_t)payload[options_offset + 2u] << 8) |
+                  payload[options_offset + 3u];
+        }
+        options_offset += len;
+    }
+
+    if (message_type != dhcp_wait.wanted_type) {
+        return;
+    }
+
+    ++debug_info.dhcp_rx;
+    dhcp_wait.offered_ip = net_ntohl(packet->yiaddr);
+    dhcp_wait.server_ip = server_ip;
+    dhcp_wait.subnet_mask = subnet_mask;
+    dhcp_wait.router = router;
+    dhcp_wait.dns = dns;
+    dhcp_wait.found = 1;
+}
+
+static uint32_t net_dns_skip_name(const uint8_t *payload, uint32_t size, uint32_t offset) {
+    while (offset < size) {
+        uint8_t len = payload[offset++];
+        if (len == 0u) {
+            return offset;
+        }
+        if ((len & 0xC0u) == 0xC0u) {
+            return offset < size ? offset + 1u : size;
+        }
+        offset += len;
+    }
+    return size;
+}
+
+static void net_handle_dns(uint32_t index, const uint8_t *payload, uint32_t size) {
+    uint16_t answer_count;
+    uint32_t offset;
+
+    if (!dns_wait.active || dns_wait.device != index || size < 12u) {
+        return;
+    }
+    if ((((uint16_t)payload[0] << 8) | payload[1]) != dns_wait.id ||
+        (payload[2] & 0x80u) == 0 ||
+        (payload[3] & 0x0Fu) != 0) {
+        return;
+    }
+
+    answer_count = ((uint16_t)payload[6] << 8) | payload[7];
+    offset = 12u;
+    offset = net_dns_skip_name(payload, size, offset);
+    if (offset + 4u > size) {
+        return;
+    }
+    offset += 4u;
+
+    for (uint32_t i = 0; i < answer_count && offset < size; ++i) {
+        uint16_t type;
+        uint16_t class_code;
+        uint16_t rdlength;
+
+        offset = net_dns_skip_name(payload, size, offset);
+        if (offset + 10u > size) {
+            return;
+        }
+        type = ((uint16_t)payload[offset] << 8) | payload[offset + 1u];
+        class_code = ((uint16_t)payload[offset + 2u] << 8) | payload[offset + 3u];
+        rdlength = ((uint16_t)payload[offset + 8u] << 8) | payload[offset + 9u];
+        offset += 10u;
+        if (offset + rdlength > size) {
+            return;
+        }
+        if (type == 1u && class_code == 1u && rdlength == 4u) {
+            dns_wait.ip = ((uint32_t)payload[offset] << 24) |
+                          ((uint32_t)payload[offset + 1u] << 16) |
+                          ((uint32_t)payload[offset + 2u] << 8) |
+                          payload[offset + 3u];
+            dns_wait.found = 1;
+            ++debug_info.dns_rx;
+            return;
+        }
+        offset += rdlength;
+    }
+}
+
+static void net_handle_udp(uint32_t index,
+                           const net_ipv4_header_t *ip,
+                           uint32_t ip_header_size,
+                           uint32_t ip_total_size) {
+    const net_udp_header_t *udp;
+    const uint8_t *payload;
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint16_t udp_length;
+
+    if (ip_total_size < ip_header_size + sizeof(net_udp_header_t)) {
+        return;
+    }
+
+    udp = (const net_udp_header_t *)((const uint8_t *)ip + ip_header_size);
+    src_port = net_ntohs(udp->src_port);
+    dst_port = net_ntohs(udp->dst_port);
+    udp_length = net_ntohs(udp->length);
+    if (udp_length < sizeof(net_udp_header_t) ||
+        ip_total_size < ip_header_size + udp_length) {
+        return;
+    }
+    payload = (const uint8_t *)udp + sizeof(net_udp_header_t);
+
+    ++debug_info.rx_udp;
+    if (src_port == NET_DHCP_SERVER_PORT && dst_port == NET_DHCP_CLIENT_PORT) {
+        net_handle_dhcp(index, payload, udp_length - sizeof(net_udp_header_t));
+    } else if (src_port == NET_DNS_PORT && dns_wait.active && dst_port == dns_wait.local_port) {
+        net_handle_dns(index, payload, udp_length - sizeof(net_udp_header_t));
+    }
+}
+
 static void net_handle_ipv4(uint32_t index, const uint8_t *payload, uint32_t size) {
     const net_ipv4_header_t *ip;
     uint32_t ip_header_size;
@@ -774,13 +1161,21 @@ static void net_handle_ipv4(uint32_t index, const uint8_t *payload, uint32_t siz
     if ((ip->ver_ihl >> 4) != 4u ||
         ip_header_size < sizeof(net_ipv4_header_t) ||
         ip_total_size < ip_header_size ||
-        size < ip_total_size ||
-        ip->proto != NET_IP_PROTO_TCP ||
-        net_ntohl(ip->dst) != local_ip) {
+        size < ip_total_size) {
         return;
     }
 
-    net_handle_tcp(index, ip, ip_header_size, ip_total_size);
+    if (net_ntohl(ip->dst) != local_ip &&
+        net_ntohl(ip->dst) != 0xFFFFFFFFu &&
+        !(local_ip == 0 && ip->proto == NET_IP_PROTO_UDP)) {
+        return;
+    }
+
+    if (ip->proto == NET_IP_PROTO_TCP) {
+        net_handle_tcp(index, ip, ip_header_size, ip_total_size);
+    } else if (ip->proto == NET_IP_PROTO_UDP) {
+        net_handle_udp(index, ip, ip_header_size, ip_total_size);
+    }
 }
 
 void net_receive_frame(uint32_t index, const void *data, uint32_t size) {
@@ -874,6 +1269,7 @@ static int net_wait_for_tcp_done(uint32_t index) {
 
 static int net_build_http_request(const char *path,
                                   uint32_t ip,
+                                  const char *host,
                                   char *request,
                                   uint32_t request_size) {
     uint32_t pos = 0;
@@ -902,10 +1298,14 @@ static int net_build_http_request(const char *path,
     APPEND_TEXT("GET ");
     APPEND_TEXT(path);
     APPEND_TEXT(" HTTP/1.0\r\nHost: ");
-    APPEND_DEC(parts[0]); APPEND_CH('.');
-    APPEND_DEC(parts[1]); APPEND_CH('.');
-    APPEND_DEC(parts[2]); APPEND_CH('.');
-    APPEND_DEC(parts[3]);
+    if (host && *host) {
+        APPEND_TEXT(host);
+    } else {
+        APPEND_DEC(parts[0]); APPEND_CH('.');
+        APPEND_DEC(parts[1]); APPEND_CH('.');
+        APPEND_DEC(parts[2]); APPEND_CH('.');
+        APPEND_DEC(parts[3]);
+    }
     APPEND_TEXT("\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_DEC
@@ -913,6 +1313,178 @@ static int net_build_http_request(const char *path,
 #undef APPEND_CH
 
     return 0;
+}
+
+static int net_wait_for_dhcp(uint32_t index) {
+    unsigned long long start = timer_ticks();
+
+    while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
+        (void)net_poll_device(index);
+        if (dhcp_wait.found) {
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+int net_dhcp_configure(uint32_t index) {
+    uint32_t old_ip;
+    uint32_t xid;
+    uint32_t offered_ip;
+    uint32_t server_ip;
+
+    if (index >= device_count) {
+        return -1;
+    }
+
+    old_ip = local_ip;
+    local_ip = 0;
+    xid = 0x44484350u ^ (uint32_t)timer_ticks();
+    net_zero(&dhcp_wait, sizeof(dhcp_wait));
+    dhcp_wait.active = 1;
+    dhcp_wait.device = index;
+    dhcp_wait.xid = xid;
+    dhcp_wait.wanted_type = 2u;
+
+    if (net_send_dhcp(index, 1u, xid, 0, 0) != 0 || net_wait_for_dhcp(index) != 0) {
+        dhcp_wait.active = 0;
+        local_ip = old_ip;
+        return -2;
+    }
+
+    offered_ip = dhcp_wait.offered_ip;
+    server_ip = dhcp_wait.server_ip;
+    net_zero(&dhcp_wait, sizeof(dhcp_wait));
+    dhcp_wait.active = 1;
+    dhcp_wait.device = index;
+    dhcp_wait.xid = xid;
+    dhcp_wait.wanted_type = 5u;
+
+    if (net_send_dhcp(index, 3u, xid, offered_ip, server_ip) != 0 || net_wait_for_dhcp(index) != 0) {
+        dhcp_wait.active = 0;
+        local_ip = old_ip;
+        return -3;
+    }
+
+    local_ip = dhcp_wait.offered_ip;
+    if (dhcp_wait.subnet_mask != 0) {
+        local_netmask = dhcp_wait.subnet_mask;
+    }
+    if (dhcp_wait.router != 0) {
+        local_gateway = dhcp_wait.router;
+    }
+    if (dhcp_wait.dns != 0) {
+        local_dns = dhcp_wait.dns;
+    }
+    dhcp_wait.active = 0;
+    return 0;
+}
+
+static int net_hostname_is_ipv4(const char *name, uint32_t *out) {
+    const char *s = name;
+
+    if (net_parse_ipv4(&s, out) != 0) {
+        return 0;
+    }
+    return *s == '\0';
+}
+
+static int net_build_dns_query(const char *name, uint16_t id, uint8_t *packet, uint32_t capacity, uint32_t *out_size) {
+    uint32_t pos = 12u;
+    const char *label = name;
+    const char *s = name;
+
+    if (!name || !*name || capacity < 32u) {
+        return -1;
+    }
+
+    net_zero(packet, capacity);
+    packet[0] = (uint8_t)(id >> 8);
+    packet[1] = (uint8_t)id;
+    packet[2] = 0x01u;
+    packet[5] = 0x01u;
+
+    for (;;) {
+        if (*s == '.' || *s == '\0') {
+            uint32_t len = (uint32_t)(s - label);
+            if (len == 0u || len > 63u || pos + 1u + len + 5u >= capacity) {
+                return -1;
+            }
+            packet[pos++] = (uint8_t)len;
+            net_copy(&packet[pos], label, len);
+            pos += len;
+            if (*s == '\0') {
+                break;
+            }
+            label = s + 1;
+        }
+        ++s;
+    }
+
+    packet[pos++] = 0;
+    packet[pos++] = 0;
+    packet[pos++] = 1u;
+    packet[pos++] = 0;
+    packet[pos++] = 1u;
+    *out_size = pos;
+    return 0;
+}
+
+int net_dns_resolve(uint32_t index, const char *name, uint32_t *out_ip) {
+    uint8_t query[256];
+    uint32_t query_size = 0;
+    uint8_t mac[6];
+    uint32_t arp_ip;
+    uint16_t local_port;
+    uint16_t id;
+    unsigned long long start;
+
+    if (!name || !out_ip || index >= device_count) {
+        return -1;
+    }
+    if (net_hostname_is_ipv4(name, out_ip)) {
+        return 0;
+    }
+    if (local_dns == 0) {
+        return -2;
+    }
+
+    arp_ip = ((local_dns & local_netmask) == (local_ip & local_netmask)) ? local_dns : local_gateway;
+    if (arp_ip == 0 || net_arp_resolve(index, arp_ip, mac) != 0) {
+        return -3;
+    }
+
+    local_port = next_local_port++;
+    id = (uint16_t)(0xD000u ^ (uint16_t)timer_ticks() ^ local_port);
+    if (net_build_dns_query(name, id, query, sizeof(query), &query_size) != 0) {
+        return -4;
+    }
+
+    net_zero(&dns_wait, sizeof(dns_wait));
+    dns_wait.active = 1;
+    dns_wait.device = index;
+    dns_wait.id = id;
+    dns_wait.local_port = local_port;
+    ++debug_info.dns_tx;
+
+    if (net_send_udp(index, mac, local_dns, local_port, NET_DNS_PORT, query, query_size) != 0) {
+        dns_wait.active = 0;
+        return -5;
+    }
+
+    start = timer_ticks();
+    while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
+        (void)net_poll_device(index);
+        if (dns_wait.found) {
+            *out_ip = dns_wait.ip;
+            dns_wait.active = 0;
+            return 0;
+        }
+    }
+
+    dns_wait.active = 0;
+    return -6;
 }
 
 int net_http_get(uint32_t index,
@@ -923,6 +1495,7 @@ int net_http_get(uint32_t index,
     uint32_t ip = 0;
     uint16_t port = 80u;
     const char *path = 0;
+    char host[128];
     uint8_t mac[6];
     uint32_t arp_ip = 0;
     char request[512];
@@ -936,8 +1509,11 @@ int net_http_get(uint32_t index,
     }
     out[0] = '\0';
 
-    if (net_parse_url(url, &ip, &port, &path) != 0) {
+    if (net_parse_url(url, &ip, &port, host, sizeof(host), &path) != 0) {
         return -2;
+    }
+    if (ip == 0 && net_dns_resolve(index, host, &ip) != 0) {
+        return -8;
     }
 
     if ((ip & local_netmask) == (local_ip & local_netmask)) {
@@ -952,7 +1528,7 @@ int net_http_get(uint32_t index,
         return -3;
     }
 
-    if (net_build_http_request(path, ip, request, sizeof(request)) != 0) {
+    if (net_build_http_request(path, ip, host, request, sizeof(request)) != 0) {
         return -2;
     }
     request_size = net_strlen(request);

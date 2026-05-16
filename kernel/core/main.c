@@ -26,8 +26,11 @@ static int input_prompt_active[SHELL_SESSION_COUNT];
 static boot_info_t *kernel_boot_info;
 static volatile unsigned int status_cpu_idle_depth;
 static volatile unsigned long long status_cpu_idle_ticks;
+static volatile unsigned long long status_cpu_idle_start_cycles;
+static volatile unsigned long long status_cpu_idle_cycles;
 static unsigned long long status_cpu_last_ticks[32];
-static unsigned long long status_cpu_last_idle_ticks;
+static unsigned long long status_cpu_last_cycles[32];
+static unsigned long long status_cpu_last_idle_cycles;
 static unsigned long long status_cpu_last_busy_ticks[32];
 static unsigned int status_cpu_cached_busy_percent[32];
 static int status_cpu_sample_initialized[32];
@@ -54,6 +57,14 @@ static void boot_stage(const char *name) {
     console_puts("[boot] ");
     console_puts(name);
     console_puts("\n");
+}
+
+static unsigned long long status_cpu_read_cycles(void) {
+    uint32_t low;
+    uint32_t high;
+
+    __asm__ __volatile__("rdtsc" : "=a"(low), "=d"(high));
+    return ((uint64_t)high << 32) | low;
 }
 
 static void memory_totals_kb(unsigned long long *total_kb, unsigned long long *free_kb) {
@@ -118,11 +129,18 @@ unsigned int status_cpu_core_count(void) {
 }
 
 void status_cpu_enter_idle(void) {
+    if (status_cpu_idle_depth == 0) {
+        status_cpu_idle_start_cycles = status_cpu_read_cycles();
+    }
     ++status_cpu_idle_depth;
 }
 
 void status_cpu_leave_idle(void) {
     if (status_cpu_idle_depth > 0) {
+        if (status_cpu_idle_depth == 1) {
+            unsigned long long now = status_cpu_read_cycles();
+            status_cpu_idle_cycles += now - status_cpu_idle_start_cycles;
+        }
         --status_cpu_idle_depth;
     }
 }
@@ -135,10 +153,12 @@ void status_cpu_timer_tick(void) {
 
 unsigned int status_cpu_usage_percent(unsigned int core) {
     unsigned long long current_ticks;
-    unsigned long long current_idle_ticks;
+    unsigned long long current_cycles;
+    unsigned long long current_idle_cycles;
     unsigned long long current_busy_ticks;
     unsigned long long delta_ticks;
-    unsigned long long delta_idle_ticks;
+    unsigned long long delta_cycles;
+    unsigned long long delta_idle_cycles;
     unsigned long long delta_busy_ticks;
 
     if (core >= 32u || core >= status_cpu_core_count()) {
@@ -151,20 +171,34 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
     }
 
     if (core == 0) {
-        current_idle_ticks = status_cpu_idle_ticks;
+        current_cycles = status_cpu_read_cycles();
+        current_idle_cycles = status_cpu_idle_cycles;
+        if (status_cpu_idle_depth > 0) {
+            current_idle_cycles += current_cycles - status_cpu_idle_start_cycles;
+        }
+
         if (!status_cpu_sample_initialized[core]) {
-            delta_ticks = current_ticks;
-            delta_idle_ticks = current_idle_ticks;
+            delta_cycles = 0;
+            delta_idle_cycles = 0;
             status_cpu_sample_initialized[core] = 1;
         } else {
-            delta_ticks = current_ticks - status_cpu_last_ticks[core];
-            delta_idle_ticks = current_idle_ticks - status_cpu_last_idle_ticks;
+            delta_cycles = current_cycles - status_cpu_last_cycles[core];
+            delta_idle_cycles = current_idle_cycles - status_cpu_last_idle_cycles;
         }
 
         status_cpu_last_ticks[core] = current_ticks;
-        status_cpu_last_idle_ticks = current_idle_ticks;
-        status_cpu_cached_busy_percent[core] =
-            (unsigned int)status_busy_percent_from_ticks(delta_ticks, delta_idle_ticks);
+        status_cpu_last_cycles[core] = current_cycles;
+        status_cpu_last_idle_cycles = current_idle_cycles;
+        if (delta_cycles == 0 || delta_idle_cycles >= delta_cycles) {
+            status_cpu_cached_busy_percent[core] = 0;
+        } else {
+            unsigned long long busy_cycles = delta_cycles - delta_idle_cycles;
+            status_cpu_cached_busy_percent[core] =
+                (unsigned int)((busy_cycles * 100ull + (delta_cycles / 2ull)) / delta_cycles);
+            if (status_cpu_cached_busy_percent[core] > 100u) {
+                status_cpu_cached_busy_percent[core] = 100u;
+            }
+        }
         return status_cpu_cached_busy_percent[core];
     }
 
@@ -325,6 +359,8 @@ void kernel_main(boot_info_t *info) {
     interrupts_init();
     boot_stage("timer");
     timer_init();
+    boot_stage("local APIC timer");
+    cpu_enable_lapic_timer(timer_frequency());
     boot_stage("dma");
     dma_init(info);
     boot_stage("heap");

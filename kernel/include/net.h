@@ -31,11 +31,17 @@ typedef struct {
 typedef struct {
     uint64_t rx_arp;
     uint64_t rx_ipv4;
+    uint64_t rx_udp;
     uint64_t rx_other;
     uint64_t arp_requests;
     uint64_t arp_replies;
     uint64_t arp_mismatches;
     uint64_t arp_tx_errors;
+    uint64_t udp_tx_errors;
+    uint64_t dhcp_tx;
+    uint64_t dhcp_rx;
+    uint64_t dns_tx;
+    uint64_t dns_rx;
     uint16_t last_eth_type;
     uint16_t last_inner_eth_type;
     uint16_t last_arp_op;
@@ -128,6 +134,10 @@ void net_set_ipv4_config(uint32_t address, uint32_t netmask, uint32_t gateway);
 uint32_t net_ipv4_address(void);
 uint32_t net_ipv4_netmask(void);
 uint32_t net_ipv4_gateway(void);
+void net_set_dns_server(uint32_t dns);
+uint32_t net_dns_server(void);
+int net_dhcp_configure(uint32_t index);
+int net_dns_resolve(uint32_t index, const char *name, uint32_t *out_ip);
 int net_http_get(uint32_t index,
                  const char *url,
                  char *out,

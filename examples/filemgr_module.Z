@@ -1,4 +1,6 @@
 enum {
+    MOUSE_LEFT = 1,
+    MOUSE_RIGHT = 2,
     OS_ENTRY_FILE = 1,
     OS_ENTRY_DIR = 2,
 };
@@ -37,6 +39,7 @@ global uint32_t filemgr_last_w;
 global uint32_t filemgr_last_h;
 global int filemgr_last_buttons;
 global int filemgr_selected;
+global int filemgr_selected_type;
 global uint32_t filemgr_dirty;
 global uint8_t filemgr_path[128];
 global uint8_t filemgr_status[64];
@@ -58,6 +61,7 @@ void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
 
 void clear_name(void) {
     filemgr_selected = -1;
+    filemgr_selected_type = 0;
     filemgr_selected_name[0] = 0;
 }
 
@@ -134,6 +138,13 @@ int selected_is_image(void) {
     return 0;
 }
 
+uint32_t selected_is_anything(void) {
+    if (filemgr_selected < 0) {
+        return 0;
+    }
+    return 1;
+}
+
 int open_image_viewer(const uint8_t *name) {
     if (os_open_image(name) != 0) {
         return -1;
@@ -185,7 +196,7 @@ void draw_filemgr(void) {
     draw_button(132, 50, 60, "Inst", selected_is_buildable());
     draw_button(198, 50, 60, "Load", selected_is_buildable());
     draw_button(330, 50, 60, "View", selected_is_image());
-    draw_button(264, 50, 60, "Delete", 2);
+    draw_button(264, 50, 60, "Delete", selected_is_anything());
     draw_text_at_pixel(396, 57, filemgr_status, 0xbdd7d0, 0x101820);
 
     count = os_dir_count(filemgr_path);
@@ -220,6 +231,7 @@ void draw_filemgr(void) {
         }
         i = i + 1;
     }
+
 }
 
 void go_up(void) {
@@ -242,6 +254,21 @@ void select_row(int row) {
         return;
     }
     type = os_dir_type(filemgr_path, row);
+    filemgr_selected = row;
+    filemgr_selected_type = type;
+    copy_text(filemgr_selected_name, 32, name);
+    copy_text(filemgr_status, 64, "selected");
+    filemgr_dirty = 1;
+}
+
+void activate_row(int row) {
+    uint8_t name[32];
+    int type;
+
+    if (os_dir_name(filemgr_path, row, name, 32) != 0) {
+        return;
+    }
+    type = os_dir_type(filemgr_path, row);
     if (type == OS_ENTRY_DIR) {
         if (os_chdir(name) == 0) {
             copy_text(filemgr_path, 128, ".");
@@ -255,6 +282,7 @@ void select_row(int row) {
         return;
     }
     filemgr_selected = row;
+    filemgr_selected_type = type;
     copy_text(filemgr_selected_name, 32, name);
     if (selected_is_image() != 0 && open_image_viewer(name) == 0) {
         copy_text(filemgr_status, 64, "opened image viewer");
@@ -262,6 +290,25 @@ void select_row(int row) {
         copy_text(filemgr_status, 64, "opened editor");
     } else {
         copy_text(filemgr_status, 64, "selected");
+    }
+    filemgr_dirty = 1;
+}
+
+void delete_selected(void) {
+    int status;
+
+    if (filemgr_selected < 0) {
+        return;
+    }
+
+    status = os_delete(filemgr_selected_name);
+    if (status == 0) {
+        clear_name();
+        copy_text(filemgr_status, 64, "deleted");
+    } else if (status == -9) {
+        copy_text(filemgr_status, 64, "directory not empty");
+    } else {
+        copy_text(filemgr_status, 64, "delete failed");
     }
     filemgr_dirty = 1;
 }
@@ -342,12 +389,18 @@ void handle_click(void) {
                 copy_text(filemgr_status, 64, "view failed");
                 filemgr_dirty = 1;
             }
+        } else if (rx >= 264 && rx < 324) {
+            delete_selected();
         }
         return;
     }
     if (ry >= 86) {
         row = (ry - 86) / 22;
-        select_row(row);
+        if (buttons == MOUSE_RIGHT) {
+            select_row(row);
+        } else {
+            activate_row(row);
+        }
     }
 }
 

@@ -6,6 +6,7 @@
 #define CPU_AP_TRAMPOLINE_BASE 0x8000ull
 #define CPU_AP_TRAMPOLINE_VECTOR 0x08u
 #define CPU_SMP_IPI_VECTOR 0xF1u
+#define CPU_LAPIC_TIMER_VECTOR 0xF0u
 #define CPU_SMP_WORK_SLOTS 64u
 #define CPU_SMP_WORK_FREE 0u
 #define CPU_SMP_WORK_QUEUED 1u
@@ -22,9 +23,15 @@
 #define LAPIC_REG_ID 0x20u
 #define LAPIC_REG_EOI 0xB0u
 #define LAPIC_REG_SVR 0xF0u
+#define LAPIC_REG_LVT_TIMER 0x320u
 #define LAPIC_REG_ICR_LOW 0x300u
 #define LAPIC_REG_ICR_HIGH 0x310u
+#define LAPIC_REG_TIMER_INITIAL_COUNT 0x380u
+#define LAPIC_REG_TIMER_CURRENT_COUNT 0x390u
+#define LAPIC_REG_TIMER_DIVIDE 0x3E0u
 #define LAPIC_SVR_ENABLE 0x100u
+#define LAPIC_LVT_MASKED 0x10000u
+#define LAPIC_LVT_TIMER_PERIODIC 0x20000u
 #define LAPIC_ICR_DEST_ALL_BUT_SELF 0x000C0000u
 #define LAPIC_ICR_DELIVERY_STATUS 0x1000u
 #define LAPIC_ICR_FIXED 0x000u
@@ -127,6 +134,7 @@ extern void isr_28(void); extern void isr_29(void); extern void isr_30(void); ex
 extern void irq0_timer(void);
 extern void irq12_mouse(void);
 extern void irq_smp_ipi(void);
+extern void irq_lapic_timer(void);
 
 extern void cpu_load_gdt_and_segments(const struct gdtr64 *gdtr);
 extern void cpu_load_idt(const struct idtr64 *idtr);
@@ -151,12 +159,16 @@ static unsigned int bsp_lapic_id;
 static volatile unsigned int online_core_count = 1u;
 static volatile unsigned int smp_work_lock;
 static volatile unsigned int smp_next_work_id = 1u;
+static volatile unsigned int lapic_timer_enabled;
+static volatile unsigned int lapic_timer_initial_count;
+static volatile unsigned int lapic_timer_hz;
 
 typedef struct {
     volatile unsigned int online;
     unsigned int lapic_id;
     volatile uint64_t busy_ticks;
     volatile uint64_t local_timer_ticks;
+    volatile unsigned int local_timer_configured;
 } cpu_core_state_t;
 
 typedef struct {
@@ -267,6 +279,7 @@ static void cpu_reset_core_states(void) {
         cpu_cores[i].lapic_id = i < detected_core_count ? detected_lapic_ids[i] : 0xffffffffu;
         cpu_cores[i].busy_ticks = 0;
         cpu_cores[i].local_timer_ticks = 0;
+        cpu_cores[i].local_timer_configured = 0;
     }
 }
 
@@ -364,6 +377,31 @@ static void cpu_record_busy_ticks(unsigned int core, uint64_t ticks) {
     __sync_fetch_and_add(&cpu_cores[core].busy_ticks, ticks);
 }
 
+static void lapic_timer_stop(void) {
+    lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_LVT_MASKED | CPU_LAPIC_TIMER_VECTOR);
+    lapic_write(LAPIC_REG_TIMER_INITIAL_COUNT, 0u);
+}
+
+static void lapic_timer_configure_current_core(void) {
+    unsigned int core_index;
+
+    if (!lapic_timer_enabled || lapic_timer_initial_count == 0u) {
+        return;
+    }
+
+    core_index = cpu_index_for_lapic_id(lapic_current_id());
+    if (core_index < CPU_MAX_CORES && cpu_cores[core_index].local_timer_configured) {
+        return;
+    }
+
+    lapic_write(LAPIC_REG_TIMER_DIVIDE, 0x3u);
+    lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_LVT_TIMER_PERIODIC | CPU_LAPIC_TIMER_VECTOR);
+    lapic_write(LAPIC_REG_TIMER_INITIAL_COUNT, lapic_timer_initial_count);
+    if (core_index < CPU_MAX_CORES) {
+        cpu_cores[core_index].local_timer_configured = 1u;
+    }
+}
+
 static int smp_run_one_work_item(unsigned int core_index) {
     smp_work_fn_t fn = 0;
     void *arg = 0;
@@ -390,6 +428,16 @@ static int smp_run_one_work_item(unsigned int core_index) {
 }
 
 void cpu_ipi_handler(void) {
+    lapic_timer_configure_current_core();
+    lapic_eoi();
+}
+
+void cpu_lapic_timer_handler(void) {
+    unsigned int core_index = cpu_index_for_lapic_id(lapic_current_id());
+
+    if (core_index < CPU_MAX_CORES) {
+        __sync_fetch_and_add(&cpu_cores[core_index].local_timer_ticks, 1ull);
+    }
     lapic_eoi();
 }
 
@@ -687,6 +735,7 @@ void cpu_init_tables(void) {
     }
     idt_set_gate(32, irq0_timer);
     idt_set_gate(44, irq12_mouse);
+    idt_set_gate(CPU_LAPIC_TIMER_VECTOR, irq_lapic_timer);
     idt_set_gate(CPU_SMP_IPI_VECTOR, irq_smp_ipi);
 
     struct idtr64 idtr = {
@@ -767,6 +816,30 @@ unsigned long long cpu_core_busy_ticks(unsigned int core) {
     return cpu_cores[core].busy_ticks;
 }
 
+unsigned long long cpu_core_local_timer_ticks(unsigned int core) {
+    if (core >= CPU_MAX_CORES) {
+        return 0;
+    }
+
+    return cpu_cores[core].local_timer_ticks;
+}
+
+unsigned int cpu_core_local_timer_configured(unsigned int core) {
+    if (core >= CPU_MAX_CORES) {
+        return 0;
+    }
+
+    return cpu_cores[core].local_timer_configured;
+}
+
+unsigned int cpu_lapic_timer_frequency(void) {
+    return lapic_timer_hz;
+}
+
+unsigned int cpu_lapic_timer_init_count(void) {
+    return lapic_timer_initial_count;
+}
+
 unsigned int cpu_lapic_id(unsigned int index) {
     if (index >= detected_core_count) {
         return 0;
@@ -824,6 +897,57 @@ unsigned int cpu_start_secondary_cores(void) {
     }
 
     return online_core_count;
+}
+
+int cpu_enable_lapic_timer(unsigned int hz) {
+    unsigned long long start_tick;
+    unsigned long long end_tick;
+    uint32_t start_count = 0xFFFFFFFFu;
+    uint32_t current_count;
+    uint32_t elapsed;
+    uint64_t count;
+
+    if (hz == 0u || detected_lapic_base == 0) {
+        return -1;
+    }
+
+    lapic_enable();
+    lapic_timer_stop();
+    lapic_write(LAPIC_REG_TIMER_DIVIDE, 0x3u);
+
+    start_tick = timer_ticks();
+    while (timer_ticks() == start_tick) {
+        cpu_relax();
+    }
+    start_tick = timer_ticks();
+    lapic_write(LAPIC_REG_TIMER_INITIAL_COUNT, start_count);
+    end_tick = start_tick + timer_frequency();
+    while (timer_ticks() < end_tick) {
+        cpu_relax();
+    }
+
+    current_count = lapic_read(LAPIC_REG_TIMER_CURRENT_COUNT);
+    lapic_timer_stop();
+    elapsed = start_count - current_count;
+    if (elapsed == 0u) {
+        return -1;
+    }
+
+    count = ((uint64_t)elapsed + (hz / 2u)) / hz;
+    if (count == 0u) {
+        count = 1u;
+    }
+    if (count > 0xFFFFFFFFull) {
+        count = 0xFFFFFFFFull;
+    }
+
+    lapic_timer_initial_count = (unsigned int)count;
+    lapic_timer_hz = hz;
+    __sync_synchronize();
+    lapic_timer_enabled = 1u;
+    lapic_timer_configure_current_core();
+    cpu_send_smp_ipi();
+    return 0;
 }
 
 unsigned int smp_submit_work(smp_work_fn_t fn, void *arg) {
