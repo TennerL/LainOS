@@ -6,8 +6,8 @@
 #define Z_MAX_LABEL_PREFIX 8u
 #define Z_MAX_LOCALS 64u
 #define Z_MAX_PARAMS 6u
-#define Z_MAX_STRINGS 64u
-#define Z_STRING_POOL_SIZE 4096u
+#define Z_MAX_STRINGS 256u
+#define Z_STRING_POOL_SIZE 8192u
 #define Z_MAX_ARRAY_DIMS 3u
 #define Z_MAX_STRUCTS 32u
 #define Z_MAX_STRUCT_FIELDS 16u

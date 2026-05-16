@@ -45,6 +45,31 @@ typedef struct {
     uint64_t fault_count_after;
 } kmem_test_result_t;
 
+typedef struct {
+    uint32_t passed;
+    uint32_t cycles;
+    uint32_t alloc_attempts;
+    uint32_t alloc_successes;
+    uint32_t unexpected_failures;
+    uint32_t fragmentation_before;
+    uint32_t fragmentation_after;
+    uint32_t worst_fragmentation;
+    uint64_t live_allocations_before;
+    uint64_t live_allocations_after;
+    uint64_t heap_used_before;
+    uint64_t heap_used_after;
+    uint64_t free_pages_before;
+    uint64_t free_pages_after;
+    uint64_t largest_free_range_before;
+    uint64_t largest_free_range_after;
+    uint64_t small_free_blocks_before;
+    uint64_t small_free_blocks_after;
+    uint64_t allocation_failures_before;
+    uint64_t allocation_failures_after;
+    uint64_t fault_count_before;
+    uint64_t fault_count_after;
+} kmem_soak_result_t;
+
 void kmem_init(const boot_info_t *info);
 void *kmalloc(uint32_t size);
 void *kzalloc(uint32_t size);
@@ -56,5 +81,6 @@ uint64_t kmem_free_pages(void);
 uint64_t kmem_heap_used_bytes(void);
 void kmem_get_stats(kmem_stats_t *stats);
 void kmem_run_selftest(kmem_test_result_t *result);
+void kmem_run_soaktest(uint32_t cycles, kmem_soak_result_t *result);
 
 #endif

@@ -1,0 +1,251 @@
+#define KEY_CHAR 1
+#define KEY_ENTER 2
+#define KEY_BACKSPACE 3
+#define KEY_ESC 5
+#define MOUSE_LEFT 1
+
+extern uint32_t gfx_width(void);
+extern uint32_t gfx_height(void);
+extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg);
+extern int os_strlen(const uint8_t *text);
+extern int registry_set(const uint8_t *key, const uint8_t *value);
+extern const uint8_t *registry_get(const uint8_t *key);
+
+global uint32_t personalize_enabled;
+global uint32_t personalize_editing;
+global uint8_t personalize_image_path[128];
+global uint8_t personalize_status[80];
+
+void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
+    uint32_t i;
+
+    i = 0;
+    if (capacity == 0) {
+        return;
+    }
+    while (src[i] != 0 && i + 1 < capacity) {
+        dst[i] = src[i];
+        i = i + 1;
+    }
+    dst[i] = 0;
+}
+
+void append_char(uint8_t *dst, uint32_t capacity, uint8_t ch) {
+    int len;
+
+    len = os_strlen(dst);
+    if (len < 0 || len + 1 >= capacity) {
+        return;
+    }
+    dst[len] = ch;
+    dst[len + 1] = 0;
+}
+
+void backspace_text(uint8_t *dst) {
+    int len;
+
+    len = os_strlen(dst);
+    if (len > 0) {
+        dst[len - 1] = 0;
+    }
+}
+
+void set_lain(void) {
+    registry_set("desktop.theme", "lain");
+    registry_set("desktop.bg.top", "0x35063e");
+    registry_set("desktop.bg.bottom", "0x2b1d3d");
+    registry_set("desktop.topbar", "0x100b18");
+    registry_set("desktop.taskbar", "0x171020");
+    registry_set("desktop.panel", "0x221a2d");
+    registry_set("desktop.panel.inner", "0x3a2f49");
+    registry_set("desktop.accent", "0xe05f4f");
+    registry_set("desktop.accent.soft", "0xb98556");
+    registry_set("desktop.text", "0xf6eadb");
+    registry_set("desktop.button", "0x8f3f62");
+    registry_set("desktop.task.active", "0x4b2347");
+    registry_set("desktop.task.inactive", "0x2d2038");
+}
+
+void set_midnight(void) {
+    registry_set("desktop.theme", "midnight");
+    registry_set("desktop.bg.top", "0x101820");
+    registry_set("desktop.bg.bottom", "0x05080d");
+    registry_set("desktop.topbar", "0x090d12");
+    registry_set("desktop.taskbar", "0x0c1118");
+    registry_set("desktop.panel", "0x151d28");
+    registry_set("desktop.panel.inner", "0x263241");
+    registry_set("desktop.accent", "0x33aaff");
+    registry_set("desktop.accent.soft", "0x4d728f");
+    registry_set("desktop.text", "0xe8f1f7");
+    registry_set("desktop.button", "0x2b5f8a");
+    registry_set("desktop.task.active", "0x1f415c");
+    registry_set("desktop.task.inactive", "0x182330");
+}
+
+void set_olive(void) {
+    registry_set("desktop.theme", "olive");
+    registry_set("desktop.bg.top", "0x1f2a20");
+    registry_set("desktop.bg.bottom", "0x11170f");
+    registry_set("desktop.topbar", "0x121810");
+    registry_set("desktop.taskbar", "0x151b13");
+    registry_set("desktop.panel", "0x20291c");
+    registry_set("desktop.panel.inner", "0x384331");
+    registry_set("desktop.accent", "0xb6c46a");
+    registry_set("desktop.accent.soft", "0x71804a");
+    registry_set("desktop.text", "0xf0efd8");
+    registry_set("desktop.button", "0x546832");
+    registry_set("desktop.task.active", "0x45552e");
+    registry_set("desktop.task.inactive", "0x26301f");
+}
+
+void set_plum(void) {
+    registry_set("desktop.theme", "plum");
+    registry_set("desktop.bg.top", "0x2b1838");
+    registry_set("desktop.bg.bottom", "0x140f22");
+    registry_set("desktop.topbar", "0x120b1a");
+    registry_set("desktop.taskbar", "0x171020");
+    registry_set("desktop.panel", "0x271a32");
+    registry_set("desktop.panel.inner", "0x4a315e");
+    registry_set("desktop.accent", "0xd16b9a");
+    registry_set("desktop.accent.soft", "0x98618a");
+    registry_set("desktop.text", "0xf6eadb");
+    registry_set("desktop.button", "0x7b4c8f");
+    registry_set("desktop.task.active", "0x4b2347");
+    registry_set("desktop.task.inactive", "0x2d2038");
+}
+
+void draw_button(uint32_t x, uint32_t y, uint32_t w, const uint8_t *label, uint32_t color) {
+    gfx_fill_rect(x, y, w, 24, color);
+    gfx_draw_rect(x, y, w, 24, 0xf6eadb);
+    draw_text_at_pixel(x + 8, y + 7, label, 0xf6eadb, color);
+}
+
+void apply_image(void) {
+    registry_set("desktop.bg.image", personalize_image_path);
+    copy_text(personalize_status, 80, "background image updated");
+}
+
+export void zmodule_redraw(void) {
+    const uint8_t *theme;
+    const uint8_t *image;
+    uint32_t w;
+    uint32_t h;
+    uint32_t input_bg;
+
+    if (personalize_enabled == 0) {
+        return;
+    }
+
+    w = gfx_width();
+    h = gfx_height();
+    theme = registry_get("desktop.theme");
+    image = registry_get("desktop.bg.image");
+    input_bg = 0x202b33;
+    if (personalize_editing != 0) {
+        input_bg = 0x2f3d48;
+    }
+
+    gfx_fill_rect(0, 0, w, h, 0x101820);
+    gfx_fill_rect(0, 0, w, 34, 0x151c22);
+    gfx_fill_rect(0, 32, w, 2, 0xe05f4f);
+    draw_text_at_pixel(10, 10, "Personalize", 0xf7d154, 0x151c22);
+
+    draw_text_at_pixel(10, 48, "Theme", 0xe8f1f7, 0x101820);
+    draw_button(10, 68, 82, "Lain", 0x8f3f62);
+    draw_button(100, 68, 82, "Midnight", 0x2b5f8a);
+    draw_button(190, 68, 82, "Olive", 0x546832);
+    draw_button(280, 68, 82, "Plum", 0x7b4c8f);
+
+    draw_text_at_pixel(10, 108, "Background image path", 0xe8f1f7, 0x101820);
+    gfx_fill_rect(10, 128, w - 20, 24, input_bg);
+    gfx_draw_rect(10, 128, w - 20, 24, 0x718096);
+    draw_text_at_pixel(16, 135, personalize_image_path, 0xf5fbf7, input_bg);
+    if (personalize_editing != 0 && w > 40) {
+        draw_text_at_pixel(w - 24, 135, "_", 0xf7d154, input_bg);
+    }
+
+    draw_button(10, 162, 98, "Set image", 0x2b5f8a);
+    draw_button(116, 162, 98, "Clear image", 0x4b2347);
+
+    draw_text_at_pixel(10, 204, "Current theme:", 0xbdd7d0, 0x101820);
+    if (theme != 0) {
+        draw_text_at_pixel(124, 204, theme, 0xf5fbf7, 0x101820);
+    }
+    draw_text_at_pixel(10, 222, "Current image:", 0xbdd7d0, 0x101820);
+    if (image != 0 && image[0] != 0) {
+        draw_text_at_pixel(124, 222, image, 0xf5fbf7, 0x101820);
+    } else {
+        draw_text_at_pixel(124, 222, "none", 0xf5fbf7, 0x101820);
+    }
+    draw_text_at_pixel(10, h - 18, personalize_status, 0xbdd7d0, 0x101820);
+}
+
+export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t wheel) {
+    if (buttons != MOUSE_LEFT) {
+        return;
+    }
+
+    if (y >= 68 && y < 92) {
+        if (x >= 10 && x < 92) {
+            set_lain();
+            copy_text(personalize_status, 80, "theme set to lain");
+        } else if (x >= 100 && x < 182) {
+            set_midnight();
+            copy_text(personalize_status, 80, "theme set to midnight");
+        } else if (x >= 190 && x < 272) {
+            set_olive();
+            copy_text(personalize_status, 80, "theme set to olive");
+        } else if (x >= 280 && x < 362) {
+            set_plum();
+            copy_text(personalize_status, 80, "theme set to plum");
+        }
+        return;
+    }
+    if (y >= 128 && y < 152) {
+        personalize_editing = 1;
+        copy_text(personalize_status, 80, "type image path, press enter");
+        return;
+    }
+    if (y >= 162 && y < 186) {
+        personalize_editing = 0;
+        if (x >= 10 && x < 108) {
+            apply_image();
+        } else if (x >= 116 && x < 214) {
+            personalize_image_path[0] = 0;
+            registry_set("desktop.bg.image", "");
+            copy_text(personalize_status, 80, "background image cleared");
+        }
+    }
+}
+
+export void zmodule_key(uint32_t key_type, uint32_t ch) {
+    if (personalize_editing == 0) {
+        return;
+    }
+    if (key_type == KEY_CHAR) {
+        if (ch >= 32 && ch < 127) {
+            append_char(personalize_image_path, 128, ch);
+        }
+    } else if (key_type == KEY_BACKSPACE) {
+        backspace_text(personalize_image_path);
+    } else if (key_type == KEY_ENTER) {
+        personalize_editing = 0;
+        apply_image();
+    } else if (key_type == KEY_ESC) {
+        personalize_editing = 0;
+        copy_text(personalize_status, 80, "edit cancelled");
+    }
+}
+
+export void zmodule_unload(void) {
+    personalize_enabled = 0;
+}
+
+personalize_enabled = 1;
+personalize_editing = 0;
+copy_text(personalize_image_path, 128, registry_get("desktop.bg.image"));
+copy_text(personalize_status, 80, "ready");
+print("personalize module loaded\n");
+return 0;

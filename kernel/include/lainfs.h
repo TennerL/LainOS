@@ -9,9 +9,26 @@
 #define LAINFS_ENTRY_TYPE_FILE 1u
 #define LAINFS_ENTRY_TYPE_DIR 2u
 
+typedef struct {
+    uint32_t directory_valid;
+    uint32_t directory_dirty;
+    uint32_t data_valid;
+    uint32_t data_dirty;
+    uint64_t directory_reads;
+    uint64_t directory_writes;
+    uint64_t directory_cache_hits;
+    uint64_t data_reads;
+    uint64_t data_writes;
+    uint64_t data_cache_hits;
+    uint64_t flushes;
+} lainfs_cache_stats_t;
+
 int lainfs_format(char drive_letter);
 int lainfs_format_partition(const char *partition_name);
 int lainfs_format_block_device(const char *device_name, char *out_partition_name, uint32_t out_partition_name_size);
+int lainfs_flush(char drive_letter);
+int lainfs_flush_all(void);
+void lainfs_cache_stats(lainfs_cache_stats_t *out);
 int lainfs_list(char drive_letter);
 int lainfs_list_dir(char drive_letter, uint32_t parent_id);
 int lainfs_make_dir(char drive_letter, const char *name);

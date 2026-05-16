@@ -28,6 +28,7 @@ int image_decode_to_screen(const uint8_t *data,
                            uint32_t origin_x,
                            uint32_t origin_y,
                            image_info_t *out_image);
+const char *image_supported_formats(void);
 
 int jpg_probe(const uint8_t *data, uint32_t size, image_info_t *out_image);
 int jpg_decode_rgb24(const uint8_t *data,

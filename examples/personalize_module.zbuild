@@ -1,0 +1,3 @@
+include .
+module
+personalize_module.Z personalize_module.zo

@@ -714,3 +714,145 @@ void kmem_run_selftest(kmem_test_result_t *result) {
                      result->heap_used_after == result->heap_used_before &&
                      result->fault_count_after == result->fault_count_before;
 }
+
+void kmem_run_soaktest(uint32_t cycles, kmem_soak_result_t *result) {
+    enum { BLOCK_COUNT = 96, SCRATCH_COUNT = 24, WORKLOAD_COUNT = 8 };
+    static const uint32_t sizes[BLOCK_COUNT] = {
+        24u, 40u, 56u, 72u, 96u, 120u, 160u, 192u,
+        240u, 300u, 384u, 480u, 600u, 760u, 900u, 1000u,
+        1200u, 1500u, 1800u, 2040u, 2300u, 2800u, 3400u, 4080u,
+        5000u, 6500u, 8192u, 11000u, 31u, 63u, 127u, 255u,
+        511u, 1023u, 2047u, 4095u, 17u, 33u, 65u, 129u,
+        257u, 513u, 1025u, 2049u, 4097u, 6144u, 9000u, 12000u,
+        88u, 144u, 208u, 272u, 336u, 448u, 704u, 832u,
+        1152u, 1408u, 1664u, 1920u, 2560u, 3072u, 3584u, 3968u,
+        48u, 80u, 112u, 176u, 224u, 288u, 352u, 416u,
+        544u, 672u, 800u, 960u, 1184u, 1472u, 1984u, 3008u,
+        3904u, 4500u, 5500u, 7000u, 8500u, 10000u, 12u, 28u,
+        44u, 68u, 108u, 188u, 252u, 508u, 768u, 1536u
+    };
+    static const uint32_t workload_sizes[WORKLOAD_COUNT] = {
+        32768u, 65536u, 65537u, 131072u,
+        262144u, 262145u, 393216u, 524288u
+    };
+    void *blocks[BLOCK_COUNT];
+    void *scratch[SCRATCH_COUNT];
+    void *workload[WORKLOAD_COUNT];
+    kmem_stats_t before;
+    kmem_stats_t sample;
+    kmem_stats_t after;
+    uint32_t bad = 0;
+
+    if (result == 0) {
+        return;
+    }
+    if (cycles == 0u) {
+        cycles = 1u;
+    }
+
+    zero_memory(result, sizeof(*result));
+    result->cycles = cycles;
+
+    kmem_get_stats(&before);
+    result->live_allocations_before = before.live_allocations;
+    result->heap_used_before = before.heap_used_bytes;
+    result->free_pages_before = before.free_pages;
+    result->largest_free_range_before = before.largest_free_range_pages;
+    result->small_free_blocks_before = before.small_free_blocks;
+    result->allocation_failures_before = before.allocation_failures;
+    result->fault_count_before = kmem_fault_total(&before);
+    result->fragmentation_before = before.fragmentation_percent;
+    result->worst_fragmentation = before.fragmentation_percent;
+
+    for (uint32_t cycle = 0; cycle < cycles; ++cycle) {
+        for (uint32_t i = 0; i < BLOCK_COUNT; ++i) {
+            blocks[i] = 0;
+        }
+        for (uint32_t i = 0; i < SCRATCH_COUNT; ++i) {
+            scratch[i] = 0;
+        }
+        for (uint32_t i = 0; i < WORKLOAD_COUNT; ++i) {
+            workload[i] = 0;
+        }
+
+        for (uint32_t i = 0; i < BLOCK_COUNT; ++i) {
+            uint32_t index = (i * 17u + cycle * 7u) % BLOCK_COUNT;
+            blocks[i] = kmalloc(sizes[index]);
+            ++result->alloc_attempts;
+            if (blocks[i] == 0) {
+                ++result->unexpected_failures;
+                bad = 1;
+            } else {
+                ++result->alloc_successes;
+            }
+        }
+
+        for (uint32_t i = 0; i < WORKLOAD_COUNT; ++i) {
+            uint32_t index = (i + cycle) % WORKLOAD_COUNT;
+            workload[i] = kmalloc(workload_sizes[index]);
+            ++result->alloc_attempts;
+            if (workload[i] == 0) {
+                ++result->unexpected_failures;
+                bad = 1;
+            } else {
+                ++result->alloc_successes;
+            }
+        }
+
+        for (uint32_t i = cycle % 3u; i < BLOCK_COUNT; i += 3u) {
+            kfree(blocks[i]);
+            blocks[i] = 0;
+        }
+
+        for (uint32_t i = 0; i < SCRATCH_COUNT; ++i) {
+            uint32_t size = 80u + ((i * 113u + cycle * 29u) % 3000u);
+            scratch[i] = kmalloc(size);
+            ++result->alloc_attempts;
+            if (scratch[i] == 0) {
+                ++result->unexpected_failures;
+                bad = 1;
+            } else {
+                ++result->alloc_successes;
+            }
+        }
+
+        for (uint32_t i = 0; i < SCRATCH_COUNT; ++i) {
+            kfree(scratch[i]);
+        }
+        for (uint32_t i = cycle % 2u; i < WORKLOAD_COUNT; i += 2u) {
+            kfree(workload[i]);
+            workload[i] = 0;
+        }
+        for (uint32_t i = 0; i < BLOCK_COUNT; ++i) {
+            kfree(blocks[i]);
+        }
+        for (uint32_t i = 0; i < WORKLOAD_COUNT; ++i) {
+            kfree(workload[i]);
+        }
+
+        kmem_get_stats(&sample);
+        if (sample.fragmentation_percent > result->worst_fragmentation) {
+            result->worst_fragmentation = sample.fragmentation_percent;
+        }
+        if (sample.live_allocations != before.live_allocations ||
+            sample.heap_used_bytes != before.heap_used_bytes ||
+            kmem_fault_total(&sample) != result->fault_count_before) {
+            bad = 1;
+        }
+    }
+
+    kmem_get_stats(&after);
+    result->live_allocations_after = after.live_allocations;
+    result->heap_used_after = after.heap_used_bytes;
+    result->free_pages_after = after.free_pages;
+    result->largest_free_range_after = after.largest_free_range_pages;
+    result->small_free_blocks_after = after.small_free_blocks;
+    result->allocation_failures_after = after.allocation_failures;
+    result->fault_count_after = kmem_fault_total(&after);
+    result->fragmentation_after = after.fragmentation_percent;
+    result->passed = !bad &&
+                     result->unexpected_failures == 0u &&
+                     result->live_allocations_after == result->live_allocations_before &&
+                     result->heap_used_after == result->heap_used_before &&
+                     result->fault_count_after == result->fault_count_before;
+}

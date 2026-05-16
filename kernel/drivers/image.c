@@ -7,6 +7,10 @@
 
 void *memcpy(void *dst, const void *src, size_t len);
 
+static int image_abs(int value) {
+    return value < 0 ? -value : value;
+}
+
 static void *image_stbi_malloc(size_t size) {
     if (size == 0 || size > 0xffffffffu) {
         return 0;
@@ -57,12 +61,20 @@ static void *image_stbi_realloc_sized(void *ptr, size_t old_size, size_t new_siz
 #define STBI_NO_LINEAR
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
+#define STBI_ONLY_BMP
+#define STBI_ONLY_GIF
+#define STBI_ONLY_TGA
+#define STBI_ONLY_PSD
+#define STBI_ONLY_PIC
+#define STBI_ONLY_PNM
 #define STBI_NO_FAILURE_STRINGS
 #define STBI_MALLOC(sz) image_stbi_malloc((size_t)(sz))
 #define STBI_REALLOC_SIZED(p, oldsz, newsz) image_stbi_realloc_sized((p), (size_t)(oldsz), (size_t)(newsz))
 #define STBI_FREE(p) image_stbi_free((p))
 #define STBI_ASSERT(x) do { (void)sizeof(x); } while (0)
+#define abs image_abs
 #include "stb_image.h"
+#undef abs
 
 #define IMAGE_MAX_DIMENSION 4096u
 #define IMAGE_MAX_PIXELS (IMAGE_MAX_DIMENSION * IMAGE_MAX_DIMENSION)
@@ -201,6 +213,10 @@ int image_decode_to_screen(const uint8_t *data,
 
     STBI_FREE(decoded);
     return rc;
+}
+
+const char *image_supported_formats(void) {
+    return "JPEG PNG BMP GIF TGA PSD PIC PNM";
 }
 
 int jpg_probe(const uint8_t *data, uint32_t size, image_info_t *out_image) {

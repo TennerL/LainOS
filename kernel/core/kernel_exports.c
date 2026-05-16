@@ -3,6 +3,7 @@
 #include "image.h"
 #include "kernel.h"
 #include "kmem.h"
+#include "registry.h"
 #include "shell.h"
 
 static int kernel_export_streq(const char *a, const char *b) {
@@ -34,6 +35,12 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("page_alloc", page_alloc),
     KERNEL_EXPORT("page_free", page_free),
     KERNEL_EXPORT("heap_used_bytes", kmem_heap_used_bytes),
+    KERNEL_EXPORT("registry_set", registry_set),
+    KERNEL_EXPORT("registry_get", registry_get),
+    KERNEL_EXPORT("registry_get_u32", registry_get_u32),
+    KERNEL_EXPORT("registry_count", registry_count),
+    KERNEL_EXPORT("registry_key_at", registry_key_at),
+    KERNEL_EXPORT("registry_value_at", registry_value_at),
     KERNEL_EXPORT("status_cpu_core_count", status_cpu_core_count),
     KERNEL_EXPORT("cpu_count", status_cpu_core_count),
     KERNEL_EXPORT("cpu_usage", status_cpu_usage_percent),
@@ -43,6 +50,11 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("smp_work_done", smp_work_done),
     KERNEL_EXPORT("smp_wait_work", smp_wait_work),
     KERNEL_EXPORT("smp_pending_work_count", smp_pending_work_count),
+    KERNEL_EXPORT("kernel_task_submit", kernel_task_submit),
+    KERNEL_EXPORT("kernel_task_done", kernel_task_done),
+    KERNEL_EXPORT("kernel_task_wait", kernel_task_wait),
+    KERNEL_EXPORT("kernel_task_poll", kernel_task_poll),
+    KERNEL_EXPORT("kernel_task_pending_count", kernel_task_pending_count),
     KERNEL_EXPORT("put_pixel", put_pixel),
     KERNEL_EXPORT("gfx_width", graphics_width),
     KERNEL_EXPORT("gfx_height", graphics_height),
@@ -63,6 +75,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("image_probe", image_probe),
     KERNEL_EXPORT("image_decode_rgb24", image_decode_rgb24),
     KERNEL_EXPORT("image_decode_to_screen", image_decode_to_screen),
+    KERNEL_EXPORT("image_supported_formats", image_supported_formats),
     KERNEL_EXPORT("jpg_probe", jpg_probe),
     KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
     KERNEL_EXPORT("jpg_decode_to_screen", jpg_decode_to_screen),

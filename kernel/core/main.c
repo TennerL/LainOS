@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "registry.h"
 #include "dma.h"
 #include "graphics.h"
 #include "kmem.h"
@@ -393,7 +394,11 @@ void kernel_main(boot_info_t *info) {
     console_puts("\nHave fun hacking on it.\n");
 
     shell_init();
+    registry_init();
     shell_mount_first_lainfs('S');
+    shell_registry_load();
+    registry_set_save_hook(shell_registry_save);
+    shell_registry_save();
     shell_run_autoexec("autoexec", info);
 
     for (;;) {

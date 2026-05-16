@@ -10,6 +10,7 @@
 #include "kmem.h"
 #include "lainfs.h"
 #include "net.h"
+#include "registry.h"
 #include "shell.h"
 #include "storage.h"
 #include "usb.h"
@@ -36,6 +37,7 @@
 #define ZMODULE_MAX_EXPORTS ZOBJECT_MAX_RESOLVED_SYMBOLS
 #define ZMODULE_NAME_SIZE 32u
 #define ZMODULE_TICK_HZ 20u
+#define SHELL_REGISTRY_FILE "registry.cfg"
 
 static int script_depth;
 static char (*script_buffers)[SCRIPT_BUFFER_SIZE + 1];
@@ -79,6 +81,8 @@ typedef uint64_t (*exec_program_ret_t)(const exec_api_t *api);
 typedef void (*zmodule_tick_t)(void);
 typedef void (*zmodule_unload_t)(void);
 typedef void (*zmodule_void_hook_t)(void);
+typedef void (*zmodule_key_hook_t)(uint32_t key_type, uint32_t ch);
+typedef void (*zmodule_mouse_hook_t)(uint32_t x, uint32_t y, uint32_t buttons, int32_t wheel);
 
 typedef struct {
     const char *name;
@@ -142,6 +146,9 @@ static int streq(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static int active_drive(void);
+static int append_text_limited(char *out, uint32_t out_size, uint32_t *pos, const char *text);
+
 static void zero_memory(void *ptr, uint32_t size) {
     unsigned char *p = (unsigned char *)ptr;
     for (uint32_t i = 0; i < size; ++i) {
@@ -188,6 +195,112 @@ static int shell_alloc_work_buffers(void) {
                                shell_source_buffer != 0 &&
                                shell_wget_buffer != 0;
     return shell_work_buffers_ready;
+}
+
+static char *trim_spaces_mutable(char *s) {
+    char *end;
+
+    s = skip_spaces(s);
+    end = s;
+    while (*end != '\0') {
+        ++end;
+    }
+    while (end > s &&
+           (end[-1] == ' ' ||
+            end[-1] == '\t' ||
+            end[-1] == '\r' ||
+            end[-1] == '\n')) {
+        --end;
+    }
+    *end = '\0';
+    return s;
+}
+
+void shell_registry_save(void) {
+    int drive = active_drive();
+    uint32_t pos = 0;
+    uint32_t count;
+
+    if (drive < 0 || !shell_work_buffers_ready || shell_manifest_buffer == 0) {
+        return;
+    }
+
+    count = registry_count();
+    shell_manifest_buffer[0] = '\0';
+    for (uint32_t i = 0; i < count; ++i) {
+        const char *key = registry_key_at(i);
+        const char *value = registry_value_at(i);
+        if (key == 0 || value == 0) {
+            continue;
+        }
+        if (append_text_limited(shell_manifest_buffer, ASM_SOURCE_SIZE, &pos, key) != 0 ||
+            append_text_limited(shell_manifest_buffer, ASM_SOURCE_SIZE, &pos, "=") != 0 ||
+            append_text_limited(shell_manifest_buffer, ASM_SOURCE_SIZE, &pos, value) != 0 ||
+            append_text_limited(shell_manifest_buffer, ASM_SOURCE_SIZE, &pos, "\n") != 0) {
+            return;
+        }
+    }
+
+    if (lainfs_save_file_in_dir((char)('A' + drive),
+                                LAINFS_ROOT_DIR,
+                                SHELL_REGISTRY_FILE,
+                                shell_manifest_buffer,
+                                pos) == 0) {
+        (void)lainfs_flush((char)('A' + drive));
+    }
+}
+
+void shell_registry_load(void) {
+    int drive = active_drive();
+    uint32_t size = 0;
+
+    if (drive < 0 || !shell_work_buffers_ready || shell_manifest_buffer == 0) {
+        return;
+    }
+    if (lainfs_load_file_in_dir((char)('A' + drive),
+                                LAINFS_ROOT_DIR,
+                                SHELL_REGISTRY_FILE,
+                                shell_manifest_buffer,
+                                ASM_SOURCE_SIZE,
+                                &size) != 0 ||
+        size >= ASM_SOURCE_SIZE) {
+        return;
+    }
+
+    shell_manifest_buffer[size] = '\0';
+    registry_suspend_save(1);
+    for (uint32_t pos = 0; pos < size;) {
+        char *line = shell_manifest_buffer + pos;
+        char *eq;
+        char *key;
+        char *value;
+
+        while (pos < size && shell_manifest_buffer[pos] != '\n') {
+            ++pos;
+        }
+        if (pos < size) {
+            shell_manifest_buffer[pos++] = '\0';
+        }
+
+        key = trim_spaces_mutable(line);
+        if (*key == '\0' || *key == '#' || *key == ';') {
+            continue;
+        }
+        eq = key;
+        while (*eq != '\0' && *eq != '=') {
+            ++eq;
+        }
+        if (*eq != '=') {
+            continue;
+        }
+        *eq++ = '\0';
+        key = trim_spaces_mutable(key);
+        value = trim_spaces_mutable(eq);
+        if (*key != '\0') {
+            (void)registry_set(key, value);
+        }
+    }
+    registry_suspend_save(0);
 }
 
 static int parse_color_arg(const char *args, unsigned int *color) {
@@ -1187,6 +1300,8 @@ static void cmd_help(const char *args, const boot_info_t *info);
 static void cmd_bgcolor(const char *args, const boot_info_t *info);
 static void cmd_fgcolor(const char *args, const boot_info_t *info);
 static void cmd_resolution(const char *args, const boot_info_t *info);
+static void cmd_reg(const char *args, const boot_info_t *info);
+static void cmd_theme(const char *args, const boot_info_t *info);
 static void cmd_clear(const char *args, const boot_info_t *info);
 static void cmd_echo(const char *args, const boot_info_t *info);
 static void cmd_info(const char *args, const boot_info_t *info);
@@ -1194,7 +1309,10 @@ static void cmd_heap(const char *args, const boot_info_t *info);
 static void cmd_heaptest(const char *args, const boot_info_t *info);
 static void cmd_cpus(const char *args, const boot_info_t *info);
 static void cmd_smp(const char *args, const boot_info_t *info);
+static void cmd_tasks(const char *args, const boot_info_t *info);
+static void cmd_tasktest(const char *args, const boot_info_t *info);
 static void cmd_gfx(const char *args, const boot_info_t *info);
+static void cmd_fsflush(const char *args, const boot_info_t *info);
 static void cmd_reboot(const char *args, const boot_info_t *info);
 static void cmd_poweroff(const char *args, const boot_info_t *info);
 static void cmd_mkdrive(const char *args, const boot_info_t *info);
@@ -1262,6 +1380,8 @@ static const command_t commands[] = {
     { "bgcolor", "set background color",      cmd_bgcolor },
     { "fgcolor", "set text color",            cmd_fgcolor },
     { "resolution", "set next-boot resolution", cmd_resolution },
+    { "reg",     "read or write system registry", cmd_reg },
+    { "theme",   "personalize desktop theme", cmd_theme },
     { "clear",   "clear screen",              cmd_clear },
     { "echo",    "print text",                cmd_echo },
     { "info",    "show kernel info",          cmd_info },
@@ -1269,7 +1389,10 @@ static const command_t commands[] = {
     { "heaptest", "run heap stress diagnostics", cmd_heaptest },
     { "cpus",    "show CPU topology",         cmd_cpus },
     { "smp",     "run a multicore work test", cmd_smp },
+    { "tasks",   "show cooperative tasks",     cmd_tasks },
+    { "tasktest", "run cooperative task test", cmd_tasktest },
     { "gfx",     "show graphics SMP stats",   cmd_gfx },
+    { "fsflush", "flush filesystem cache",     cmd_fsflush },
     { "reboot",  "restart the machine",       cmd_reboot },
     { "poweroff", "power off the machine",     cmd_poweroff },
     { "shutdown", "power off the machine",     cmd_poweroff },
@@ -1424,6 +1547,167 @@ static void cmd_resolution(const char *args, const boot_info_t *info) {
     console_puts("\nreboot to apply it\n");
 }
 
+static void registry_print_all(void) {
+    uint32_t count = registry_count();
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const char *key = registry_key_at(i);
+        const char *value = registry_value_at(i);
+        if (key != 0 && value != 0) {
+            console_puts(key);
+            console_puts(" = ");
+            console_puts(value);
+            console_puts("\n");
+        }
+    }
+}
+
+static void cmd_reg(const char *args, const boot_info_t *info) {
+    char *command = 0;
+    char *key = 0;
+    char *value = 0;
+    const char *current;
+    int status;
+
+    (void)info;
+
+    split_first_arg((char *)args, &command, &key);
+    split_first_arg(key, &key, &value);
+
+    if (*command == '\0' || streq(command, "list")) {
+        registry_print_all();
+        return;
+    }
+    if (streq(command, "get")) {
+        if (*key == '\0') {
+            console_puts("usage: reg get key\n");
+            return;
+        }
+        current = registry_get(key);
+        if (current == 0) {
+            console_puts("registry key not found\n");
+            return;
+        }
+        console_puts(current);
+        console_puts("\n");
+        return;
+    }
+    if (streq(command, "set")) {
+        if (*key == '\0' || *value == '\0') {
+            console_puts("usage: reg set key value\n");
+            return;
+        }
+        status = registry_set(key, value);
+        if (status == REGISTRY_OK) {
+            console_puts("registry updated\n");
+        } else if (status == REGISTRY_ERR_TOO_LONG) {
+            console_puts("registry set failed: key or value too long\n");
+        } else if (status == REGISTRY_ERR_FULL) {
+            console_puts("registry set failed: registry full\n");
+        } else {
+            console_puts("registry set failed\n");
+        }
+        return;
+    }
+
+    console_puts("usage: reg [list|get key|set key value]\n");
+}
+
+static void theme_set_lain(void) {
+    (void)registry_set("desktop.theme", "lain");
+    (void)registry_set("desktop.bg.top", "0x35063e");
+    (void)registry_set("desktop.bg.bottom", "0x2b1d3d");
+    (void)registry_set("desktop.topbar", "0x100b18");
+    (void)registry_set("desktop.taskbar", "0x171020");
+    (void)registry_set("desktop.panel", "0x221a2d");
+    (void)registry_set("desktop.panel.inner", "0x3a2f49");
+    (void)registry_set("desktop.accent", "0xe05f4f");
+    (void)registry_set("desktop.accent.soft", "0xb98556");
+    (void)registry_set("desktop.text", "0xf6eadb");
+    (void)registry_set("desktop.button", "0x8f3f62");
+    (void)registry_set("desktop.task.active", "0x4b2347");
+    (void)registry_set("desktop.task.inactive", "0x2d2038");
+}
+
+static void theme_set_midnight(void) {
+    (void)registry_set("desktop.theme", "midnight");
+    (void)registry_set("desktop.bg.top", "0x101820");
+    (void)registry_set("desktop.bg.bottom", "0x05080d");
+    (void)registry_set("desktop.topbar", "0x090d12");
+    (void)registry_set("desktop.taskbar", "0x0c1118");
+    (void)registry_set("desktop.panel", "0x151d28");
+    (void)registry_set("desktop.panel.inner", "0x263241");
+    (void)registry_set("desktop.accent", "0x33aaff");
+    (void)registry_set("desktop.accent.soft", "0x4d728f");
+    (void)registry_set("desktop.text", "0xe8f1f7");
+    (void)registry_set("desktop.button", "0x2b5f8a");
+    (void)registry_set("desktop.task.active", "0x1f415c");
+    (void)registry_set("desktop.task.inactive", "0x182330");
+}
+
+static void theme_set_olive(void) {
+    (void)registry_set("desktop.theme", "olive");
+    (void)registry_set("desktop.bg.top", "0x1f2a20");
+    (void)registry_set("desktop.bg.bottom", "0x11170f");
+    (void)registry_set("desktop.topbar", "0x121810");
+    (void)registry_set("desktop.taskbar", "0x151b13");
+    (void)registry_set("desktop.panel", "0x20291c");
+    (void)registry_set("desktop.panel.inner", "0x384331");
+    (void)registry_set("desktop.accent", "0xb6c46a");
+    (void)registry_set("desktop.accent.soft", "0x71804a");
+    (void)registry_set("desktop.text", "0xf0efd8");
+    (void)registry_set("desktop.button", "0x546832");
+    (void)registry_set("desktop.task.active", "0x45552e");
+    (void)registry_set("desktop.task.inactive", "0x26301f");
+}
+
+static void theme_set_plum(void) {
+    (void)registry_set("desktop.theme", "plum");
+    (void)registry_set("desktop.bg.top", "0x2b1838");
+    (void)registry_set("desktop.bg.bottom", "0x140f22");
+    (void)registry_set("desktop.topbar", "0x120b1a");
+    (void)registry_set("desktop.taskbar", "0x171020");
+    (void)registry_set("desktop.panel", "0x271a32");
+    (void)registry_set("desktop.panel.inner", "0x4a315e");
+    (void)registry_set("desktop.accent", "0xd16b9a");
+    (void)registry_set("desktop.accent.soft", "0x98618a");
+    (void)registry_set("desktop.text", "0xf6eadb");
+    (void)registry_set("desktop.button", "0x7b4c8f");
+    (void)registry_set("desktop.task.active", "0x4b2347");
+    (void)registry_set("desktop.task.inactive", "0x2d2038");
+}
+
+static void cmd_theme(const char *args, const boot_info_t *info) {
+    const char *name = skip_const_spaces(args);
+
+    (void)info;
+
+    if (*name == '\0' || streq(name, "list")) {
+        console_puts("themes: lain midnight olive plum\n");
+        console_puts("current: ");
+        console_puts(registry_get("desktop.theme") ? registry_get("desktop.theme") : "custom");
+        console_puts("\n");
+        return;
+    }
+
+    if (streq(name, "lain")) {
+        theme_set_lain();
+    } else if (streq(name, "midnight")) {
+        theme_set_midnight();
+    } else if (streq(name, "olive")) {
+        theme_set_olive();
+    } else if (streq(name, "plum")) {
+        theme_set_plum();
+    } else {
+        console_puts("usage: theme [list|lain|midnight|olive|plum]\n");
+        return;
+    }
+
+    console_puts("desktop theme set to ");
+    console_puts(name);
+    console_puts("\n");
+}
+
 static void cmd_echo(const char *args, const boot_info_t *info) {
     (void)info;
     console_puts(args);
@@ -1497,9 +1781,88 @@ static void cmd_heap(const char *args, const boot_info_t *info) {
 
 static void cmd_heaptest(const char *args, const boot_info_t *info) {
     kmem_test_result_t result;
+    kmem_soak_result_t soak;
+    char *command = 0;
+    char *cycles_text = 0;
+    char *extra = 0;
+    uint64_t cycles = 64u;
 
-    (void)args;
     (void)info;
+
+    split_first_arg((char *)args, &command, &cycles_text);
+    split_first_arg(cycles_text, &cycles_text, &extra);
+
+    if (*command != '\0') {
+        if (streq(command, "soak")) {
+            if (*cycles_text != '\0' &&
+                (parse_u64_arg(cycles_text, &cycles) != 0 ||
+                 cycles == 0u ||
+                 cycles > 1000u ||
+                 *skip_const_spaces(extra) != '\0')) {
+                console_puts("usage: heaptest [soak cycles]\n");
+                return;
+            }
+        } else if (parse_u64_arg(command, &cycles) == 0 &&
+                   cycles > 0u &&
+                   cycles <= 1000u &&
+                   *skip_const_spaces(cycles_text) == '\0') {
+            command = "soak";
+        } else {
+            console_puts("usage: heaptest [soak cycles]\n");
+            return;
+        }
+    }
+
+    if (*command != '\0') {
+        console_puts("running heap soak diagnostics...\n");
+        kmem_run_soaktest((uint32_t)cycles, &soak);
+        console_puts(soak.passed ? "heap soak: PASS\n" : "heap soak: FAIL\n");
+        console_puts("cycles: ");
+        console_put_dec64(soak.cycles);
+        console_puts("\nalloc attempts/successes: ");
+        console_put_dec64(soak.alloc_attempts);
+        console_puts("/");
+        console_put_dec64(soak.alloc_successes);
+        console_puts("\nunexpected allocation failures: ");
+        console_put_dec64(soak.unexpected_failures);
+        console_puts("\nlive allocations before/after: ");
+        console_put_dec64(soak.live_allocations_before);
+        console_puts("/");
+        console_put_dec64(soak.live_allocations_after);
+        console_puts("\nheap used before/after: ");
+        console_put_dec64(soak.heap_used_before);
+        console_puts("/");
+        console_put_dec64(soak.heap_used_after);
+        console_puts("\nfree pages before/after: ");
+        console_put_dec64(soak.free_pages_before);
+        console_puts("/");
+        console_put_dec64(soak.free_pages_after);
+        console_puts("\nlargest free range before/after: ");
+        console_put_dec64(soak.largest_free_range_before);
+        console_puts("/");
+        console_put_dec64(soak.largest_free_range_after);
+        console_puts("\nsmall free blocks before/after: ");
+        console_put_dec64(soak.small_free_blocks_before);
+        console_puts("/");
+        console_put_dec64(soak.small_free_blocks_after);
+        console_puts("\nfragmentation before/after/worst: ");
+        console_put_dec64(soak.fragmentation_before);
+        console_puts("%/");
+        console_put_dec64(soak.fragmentation_after);
+        console_puts("%/");
+        console_put_dec64(soak.worst_fragmentation);
+        console_puts("%");
+        console_puts("\nallocation failures before/after: ");
+        console_put_dec64(soak.allocation_failures_before);
+        console_puts("/");
+        console_put_dec64(soak.allocation_failures_after);
+        console_puts("\nheap fault counters before/after: ");
+        console_put_dec64(soak.fault_count_before);
+        console_puts("/");
+        console_put_dec64(soak.fault_count_after);
+        console_puts("\n");
+        return;
+    }
 
     console_puts("running heap diagnostics...\n");
     kmem_run_selftest(&result);
@@ -1643,6 +2006,72 @@ static void cmd_smp(const char *args, const boot_info_t *info) {
     console_puts("\n");
 }
 
+static void cmd_tasks(const char *args, const boot_info_t *info) {
+    unsigned int ran;
+
+    (void)args;
+    (void)info;
+
+    ran = kernel_task_poll();
+    console_puts("cooperative tasks pending: ");
+    console_put_dec64(kernel_task_pending_count());
+    console_puts("\npolled locally: ");
+    console_put_dec64(ran);
+    console_puts("\nsmp queue pending: ");
+    console_put_dec64(smp_pending_work_count());
+    console_puts("\n");
+}
+
+static void cmd_tasktest(const char *args, const boot_info_t *info) {
+    enum { TASK_TEST_MAX_JOBS = 8 };
+    smp_test_job_t jobs[TASK_TEST_MAX_JOBS];
+    unsigned int ids[TASK_TEST_MAX_JOBS];
+    unsigned int job_count = cpu_online_core_count();
+    unsigned long long start;
+    unsigned long long end;
+    uint64_t checksum = 0;
+
+    (void)args;
+    (void)info;
+
+    if (job_count == 0u) {
+        job_count = 1u;
+    }
+    if (job_count > TASK_TEST_MAX_JOBS) {
+        job_count = TASK_TEST_MAX_JOBS;
+    }
+
+    start = timer_ticks();
+    for (unsigned int i = 0; i < job_count; ++i) {
+        jobs[i].value = 0;
+        jobs[i].iterations = 7000000u + (uint64_t)i * 1500000u;
+        ids[i] = kernel_task_submit(smp_test_worker, &jobs[i]);
+        if (ids[i] == 0u) {
+            console_puts("task queue full while submitting job\n");
+            job_count = i;
+            break;
+        }
+    }
+
+    for (unsigned int i = 0; i < job_count; ++i) {
+        kernel_task_wait(ids[i]);
+        checksum ^= jobs[i].value + (uint64_t)ids[i];
+    }
+    end = timer_ticks();
+
+    console_puts("tasks completed: ");
+    console_put_dec64(job_count);
+    console_puts("\npending tasks: ");
+    console_put_dec64(kernel_task_pending_count());
+    console_puts("\nsmp queue pending: ");
+    console_put_dec64(smp_pending_work_count());
+    console_puts("\nelapsed ticks: ");
+    console_put_dec64(end - start);
+    console_puts("\nchecksum: 0x");
+    console_put_hex64(checksum);
+    console_puts("\n");
+}
+
 static void cmd_gfx(const char *args, const boot_info_t *info) {
     (void)args;
     (void)info;
@@ -1669,10 +2098,69 @@ static void cmd_gfx(const char *args, const boot_info_t *info) {
     console_puts("\n");
 }
 
+static void print_lainfs_cache_stats(void) {
+    lainfs_cache_stats_t stats;
+
+    lainfs_cache_stats(&stats);
+    console_puts("dir valid/dirty: ");
+    console_put_dec64(stats.directory_valid);
+    console_puts("/");
+    console_put_dec64(stats.directory_dirty);
+    console_puts("\ndata valid/dirty: ");
+    console_put_dec64(stats.data_valid);
+    console_puts("/");
+    console_put_dec64(stats.data_dirty);
+    console_puts("\ndir reads/writes/hits: ");
+    console_put_dec64(stats.directory_reads);
+    console_puts("/");
+    console_put_dec64(stats.directory_writes);
+    console_puts("/");
+    console_put_dec64(stats.directory_cache_hits);
+    console_puts("\ndata reads/writes/hits: ");
+    console_put_dec64(stats.data_reads);
+    console_puts("/");
+    console_put_dec64(stats.data_writes);
+    console_puts("/");
+    console_put_dec64(stats.data_cache_hits);
+    console_puts("\nflushes: ");
+    console_put_dec64(stats.flushes);
+    console_puts("\n");
+}
+
+static void cmd_fsflush(const char *args, const boot_info_t *info) {
+    const char *target = skip_const_spaces(args);
+    int status;
+
+    (void)info;
+
+    if (*target == '\0' || streq(target, "all")) {
+        status = lainfs_flush_all();
+    } else {
+        int drive = parse_drive_spec(target);
+        if (drive < 0 || drive >= MAX_DRIVES) {
+            console_puts("usage: fsflush [drive:|all]\n");
+            return;
+        }
+        status = lainfs_flush((char)('A' + drive));
+    }
+
+    if (status != 0) {
+        console_puts("fsflush failed\n");
+        print_lainfs_cache_stats();
+        return;
+    }
+
+    console_puts("filesystem cache flushed\n");
+    print_lainfs_cache_stats();
+}
+
 static void cmd_reboot(const char *args, const boot_info_t *info) {
     (void)args;
     (void)info;
 
+    if (lainfs_flush_all() != 0) {
+        console_puts("reboot warning: filesystem cache flush failed\n");
+    }
     console_puts("rebooting...\n");
     power_reboot();
 }
@@ -1680,6 +2168,9 @@ static void cmd_reboot(const char *args, const boot_info_t *info) {
 static void cmd_poweroff(const char *args, const boot_info_t *info) {
     (void)args;
 
+    if (lainfs_flush_all() != 0) {
+        console_puts("poweroff warning: filesystem cache flush failed\n");
+    }
     console_puts("powering off...\n");
     if (power_poweroff(info) != 0) {
         console_puts("poweroff: ACPI S5 shutdown is not available\n");
@@ -2691,12 +3182,12 @@ int shell_api_read_file(const char *path, char *buffer, uint32_t capacity) {
     char name[32];
 
     if (drive < 0 || path == 0 || buffer == 0 || capacity == 0 ||
-        resolve_file_path((char)('A' + drive),
-                          cwd_dirs[drive],
-                          path,
-                          &parent,
-                          name,
-                          sizeof(name)) != 0) {
+        resolve_file_path_with_drive(path,
+                                     drive,
+                                     &drive,
+                                     &parent,
+                                     name,
+                                     sizeof(name)) != 0) {
         return -1;
     }
 
@@ -6045,7 +6536,9 @@ static int zmodule_collect_exports(zobject_resolved_symbol_t *symbols,
         for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
             if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick") ||
                 streq(zmodule_slots[i].exports[j].name, "zmodule_unload") ||
-                streq(zmodule_slots[i].exports[j].name, "zmodule_redraw")) {
+                streq(zmodule_slots[i].exports[j].name, "zmodule_redraw") ||
+                streq(zmodule_slots[i].exports[j].name, "zmodule_key") ||
+                streq(zmodule_slots[i].exports[j].name, "zmodule_mouse")) {
                 continue;
             }
             if (count >= capacity) {
@@ -6064,6 +6557,7 @@ void shell_modules_tick(void) {
     unsigned long long now = timer_ticks();
     unsigned int hz = timer_frequency();
     unsigned long long interval;
+    uint32_t module_index = 0;
 
     if (hz == 0u) {
         hz = 100u;
@@ -6082,6 +6576,10 @@ void shell_modules_tick(void) {
         if (!zmodule_slots[i].loaded) {
             continue;
         }
+        if (shell_module_is_ui_app(module_index)) {
+            ++module_index;
+            continue;
+        }
 
         for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
             if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick")) {
@@ -6089,6 +6587,7 @@ void shell_modules_tick(void) {
                 break;
             }
         }
+        ++module_index;
     }
 }
 
@@ -6120,6 +6619,35 @@ const char *shell_module_name(uint32_t index) {
     return 0;
 }
 
+int shell_module_has_export(uint32_t index, const char *export_name) {
+    uint32_t seen = 0;
+
+    if (export_name == 0) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+                if (streq(zmodule_slots[i].exports[j].name, export_name)) {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+        ++seen;
+    }
+
+    return 0;
+}
+
+int shell_module_is_ui_app(uint32_t index) {
+    return shell_module_has_export(index, "zmodule_redraw");
+}
+
 int shell_module_tick(uint32_t index) {
     return shell_module_call(index, "zmodule_tick");
 }
@@ -6139,6 +6667,50 @@ int shell_module_call(uint32_t index, const char *export_name) {
             for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
                 if (streq(zmodule_slots[i].exports[j].name, export_name)) {
                     ((zmodule_void_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                    return 0;
+                }
+            }
+            return -1;
+        }
+        ++seen;
+    }
+
+    return -1;
+}
+
+int shell_module_key(uint32_t index, uint32_t key_type, uint32_t ch) {
+    uint32_t seen = 0;
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+                if (streq(zmodule_slots[i].exports[j].name, "zmodule_key")) {
+                    ((zmodule_key_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)(key_type, ch);
+                    return 0;
+                }
+            }
+            return -1;
+        }
+        ++seen;
+    }
+
+    return -1;
+}
+
+int shell_module_mouse(uint32_t index, uint32_t x, uint32_t y, uint32_t buttons, int32_t wheel) {
+    uint32_t seen = 0;
+
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        if (!zmodule_slots[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+                if (streq(zmodule_slots[i].exports[j].name, "zmodule_mouse")) {
+                    ((zmodule_mouse_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)(x, y, buttons, wheel);
                     return 0;
                 }
             }

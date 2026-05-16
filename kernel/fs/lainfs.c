@@ -12,6 +12,7 @@
 #define LAINFS_MAGIC1 0x315346u
 #define LAINFS_ENTRY_FILE LAINFS_ENTRY_TYPE_FILE
 #define LAINFS_ENTRY_DIR LAINFS_ENTRY_TYPE_DIR
+#define LAINFS_DATA_CACHE_SLOTS 16u
 
 typedef struct __attribute__((packed)) {
     uint32_t magic0;
@@ -33,8 +34,26 @@ typedef struct __attribute__((packed)) {
     uint8_t reserved[24];
 } lainfs_dirent_t;
 
+typedef struct {
+    int valid;
+    int dirty;
+    uint32_t partition_index;
+    uint32_t lba;
+    uint64_t age;
+    uint8_t data[LAINFS_BLOCK_SIZE];
+} lainfs_data_cache_slot_t;
+
 static uint8_t sector[LAINFS_BLOCK_SIZE];
 static uint8_t directory[LAINFS_DIR_BLOCKS * LAINFS_BLOCK_SIZE];
+static lainfs_superblock_t super_cache;
+static int super_cache_valid;
+static uint32_t super_cache_partition;
+static int directory_cache_valid;
+static int directory_cache_dirty;
+static uint32_t directory_cache_partition;
+static lainfs_data_cache_slot_t data_cache[LAINFS_DATA_CACHE_SLOTS];
+static uint64_t cache_clock;
+static lainfs_cache_stats_t cache_stats;
 
 static char to_upper(char c) {
     if (c >= 'a' && c <= 'z') {
@@ -69,6 +88,15 @@ static void mem_zero(void *ptr, uint32_t size) {
     }
 }
 
+static void mem_copy(void *dst, const void *src, uint32_t size) {
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+
+    for (uint32_t i = 0; i < size; ++i) {
+        d[i] = s[i];
+    }
+}
+
 static uint32_t blocks_for_size(uint32_t size) {
     return (size + LAINFS_BLOCK_SIZE - 1u) / LAINFS_BLOCK_SIZE;
 }
@@ -100,6 +128,203 @@ static const mount_t *mount_for_drive(char drive_letter) {
     return storage_get_mount_by_drive(to_upper(drive_letter));
 }
 
+static int raw_read_super(uint32_t partition_index, lainfs_superblock_t *super) {
+    if (storage_read_partition(partition_index, 0, 1, super) != 0) {
+        return -1;
+    }
+
+    if (super->magic0 != LAINFS_MAGIC0 ||
+        super->magic1 != LAINFS_MAGIC1 ||
+        super->version != 1 ||
+        super->block_size != LAINFS_BLOCK_SIZE ||
+        super->dir_blocks != LAINFS_DIR_BLOCKS ||
+        super->max_files != LAINFS_MAX_FILES) {
+        return -2;
+    }
+
+    return 0;
+}
+
+static int flush_data_cache_slot(uint32_t slot_index) {
+    lainfs_data_cache_slot_t *slot;
+
+    if (slot_index >= LAINFS_DATA_CACHE_SLOTS) {
+        return -1;
+    }
+
+    slot = &data_cache[slot_index];
+    if (!slot->valid || !slot->dirty) {
+        return 0;
+    }
+
+    if (storage_write_partition(slot->partition_index, slot->lba, 1, slot->data) != 0) {
+        return -1;
+    }
+
+    slot->dirty = 0;
+    ++cache_stats.flushes;
+    return 0;
+}
+
+static int flush_data_cache_partition(uint32_t partition_index) {
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        if (data_cache[i].valid &&
+            data_cache[i].dirty &&
+            data_cache[i].partition_index == partition_index &&
+            flush_data_cache_slot(i) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int flush_directory_cache(void) {
+    lainfs_superblock_t super;
+
+    if (!directory_cache_valid || !directory_cache_dirty) {
+        return 0;
+    }
+
+    if (super_cache_valid && super_cache_partition == directory_cache_partition) {
+        super = super_cache;
+    } else if (raw_read_super(directory_cache_partition, &super) != 0) {
+        return -1;
+    }
+
+    if (storage_write_partition(directory_cache_partition,
+                                super.dir_start_lba,
+                                super.dir_blocks,
+                                directory) != 0) {
+        return -1;
+    }
+
+    directory_cache_dirty = 0;
+    ++cache_stats.flushes;
+    return 0;
+}
+
+static int flush_partition_cache(uint32_t partition_index) {
+    if (flush_data_cache_partition(partition_index) != 0) {
+        return -1;
+    }
+
+    if (directory_cache_valid &&
+        directory_cache_dirty &&
+        directory_cache_partition == partition_index &&
+        flush_directory_cache() != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static void invalidate_partition_cache(uint32_t partition_index) {
+    if (super_cache_valid && super_cache_partition == partition_index) {
+        super_cache_valid = 0;
+    }
+    if (directory_cache_valid && directory_cache_partition == partition_index) {
+        directory_cache_valid = 0;
+        directory_cache_dirty = 0;
+    }
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        if (data_cache[i].valid && data_cache[i].partition_index == partition_index) {
+            data_cache[i].valid = 0;
+            data_cache[i].dirty = 0;
+        }
+    }
+}
+
+static int cached_read_block(uint32_t partition_index, uint32_t lba, void *buffer) {
+    uint32_t victim = 0;
+    uint64_t oldest = 0xffffffffffffffffull;
+
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        lainfs_data_cache_slot_t *slot = &data_cache[i];
+        if (slot->valid && slot->partition_index == partition_index && slot->lba == lba) {
+            slot->age = ++cache_clock;
+            mem_copy(buffer, slot->data, LAINFS_BLOCK_SIZE);
+            ++cache_stats.data_cache_hits;
+            return 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        if (!data_cache[i].valid) {
+            victim = i;
+            oldest = 0;
+            break;
+        }
+        if (data_cache[i].age < oldest) {
+            oldest = data_cache[i].age;
+            victim = i;
+        }
+    }
+
+    (void)oldest;
+    if (flush_data_cache_slot(victim) != 0) {
+        return -1;
+    }
+
+    if (storage_read_partition(partition_index, lba, 1, data_cache[victim].data) != 0) {
+        data_cache[victim].valid = 0;
+        data_cache[victim].dirty = 0;
+        return -1;
+    }
+
+    data_cache[victim].valid = 1;
+    data_cache[victim].dirty = 0;
+    data_cache[victim].partition_index = partition_index;
+    data_cache[victim].lba = lba;
+    data_cache[victim].age = ++cache_clock;
+    mem_copy(buffer, data_cache[victim].data, LAINFS_BLOCK_SIZE);
+    ++cache_stats.data_reads;
+    return 0;
+}
+
+static int cached_write_block(uint32_t partition_index, uint32_t lba, const void *buffer) {
+    uint32_t victim = 0;
+    uint64_t oldest = 0xffffffffffffffffull;
+
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        lainfs_data_cache_slot_t *slot = &data_cache[i];
+        if (slot->valid && slot->partition_index == partition_index && slot->lba == lba) {
+            mem_copy(slot->data, buffer, LAINFS_BLOCK_SIZE);
+            slot->dirty = 1;
+            slot->age = ++cache_clock;
+            ++cache_stats.data_cache_hits;
+            ++cache_stats.data_writes;
+            return 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        if (!data_cache[i].valid) {
+            victim = i;
+            oldest = 0;
+            break;
+        }
+        if (data_cache[i].age < oldest) {
+            oldest = data_cache[i].age;
+            victim = i;
+        }
+    }
+
+    (void)oldest;
+    if (flush_data_cache_slot(victim) != 0) {
+        return -1;
+    }
+
+    data_cache[victim].valid = 1;
+    data_cache[victim].dirty = 1;
+    data_cache[victim].partition_index = partition_index;
+    data_cache[victim].lba = lba;
+    data_cache[victim].age = ++cache_clock;
+    mem_copy(data_cache[victim].data, buffer, LAINFS_BLOCK_SIZE);
+    ++cache_stats.data_writes;
+    return 0;
+}
+
 static int format_partition_index(uint32_t partition_index) {
     const partition_t *part = storage_get_partition(partition_index);
 
@@ -110,6 +335,8 @@ static int format_partition_index(uint32_t partition_index) {
     if (!storage_partition_is_writable(partition_index)) {
         return -4;
     }
+
+    invalidate_partition_cache(partition_index);
 
     mem_zero(sector, sizeof(sector));
     lainfs_superblock_t *super = (lainfs_superblock_t *)sector;
@@ -132,32 +359,58 @@ static int format_partition_index(uint32_t partition_index) {
     }
 
     storage_discover_partitions();
+    invalidate_partition_cache(partition_index);
     return 0;
 }
 
 static int read_super(uint32_t partition_index, lainfs_superblock_t *super) {
-    if (storage_read_partition(partition_index, 0, 1, super) != 0) {
+    if (super_cache_valid && super_cache_partition == partition_index) {
+        mem_copy(super, &super_cache, sizeof(*super));
+        return 0;
+    }
+
+    if (raw_read_super(partition_index, &super_cache) != 0) {
+        super_cache_valid = 0;
         return -1;
     }
 
-    if (super->magic0 != LAINFS_MAGIC0 ||
-        super->magic1 != LAINFS_MAGIC1 ||
-        super->version != 1 ||
-        super->block_size != LAINFS_BLOCK_SIZE ||
-        super->dir_blocks != LAINFS_DIR_BLOCKS ||
-        super->max_files != LAINFS_MAX_FILES) {
-        return -2;
-    }
-
+    super_cache_valid = 1;
+    super_cache_partition = partition_index;
+    mem_copy(super, &super_cache, sizeof(*super));
     return 0;
 }
 
 static int load_directory(uint32_t partition_index, const lainfs_superblock_t *super) {
-    return storage_read_partition(partition_index, super->dir_start_lba, super->dir_blocks, directory);
+    if (directory_cache_valid && directory_cache_partition == partition_index) {
+        ++cache_stats.directory_cache_hits;
+        return 0;
+    }
+
+    if (directory_cache_valid && directory_cache_dirty && flush_directory_cache() != 0) {
+        return -1;
+    }
+
+    if (storage_read_partition(partition_index, super->dir_start_lba, super->dir_blocks, directory) != 0) {
+        directory_cache_valid = 0;
+        directory_cache_dirty = 0;
+        return -1;
+    }
+
+    directory_cache_valid = 1;
+    directory_cache_dirty = 0;
+    directory_cache_partition = partition_index;
+    ++cache_stats.directory_reads;
+    return 0;
 }
 
 static int save_directory(uint32_t partition_index, const lainfs_superblock_t *super) {
-    return storage_write_partition(partition_index, super->dir_start_lba, super->dir_blocks, directory);
+    (void)super;
+
+    directory_cache_valid = 1;
+    directory_cache_dirty = 1;
+    directory_cache_partition = partition_index;
+    ++cache_stats.directory_writes;
+    return 0;
 }
 
 static lainfs_dirent_t *dir_entry(uint32_t index) {
@@ -295,7 +548,7 @@ static int clear_file_blocks(uint32_t partition_index, const lainfs_dirent_t *en
 
     mem_zero(sector, sizeof(sector));
     for (uint32_t i = 0; i < blocks; ++i) {
-        if (storage_write_partition(partition_index, entry->start_lba + i, 1, sector) != 0) {
+        if (cached_write_block(partition_index, entry->start_lba + i, sector) != 0) {
             return -1;
         }
     }
@@ -401,6 +654,51 @@ int lainfs_format_block_device(const char *device_name, char *out_partition_name
     }
 
     return format_partition_index(partition_index);
+}
+
+int lainfs_flush(char drive_letter) {
+    const mount_t *mount = mount_for_drive(drive_letter);
+
+    if (!mount) {
+        return -1;
+    }
+
+    return flush_partition_cache(mount->partition_index);
+}
+
+int lainfs_flush_all(void) {
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        if (data_cache[i].valid && data_cache[i].dirty && flush_data_cache_slot(i) != 0) {
+            return -1;
+        }
+    }
+
+    if (directory_cache_valid && directory_cache_dirty && flush_directory_cache() != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+void lainfs_cache_stats(lainfs_cache_stats_t *out) {
+    if (out == 0) {
+        return;
+    }
+
+    *out = cache_stats;
+    out->directory_valid = directory_cache_valid ? 1u : 0u;
+    out->directory_dirty = directory_cache_dirty ? 1u : 0u;
+    out->data_valid = 0;
+    out->data_dirty = 0;
+
+    for (uint32_t i = 0; i < LAINFS_DATA_CACHE_SLOTS; ++i) {
+        if (data_cache[i].valid) {
+            ++out->data_valid;
+        }
+        if (data_cache[i].valid && data_cache[i].dirty) {
+            ++out->data_dirty;
+        }
+    }
 }
 
 int lainfs_list(char drive_letter) {
@@ -907,7 +1205,7 @@ int lainfs_save_file_in_dir(char drive_letter,
             sector[i] = (uint8_t)buffer[base + i];
         }
 
-        if (storage_write_partition(mount->partition_index, slot->start_lba + block, 1, sector) != 0) {
+        if (cached_write_block(mount->partition_index, slot->start_lba + block, sector) != 0) {
             return -6;
         }
     }
@@ -976,7 +1274,7 @@ int lainfs_load_file_in_dir(char drive_letter,
             uint32_t bytes_left = entry->byte_size - base;
             uint32_t bytes_to_copy = bytes_left < LAINFS_BLOCK_SIZE ? bytes_left : LAINFS_BLOCK_SIZE;
 
-            if(storage_read_partition(mount->partition_index, entry->start_lba + block, 1, sector) != 0) {
+            if(cached_read_block(mount->partition_index, entry->start_lba + block, sector) != 0) {
                 return -7;
             }
 

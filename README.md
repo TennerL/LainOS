@@ -198,15 +198,24 @@ submit function-pointer jobs to online APs:
 - `smp_work_done(id)`
 - `smp_pending_work_count()`
 
+There is also a small cooperative kernel task layer on top of the SMP executor.
+It submits work to secondary CPUs when possible and falls back to local polling
+from the BSP:
+
+- `kernel_task_submit(fn, arg)`
+- `kernel_task_poll()`
+- `kernel_task_wait(id)`
+- `kernel_task_done(id)`
+- `kernel_task_pending_count()`
+
 The shell command `smp` submits visible test work. CPU usage accounting uses
 cycle-based idle/busy sampling on the bootstrap CPU and records busy ticks for
 AP-executed work, so `taskmgr_module` can show foreground activity and
 secondary CPU queue work without charging whole PIT ticks for tiny redraws.
 
 This is not a preemptive scheduler yet. There are no per-core run queues,
-kernel threads, TSS/IST setup, APIC timer interrupts, or userspace processes.
-Basic per-core state tracks LAPIC ID, online state, busy ticks, and local timer
-ticks.
+kernel threads, TSS/IST setup, or userspace processes. Basic per-core state
+tracks LAPIC ID, online state, busy ticks, and local timer ticks.
 
 ### Timer And Interrupts
 
@@ -270,9 +279,14 @@ The block/storage stack can expose:
 - MBR/GPT partitions as `hd1p1`, `sd0p1`, and similar names
 
 `lainfs` is the current native filesystem. It is intentionally tiny: small
-directory tables, contiguous file data, and a 64 KiB file cap. It supports
+directory tables, contiguous file data, and a 512 KiB file cap. It supports
 directories, parent links, scoped `ls`, `cd`, `pwd`, move/rename, copy, and
 delete operations.
+
+`lainfs` keeps a write-back cache for the active directory table and a small
+data-sector cache for repeated file reads/writes. Use `fsflush` to flush dirty
+cached blocks and print cache counters; `reboot` and `poweroff` also flush the
+cache before leaving the OS.
 
 The build creates `build/data.img`, attaches it in QEMU, and keeps it persistent
 across normal rebuilds.
@@ -325,12 +339,18 @@ Core commands:
 - `info`
 - `cpus`
 - `smp`
+- `tasks`
+- `tasktest`
 - `ticks`
 - `date`
 - `reboot`
 - `poweroff` / `shutdown`
+- `heap`
+- `heaptest [soak cycles]`
 - `bgcolor 0xRRGGBB`
 - `fgcolor 0xRRGGBB`
+- `reg [list|get key|set key value]`
+- `theme [list|lain|midnight|olive|plum]`
 - `resolution [width height]`
 - `keymap us|de`
 
@@ -357,6 +377,7 @@ Storage and files:
 - `cp source dest`
 - `write name text`
 - `cat name`
+- `fsflush [drive:|all]`
 - `browse [path-or-drive:]`
 
 In the console file browser, use `D` to delete the selected file or empty
@@ -408,6 +429,7 @@ Desktop features:
 - File browser delete support from the `Del` button or right-click menu.
 - Modules window and module app windows.
 - Native `.Z` editor with Save, Build, Inst, Load, and Log buttons.
+- Registry-backed desktop themes via the `theme` and `reg` shell commands.
 - Mouse drag/resize with lightweight outline previews.
 - Up to six open module app windows.
 - Viewport clipping/translation for resident module drawing.
@@ -595,14 +617,14 @@ Things that are intentionally incomplete:
 - no higher-half kernel
 - no custom page table setup beyond using the firmware identity mappings
 - no preemptive scheduler or kernel threads
-- no per-core timers or APIC timer
 - no TSS/IST
 - no userspace/process isolation
 - no dynamic kernel module ABI beyond the `.Z` resident module experiment
 - no NTFS driver inside the kernel
 - heap is active: page-range allocation, `kmalloc`/`kfree` classes, basic
-  canary/double-free diagnostics, fragmentation/failure reporting, a bounded
-  `heaptest` diagnostic, and the largest driver/UI scratch buffers are on heap
+  canary/double-free diagnostics, fragmentation/failure reporting, bounded
+  `heaptest` and `heaptest soak` diagnostics, and the largest driver/UI scratch
+  buffers are on heap
 - limited GOP pixel-format support
 - tiny `lainfs` limits and contiguous file allocation
 - early USB/xHCI enumeration
@@ -614,41 +636,33 @@ Things that are intentionally incomplete:
 Here are high-leverage next steps, roughly ordered by payoff:
 
 1. Heap hardening.
-   Add allocation failure tests, leak checks for long desktop sessions, and
-   stronger fragmentation reports under repeated module/browser use.
+   Add long desktop session leak checks that sample heap counters around real
+   interactive shell, editor, browser, and module workflows.
 
-2. Per-core data and APIC timer.
-   Calibrate and enable LAPIC timer interrupts, then use the existing per-core
-   state for local tick accounting. This sets up a future scheduler cleanly.
+2. Background kernel jobs.
+   Move real shell and desktop jobs such as builds, file copies, and redraw
+   preparation onto the cooperative task layer so long work can progress off
+   the BSP.
 
-3. Cooperative kernel tasks.
-   Build a small task abstraction on top of the SMP executor before jumping to
-   preemption. Let background jobs such as builds, file copies, and redraw
-   preparation run off the BSP.
-
-4. Dirty filesystem cache.
-   Cache directory blocks and file data in memory, then flush deliberately.
-   This would make editor/build workflows faster and reduce repeated disk reads.
-
-5. Expand `lainfs`.
+3. Expand `lainfs`.
    Lift file count/file size limits, support non-contiguous extents, and add
    more robust metadata validation.
 
-6. Desktop window damage model.
+4. Desktop window damage model.
    Extend the current dirty-rectangle path into a z-order-aware compositor so
    moving a window redraws only exposed areas and the moved window itself.
 
-7. Safer resident modules.
+5. Safer resident modules.
    Add dependency-aware unload, module ownership for resources, and better
    failure isolation when a module hook misbehaves.
 
-9. USB input path.
+6. USB input path.
    Make USB keyboard/tablet input first-class, not just experimental xHCI
    probing.
 
-10. Self-hosting milestone.
-    Keep moving small C/ASM helpers into `.Z` where it makes sense, then use
-    `zbuild` to build more of the demo userland from inside the OS.
+7. Self-hosting milestone.
+   Keep moving small C/ASM helpers into `.Z` where it makes sense, then use
+   `zbuild` to build more of the demo userland from inside the OS.
 
 ## Why No Long-Mode Switch?
 
