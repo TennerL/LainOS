@@ -1,23 +1,23 @@
 #pragma once
 
-struct JpgImage {
+typedef struct JpgImage {
     uint32_t width;
     uint32_t height;
     uint32_t components;
     uint32_t stride;
-};
+} JpgImage;
 
-extern int jpg_probe(const uint8_t *data, uint32_t size, struct JpgImage *out_image);
+extern int jpg_probe(const uint8_t *data, uint32_t size, JpgImage *out_image);
 extern int jpg_decode_rgb24(const uint8_t *data,
                             uint32_t size,
                             uint8_t *rgb,
                             uint32_t rgb_capacity,
-                            struct JpgImage *out_image);
+                            JpgImage *out_image);
 extern int jpg_decode_to_screen(const uint8_t *data,
                                 uint32_t size,
                                 uint32_t origin_x,
                                 uint32_t origin_y,
-                                struct JpgImage *out_image);
+                                JpgImage *out_image);
 extern uint32_t jpg_entropy_error_detail(void);
 extern uint32_t jpg_entropy_error_block(void);
 extern uint32_t jpg_huffman_code_count(uint32_t slot, uint32_t length);

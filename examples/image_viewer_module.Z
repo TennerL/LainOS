@@ -27,19 +27,19 @@ void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
     dst[i] = 0;
 }
 
-void status_for_jpg_error(int code) {
+void status_for_image_error(int code) {
     if (code == -1) {
         copy_text(image_viewer_status, 96, "bad input");
     } else if (code == -2) {
-        copy_text(image_viewer_status, 96, "malformed jpg");
+        copy_text(image_viewer_status, 96, "malformed image");
     } else if (code == -3) {
-        copy_text(image_viewer_status, 96, "unsupported jpg feature");
+        copy_text(image_viewer_status, 96, "unsupported image");
     } else if (code == -4) {
         copy_text(image_viewer_status, 96, "target too small");
     } else if (code == -5) {
-        copy_text(image_viewer_status, 96, "entropy decode failed");
+        copy_text(image_viewer_status, 96, "image decode failed");
     } else {
-        copy_text(image_viewer_status, 96, "jpg decode failed");
+        copy_text(image_viewer_status, 96, "image decode failed");
     }
 }
 
@@ -67,7 +67,7 @@ void draw_image(void) {
     uint32_t x;
     uint32_t y;
     uint32_t image_area_h;
-    struct JpgImage image;
+    JpgImage image;
 
     path = os_image_path();
     copy_text(image_viewer_path, 128, path);
@@ -84,7 +84,7 @@ void draw_image(void) {
     data = os_file_buffer();
     rc = jpg_probe(data, (uint32_t)size, &image);
     if (rc != 0) {
-        status_for_jpg_error(rc);
+        status_for_image_error(rc);
         draw_shell();
         return;
     }
@@ -106,7 +106,7 @@ void draw_image(void) {
 
     rc = jpg_decode_to_screen(data, (uint32_t)size, x, y, &image);
     if (rc != 0) {
-        status_for_jpg_error(rc);
+        status_for_image_error(rc);
         draw_shell();
         return;
     }

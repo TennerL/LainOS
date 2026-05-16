@@ -1,5 +1,6 @@
 #include "kernel_exports.h"
 #include "desktop.h"
+#include "image.h"
 #include "kernel.h"
 #include "kmem.h"
 #include "shell.h"
@@ -59,6 +60,26 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("gfx_draw_rect", graphics_draw_rect),
     KERNEL_EXPORT("gfx_draw_line", graphics_draw_line),
     KERNEL_EXPORT("gfx_clear", graphics_clear),
+    KERNEL_EXPORT("image_probe", image_probe),
+    KERNEL_EXPORT("image_decode_rgb24", image_decode_rgb24),
+    KERNEL_EXPORT("image_decode_to_screen", image_decode_to_screen),
+    KERNEL_EXPORT("jpg_probe", jpg_probe),
+    KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
+    KERNEL_EXPORT("jpg_decode_to_screen", jpg_decode_to_screen),
+    KERNEL_EXPORT("jpg_entropy_error_detail", jpg_entropy_error_detail),
+    KERNEL_EXPORT("jpg_entropy_error_block", jpg_entropy_error_block),
+    KERNEL_EXPORT("jpg_huffman_code_count", jpg_huffman_code_count),
+    KERNEL_EXPORT("jpg_huffman_value", jpg_huffman_value),
+    KERNEL_EXPORT("jpg_entropy_probe_first", jpg_entropy_probe_first),
+    KERNEL_EXPORT("jpg_decode_first_block_probe", jpg_decode_first_block_probe),
+    KERNEL_EXPORT("jpg_decode_two_block_probe", jpg_decode_two_block_probe),
+    KERNEL_EXPORT("jpg_decode_first_ac_probe", jpg_decode_first_ac_probe),
+    KERNEL_EXPORT("jpg_debug_scan_offset", jpg_debug_scan_offset),
+    KERNEL_EXPORT("jpg_debug_stream_pos", jpg_debug_stream_pos),
+    KERNEL_EXPORT("jpg_debug_bits_left", jpg_debug_bits_left),
+    KERNEL_EXPORT("jpg_debug_zigzag", jpg_debug_zigzag),
+    KERNEL_EXPORT("jpg_debug_byte_at", jpg_debug_byte_at),
+    KERNEL_EXPORT("jpg_debug_first_entropy_bits", jpg_debug_first_entropy_bits),
     KERNEL_EXPORT("draw_text_at_pixel", console_draw_text_at_pixel),
     KERNEL_EXPORT("mouse_init", mouse_init),
     KERNEL_EXPORT("mouse_enabled", mouse_enabled),

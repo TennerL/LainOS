@@ -34,7 +34,6 @@ cp R:/examples/image_viewer_module.Z image_viewer_module.Z
 cp R:/examples/image_viewer.zbuild image_viewer.zbuild
 cp R:/examples/kernel_api.Z kernel_api.Z
 zinstall jpg_decode_demo
-zmod jpg_decoder.zo
 zinstall image_viewer
 cd ..
 

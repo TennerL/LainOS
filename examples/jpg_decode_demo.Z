@@ -21,7 +21,7 @@ void print_jpg_error(int code) {
     }
 }
 
-struct JpgImage image;
+JpgImage image;
 uint8_t *jpg_data;
 int jpg_size;
 int rc;

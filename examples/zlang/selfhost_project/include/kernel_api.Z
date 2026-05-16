@@ -87,3 +87,22 @@ extern int os_zreload(const uint8_t *target);
 extern int os_open_image(const uint8_t *path);
 extern int os_open_module(const uint8_t *name);
 extern const uint8_t *os_image_path(void);
+
+struct ImageInfo {
+    uint32_t width;
+    uint32_t height;
+    uint32_t components;
+    uint32_t stride;
+};
+
+extern int image_probe(const uint8_t *data, uint32_t size, struct ImageInfo *out_image);
+extern int image_decode_rgb24(const uint8_t *data,
+                              uint32_t size,
+                              uint8_t *rgb,
+                              uint32_t rgb_capacity,
+                              struct ImageInfo *out_image);
+extern int image_decode_to_screen(const uint8_t *data,
+                                  uint32_t size,
+                                  uint32_t origin_x,
+                                  uint32_t origin_y,
+                                  struct ImageInfo *out_image);

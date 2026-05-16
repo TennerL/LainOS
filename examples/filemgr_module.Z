@@ -135,6 +135,12 @@ int selected_is_image(void) {
     if (has_suffix(filemgr_selected_name, ".JPEG")) {
         return 1;
     }
+    if (has_suffix(filemgr_selected_name, ".png")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".PNG")) {
+        return 1;
+    }
     return 0;
 }
 

@@ -45,9 +45,10 @@ BOOT_RES_HEIGHT ?= 0
 PROJECT_CFLAGS := -Iboot/shared -Ibuild
 KERNEL_INC := -Ikernel/include
 BEARSSL_INC := -Ithird_party/bearssl/inc -Ithird_party/bearssl/src
+STB_INC := -Ithird_party/stb
 NASMFLAGS := -Iboot/shared/ -Ikernel/include/
 CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER -DBOOT_RES_WIDTH=$(BOOT_RES_WIDTH) -DBOOT_RES_HEIGHT=$(BOOT_RES_HEIGHT)
-KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
+KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) $(STB_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
 HOST_CFLAGS := -Iboot/shared $(KERNEL_INC) -Ikernel -std=c11 -Wall -Wextra -Wno-unused-function
 LDFLAGS_EFI := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_LIBDIR) $(EFI_CRT0)
 LDLIBS_EFI := -lefi -lgnuefi
@@ -64,6 +65,7 @@ KERNEL_C_SOURCES := \
 	kernel/core/libc.c \
 	kernel/core/power.c \
 	kernel/drivers/graphics.c \
+	kernel/drivers/image.c \
 	kernel/drivers/console.c \
 	kernel/drivers/keyboard.c \
 	kernel/drivers/mouse.c \

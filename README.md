@@ -31,7 +31,7 @@ and desktop rendering rules, see `DEVELOPMENT_HANDBOOK.md`.
 - In-kernel shell, editor, browser, assembler, `.Z` compiler, object linker,
   module loader, and project build commands.
 - Example `.Z` apps and modules in `examples/`, including desktop task manager,
-  hardware dashboard, mouse demo, file manager, JPEG demo, and self-hosting
+  hardware dashboard, mouse demo, file manager, image viewer, and self-hosting
   build examples.
 
 ## Project Layout
@@ -40,7 +40,8 @@ and desktop rendering rules, see `DEVELOPMENT_HANDBOOK.md`.
 - `boot/shared/` - shared boot protocol declarations for C and NASM.
 - `kernel/arch/x86_64/` - entry point, interrupt stubs, AP trampoline, CPU helpers.
 - `kernel/core/` - kernel main path, CPU/SMP, timer, DMA pool, power, exports.
-- `kernel/drivers/` - graphics, console, keyboard, mouse, PCI, AHCI, USB, net.
+- `kernel/drivers/` - graphics, image decode, console, keyboard, mouse, PCI,
+  AHCI, USB, net.
 - `kernel/fs/` - `lainfs` implementation.
 - `kernel/ui/` - shell, desktop, editor, browser.
 - `kernel/z/` - assembler, `.Z` compiler, `.zo` object support.
@@ -488,7 +489,9 @@ zmod zbrowser_module.zo
 
 The example `autoexec` preloads useful modules and can enter desktop mode.
 The file manager module supports toolbar deletion and a right-click Delete menu
-for files and empty directories.
+for files and empty directories. It can open JPEG and PNG files in the image
+viewer; decoding is provided by the kernel image service, so the viewer does
+not need a resident decoder module.
 
 The tiny Z browser module renders basic HTML from `index.html` or from an HTTP
 or HTTPS URL stored in `browser.url`. HTTPS uses the in-kernel TLS client with
@@ -518,6 +521,8 @@ objects, and resident modules. Current groups include:
 - graphics: `put_pixel`, `gfx_width`, `gfx_height`, `gfx_pitch`,
   `gfx_format`, `gfx_fill_rect`, `gfx_draw_rect`, `gfx_draw_line`,
   `gfx_clear`, viewport helpers
+- image decode: `image_probe`, `image_decode_rgb24`,
+  `image_decode_to_screen`, plus compatibility `jpg_*` aliases
 - mouse helpers
 - screen text helpers
 - status bar
