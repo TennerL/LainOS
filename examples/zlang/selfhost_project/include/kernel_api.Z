@@ -5,6 +5,9 @@ enum {
     KERNEL_COLOR_WHITE = 0xffffff,
     KERNEL_COLOR_GREEN = 0x00ff66,
     KERNEL_COLOR_RED = 0xff3333,
+    MOUSE_LEFT = 1,
+    MOUSE_RIGHT = 2,
+    MOUSE_MIDDLE = 4,
     OS_ENTRY_FILE = 1,
     OS_ENTRY_DIR = 2,
 };
@@ -43,6 +46,15 @@ extern void put_char_at_screen(uint32_t col, uint32_t row, uint32_t ch);
 extern void put_dec_at_screen(uint32_t col, uint32_t row, uint64_t value);
 extern void set_margin(uint32_t x, uint32_t y);
 extern void statusbar_enable(void);
+extern int mouse_enabled(void);
+extern int mouse_init(void);
+extern int mouse_x(void);
+extern int mouse_y(void);
+extern int mouse_buttons(void);
+extern int mouse_dx(void);
+extern int mouse_dy(void);
+extern int mouse_wheel(void);
+extern int mouse_consume_wheel(void);
 extern int os_mkdir(const uint8_t *path);
 extern int os_delete(const uint8_t *path);
 extern int os_write_file(const uint8_t *path, const uint8_t *text);

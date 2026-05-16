@@ -13,7 +13,8 @@
 #define XHCI_PAGE_SIZE 4096u
 #define USB_DEVICE_DESCRIPTOR_SIZE 18u
 #define USB_CONFIG_DESCRIPTOR_CAPACITY 1024u
-#define USB_MOUSE_REPORT_SIZE 8u
+#define USB_MOUSE_REPORT_SIZE 16u
+#define USB_HID_REPORT_DESCRIPTOR_CAPACITY 256u
 #define USB_ENDPOINT_MAX_PACKET_MASK 0x07FFu
 #define USB_LATE_ENUM_INITIAL_DELAY_SECONDS 8u
 #define USB_LATE_ENUM_RETRY_SECONDS 10u
@@ -123,6 +124,7 @@ static uint8_t xhci_device_contexts[USB_MAX_XHCI_SLOTS + 1u][XHCI_CONTEXT_BYTES 
 static xhci_trb_t xhci_transfer_rings[USB_MAX_XHCI_SLOTS + 1u][XHCI_TRANSFER_RING_TRBS] __attribute__((aligned(64)));
 static uint8_t xhci_device_descriptors[USB_MAX_XHCI_SLOTS + 1u][USB_DEVICE_DESCRIPTOR_SIZE] __attribute__((aligned(64)));
 static uint8_t xhci_config_descriptor[USB_CONFIG_DESCRIPTOR_CAPACITY] __attribute__((aligned(64)));
+static uint8_t xhci_hid_report_descriptor[USB_HID_REPORT_DESCRIPTOR_CAPACITY] __attribute__((aligned(64)));
 static uint8_t xhci_mouse_report[USB_MOUSE_REPORT_SIZE] __attribute__((aligned(64)));
 static uint32_t xhci_transfer_enqueue[USB_MAX_XHCI_SLOTS + 1u];
 static uint32_t xhci_transfer_cycle[USB_MAX_XHCI_SLOTS + 1u];
@@ -895,10 +897,19 @@ static int xhci_find_boot_mouse(uint32_t config_size,
                                 uint8_t *interface_number,
                                 uint8_t *endpoint_address,
                                 uint16_t *max_packet,
-                                uint8_t *interval) {
+                                uint8_t *interval,
+                                uint16_t *hid_report_size) {
     uint32_t offset = 0;
     uint8_t current_interface = 0;
-    int in_mouse_interface = 0;
+    uint8_t current_protocol = 0;
+    uint16_t current_hid_report_size = 0;
+    int in_hid_interface = 0;
+    int have_fallback = 0;
+    uint8_t fallback_interface = 0;
+    uint8_t fallback_endpoint = 0;
+    uint16_t fallback_max_packet = 0;
+    uint8_t fallback_interval = 0;
+    uint16_t fallback_hid_report_size = 0;
 
     if (config_size < 9u || xhci_config_descriptor[1] != 2u) {
         return -1;
@@ -915,30 +926,298 @@ static int xhci_find_boot_mouse(uint32_t config_size,
 
         if (type == 4u && length >= 9u) {
             current_interface = xhci_config_descriptor[offset + 2u];
-            in_mouse_interface =
-                xhci_config_descriptor[offset + 5u] == 3u &&
-                xhci_config_descriptor[offset + 6u] == 1u &&
-                xhci_config_descriptor[offset + 7u] == 2u;
-            if (in_mouse_interface) {
-                *interface_number = current_interface;
+            current_protocol = xhci_config_descriptor[offset + 7u];
+            current_hid_report_size = 0;
+            in_hid_interface = xhci_config_descriptor[offset + 5u] == 3u;
+        } else if (type == 0x21u && length >= 9u && in_hid_interface) {
+            if (xhci_config_descriptor[offset + 6u] == 0x22u) {
+                current_hid_report_size = read_le16(&xhci_config_descriptor[offset + 7u]);
             }
-        } else if (type == 5u && length >= 7u && in_mouse_interface) {
+        } else if (type == 5u && length >= 7u && in_hid_interface) {
             uint8_t address = xhci_config_descriptor[offset + 2u];
             uint8_t attributes = xhci_config_descriptor[offset + 3u];
             if ((address & 0x80u) != 0 && (attributes & 0x03u) == 3u) {
-                *endpoint_address = address;
-                *max_packet = usb_endpoint_max_packet_size(read_le16(&xhci_config_descriptor[offset + 4u]));
-                *interval = xhci_config_descriptor[offset + 6u];
-                if (*max_packet == 0u || *max_packet > USB_MOUSE_REPORT_SIZE) {
-                    *max_packet = USB_MOUSE_REPORT_SIZE;
+                uint16_t endpoint_max_packet =
+                    usb_endpoint_max_packet_size(read_le16(&xhci_config_descriptor[offset + 4u]));
+
+                if (endpoint_max_packet == 0u || endpoint_max_packet > USB_MOUSE_REPORT_SIZE) {
+                    endpoint_max_packet = USB_MOUSE_REPORT_SIZE;
                 }
-                return 0;
+
+                if (current_protocol == 2u) {
+                    *interface_number = current_interface;
+                    *endpoint_address = address;
+                    *max_packet = endpoint_max_packet;
+                    *interval = xhci_config_descriptor[offset + 6u];
+                    *hid_report_size = current_hid_report_size;
+                    return 0;
+                }
+
+                if (!have_fallback && current_protocol != 1u) {
+                    fallback_interface = current_interface;
+                    fallback_endpoint = address;
+                    fallback_max_packet = endpoint_max_packet;
+                    fallback_interval = xhci_config_descriptor[offset + 6u];
+                    fallback_hid_report_size = current_hid_report_size;
+                    have_fallback = 1;
+                }
             }
         }
 
         offset += length;
     }
 
+    if (have_fallback) {
+        *interface_number = fallback_interface;
+        *endpoint_address = fallback_endpoint;
+        *max_packet = fallback_max_packet;
+        *interval = fallback_interval;
+        *hid_report_size = fallback_hid_report_size;
+        return 0;
+    }
+
+    return -1;
+}
+
+static int32_t sign_extend_bits(uint32_t value, uint32_t bits) {
+    uint32_t sign;
+
+    if (bits == 0u || bits >= 32u) {
+        return (int32_t)value;
+    }
+
+    sign = 1u << (bits - 1u);
+    if ((value & sign) != 0u) {
+        value |= ~((1u << bits) - 1u);
+    }
+    return (int32_t)value;
+}
+
+static uint32_t hid_extract_bits(const uint8_t *report,
+                                 uint32_t transferred,
+                                 uint32_t bit_offset,
+                                 uint32_t bit_size) {
+    uint32_t value = 0;
+
+    if (bit_size > 32u) {
+        bit_size = 32u;
+    }
+
+    for (uint32_t i = 0; i < bit_size; ++i) {
+        uint32_t bit = bit_offset + i;
+        uint32_t byte = bit / 8u;
+
+        if (byte >= transferred) {
+            break;
+        }
+        if ((report[byte] & (uint8_t)(1u << (bit & 7u))) != 0u) {
+            value |= 1u << i;
+        }
+    }
+
+    return value;
+}
+
+static int hid_descriptor_item_value(const uint8_t *data, uint32_t size, int signed_value) {
+    uint32_t value = 0;
+
+    if (size > 0u) {
+        value |= data[0];
+    }
+    if (size > 1u) {
+        value |= (uint32_t)data[1] << 8;
+    }
+    if (size > 2u) {
+        value |= (uint32_t)data[2] << 16;
+        value |= (uint32_t)data[3] << 24;
+    }
+
+    if (!signed_value) {
+        return (int)value;
+    }
+    return (int)sign_extend_bits(value, size * 8u);
+}
+
+static int xhci_get_hid_report_descriptor(usb_controller_info_t *info,
+                                          uint32_t slot_id,
+                                          uint8_t interface_number,
+                                          uint16_t report_size) {
+    uint32_t size = report_size;
+
+    if (size == 0u) {
+        return -1;
+    }
+    if (size > USB_HID_REPORT_DESCRIPTOR_CAPACITY) {
+        size = USB_HID_REPORT_DESCRIPTOR_CAPACITY;
+    }
+
+    zero_bytes(xhci_hid_report_descriptor, sizeof(xhci_hid_report_descriptor));
+    if (xhci_control_transfer(info,
+                              slot_id,
+                              usb_setup_packet(0x81u, 0x06u, 0x2200u, interface_number, (uint16_t)size),
+                              xhci_hid_report_descriptor,
+                              size,
+                              1) != 0) {
+        return -1;
+    }
+
+    info->mouse_hid_report_size = size;
+    return 0;
+}
+
+static void xhci_mouse_clear_report_layout(usb_controller_info_t *info) {
+    info->mouse_report_id = 0;
+    info->mouse_report_parsed = 0;
+    info->mouse_buttons_bit = 0;
+    info->mouse_x_bit = 0;
+    info->mouse_y_bit = 0;
+    info->mouse_wheel_bit = 0;
+    info->mouse_axis_size = 0;
+    info->mouse_wheel_size = 0;
+}
+
+static uint32_t hid_usage_at(uint32_t index,
+                             const uint32_t *usages,
+                             uint32_t usage_count,
+                             uint32_t usage_page,
+                             uint32_t usage_min,
+                             uint32_t usage_max) {
+    if (index < usage_count) {
+        return usages[index];
+    }
+    if (usage_min != 0u && usage_min + index <= usage_max) {
+        return ((usage_page & 0xFFFFu) << 16) | ((usage_min + index) & 0xFFFFu);
+    }
+    return 0;
+}
+
+static int xhci_parse_mouse_report_descriptor(usb_controller_info_t *info, uint32_t size) {
+    uint32_t offset = 0;
+    uint32_t bit_pos = 0;
+    uint32_t usage_page = 0;
+    uint32_t report_size = 0;
+    uint32_t report_count = 0;
+    uint32_t report_id = 0;
+    int logical_min = 0;
+    uint32_t usages[16];
+    uint32_t usage_count = 0;
+    uint32_t usage_min = 0;
+    uint32_t usage_max = 0;
+    uint32_t have_buttons = 0;
+    uint32_t have_x = 0;
+    uint32_t have_y = 0;
+    uint32_t have_wheel = 0;
+    uint32_t parsed_report_id = 0;
+
+    xhci_mouse_clear_report_layout(info);
+
+    while (offset < size) {
+        uint8_t prefix = xhci_hid_report_descriptor[offset++];
+        uint32_t item_size = prefix & 0x03u;
+        uint32_t item_type = (prefix >> 2) & 0x03u;
+        uint32_t item_tag = (prefix >> 4) & 0x0Fu;
+        const uint8_t *item_data;
+        int value;
+
+        if (prefix == 0xFEu) {
+            if (offset + 2u > size) {
+                break;
+            }
+            offset += 2u + xhci_hid_report_descriptor[offset];
+            continue;
+        }
+
+        if (item_size == 3u) {
+            item_size = 4u;
+        }
+        if (offset + item_size > size) {
+            break;
+        }
+
+        item_data = &xhci_hid_report_descriptor[offset];
+        value = hid_descriptor_item_value(item_data, item_size, item_type == 1u && item_tag == 1u);
+        offset += item_size;
+
+        if (item_type == 1u) {
+            if (item_tag == 0u) {
+                usage_page = (uint32_t)value;
+            } else if (item_tag == 1u) {
+                logical_min = value;
+            } else if (item_tag == 7u) {
+                report_size = (uint32_t)value;
+            } else if (item_tag == 8u) {
+                report_id = (uint32_t)value & 0xFFu;
+                bit_pos = 8u;
+            } else if (item_tag == 9u) {
+                report_count = (uint32_t)value;
+            }
+        } else if (item_type == 2u) {
+            if (item_tag == 0u) {
+                if (usage_count < 16u) {
+                    usages[usage_count++] = ((usage_page & 0xFFFFu) << 16) | ((uint32_t)value & 0xFFFFu);
+                }
+            } else if (item_tag == 1u) {
+                usage_min = (uint32_t)value & 0xFFFFu;
+            } else if (item_tag == 2u) {
+                usage_max = (uint32_t)value & 0xFFFFu;
+            }
+        } else if (item_type == 0u && item_tag == 8u) {
+            uint32_t flags = (uint32_t)value;
+
+            if ((flags & 0x01u) == 0u && report_size != 0u && report_count != 0u) {
+                for (uint32_t i = 0; i < report_count; ++i) {
+                    uint32_t usage = hid_usage_at(i, usages, usage_count, usage_page, usage_min, usage_max);
+                    uint32_t page = usage >> 16;
+                    uint32_t id = usage & 0xFFFFu;
+                    uint32_t field_bit = bit_pos + i * report_size;
+
+                    if (page == 0x09u && id >= 1u && id <= 3u) {
+                        if (!have_buttons || field_bit < info->mouse_buttons_bit) {
+                            info->mouse_buttons_bit = field_bit;
+                        }
+                        have_buttons = 1u;
+                        parsed_report_id = report_id;
+                    } else if (page == 0x01u && id == 0x30u) {
+                        info->mouse_x_bit = field_bit;
+                        info->mouse_axis_size = report_size;
+                        have_x = 1u;
+                        parsed_report_id = report_id;
+                    } else if (page == 0x01u && id == 0x31u) {
+                        info->mouse_y_bit = field_bit;
+                        info->mouse_axis_size = report_size;
+                        have_y = 1u;
+                        parsed_report_id = report_id;
+                    } else if (page == 0x01u && id == 0x38u) {
+                        info->mouse_wheel_bit = field_bit;
+                        info->mouse_wheel_size = report_size;
+                        have_wheel = 1u;
+                        parsed_report_id = report_id;
+                    }
+                }
+            }
+
+            bit_pos += report_size * report_count;
+            usage_count = 0;
+            usage_min = 0;
+            usage_max = 0;
+        } else if (item_type == 0u && (item_tag == 10u || item_tag == 12u)) {
+            usage_count = 0;
+            usage_min = 0;
+            usage_max = 0;
+        }
+    }
+
+    if (have_buttons && have_x && have_y) {
+        info->mouse_report_id = parsed_report_id;
+        info->mouse_report_parsed = 1u;
+        if (!have_wheel) {
+            info->mouse_wheel_size = 0;
+        }
+        (void)logical_min;
+        return 0;
+    }
+
+    xhci_mouse_clear_report_layout(info);
     return -1;
 }
 
@@ -1010,7 +1289,9 @@ static int xhci_try_configure_boot_mouse(usb_controller_info_t *info, uint32_t s
     uint8_t endpoint_address = 0;
     uint16_t max_packet = 0;
     uint8_t interval = 0;
+    uint16_t hid_report_size = 0;
     uint32_t dci = 0;
+    int report_descriptor_ok = 0;
 
     info->mouse_stage = 1;
     if (xhci_get_config_descriptor(info, slot_id, &config_size) != 0) {
@@ -1024,7 +1305,8 @@ static int xhci_try_configure_boot_mouse(usb_controller_info_t *info, uint32_t s
                              &interface_number,
                              &endpoint_address,
                              &max_packet,
-                             &interval) != 0) {
+                             &interval,
+                             &hid_report_size) != 0) {
         info->mouse_last_completion_code = 0xF2u;
         return -1;
     }
@@ -1032,6 +1314,7 @@ static int xhci_try_configure_boot_mouse(usb_controller_info_t *info, uint32_t s
     info->mouse_endpoint = endpoint_address;
     info->mouse_interval = interval;
     info->mouse_report_size = max_packet;
+    info->mouse_hid_report_size = hid_report_size;
 
     info->mouse_stage = 3;
     if (xhci_control_transfer(info,
@@ -1044,12 +1327,33 @@ static int xhci_try_configure_boot_mouse(usb_controller_info_t *info, uint32_t s
         return -1;
     }
 
-    (void)xhci_control_transfer(info,
-                                slot_id,
-                                usb_setup_packet(0x21u, 0x0Bu, 0, interface_number, 0),
-                                0,
-                                0,
-                                0);
+    if (xhci_get_hid_report_descriptor(info, slot_id, interface_number, hid_report_size) == 0 &&
+        xhci_parse_mouse_report_descriptor(info, info->mouse_hid_report_size) == 0) {
+        report_descriptor_ok = 1;
+    }
+
+    if (report_descriptor_ok &&
+        xhci_control_transfer(info,
+                              slot_id,
+                              usb_setup_packet(0x21u, 0x0Bu, 1u, interface_number, 0),
+                              0,
+                              0,
+                              0) == 0) {
+        info->mouse_protocol = 1u;
+    } else if (xhci_control_transfer(info,
+                                     slot_id,
+                                     usb_setup_packet(0x21u, 0x0Bu, 0u, interface_number, 0),
+                                     0,
+                                     0,
+                                     0) == 0) {
+        info->mouse_protocol = 0u;
+        if (!report_descriptor_ok) {
+            xhci_mouse_clear_report_layout(info);
+        }
+    } else {
+        info->mouse_protocol = 0xffffffffu;
+        xhci_mouse_clear_report_layout(info);
+    }
 
     info->mouse_stage = 4;
     if (xhci_configure_interrupt_in_endpoint(info,
@@ -1076,6 +1380,20 @@ static int xhci_try_configure_boot_mouse(usb_controller_info_t *info, uint32_t s
     info->mouse_pending = 0;
     info->mouse_report_count = 0;
     info->mouse_last_completion_code = 0;
+    info->mouse_last_transferred = 0;
+    info->mouse_last_report0 = 0;
+    info->mouse_last_report1 = 0;
+    info->mouse_last_report2 = 0;
+    info->mouse_last_report3 = 0;
+    info->mouse_last_report4 = 0;
+    info->mouse_last_wheel = 0;
+    info->mouse_last_nonzero_transferred = 0;
+    info->mouse_last_nonzero_report0 = 0;
+    info->mouse_last_nonzero_report1 = 0;
+    info->mouse_last_nonzero_report2 = 0;
+    info->mouse_last_nonzero_report3 = 0;
+    info->mouse_last_nonzero_report4 = 0;
+    info->mouse_last_nonzero_wheel = 0;
     return 0;
 }
 
@@ -1104,6 +1422,30 @@ static void xhci_reset_connected_ports(usb_controller_info_t *info, uint64_t opb
     info->mouse_interface = 0;
     info->mouse_endpoint = 0;
     info->mouse_interval = 0;
+    info->mouse_protocol = 0;
+    info->mouse_hid_report_size = 0;
+    info->mouse_report_id = 0;
+    info->mouse_report_parsed = 0;
+    info->mouse_buttons_bit = 0;
+    info->mouse_x_bit = 0;
+    info->mouse_y_bit = 0;
+    info->mouse_wheel_bit = 0;
+    info->mouse_axis_size = 0;
+    info->mouse_wheel_size = 0;
+    info->mouse_last_transferred = 0;
+    info->mouse_last_report0 = 0;
+    info->mouse_last_report1 = 0;
+    info->mouse_last_report2 = 0;
+    info->mouse_last_report3 = 0;
+    info->mouse_last_report4 = 0;
+    info->mouse_last_wheel = 0;
+    info->mouse_last_nonzero_transferred = 0;
+    info->mouse_last_nonzero_report0 = 0;
+    info->mouse_last_nonzero_report1 = 0;
+    info->mouse_last_nonzero_report2 = 0;
+    info->mouse_last_nonzero_report3 = 0;
+    info->mouse_last_nonzero_report4 = 0;
+    info->mouse_last_nonzero_wheel = 0;
     xhci_mouse_controller = 0;
     xhci_mouse_slot = 0;
     xhci_mouse_dci = 0;
@@ -1321,6 +1663,30 @@ static void visit_pci(uint8_t bus, uint8_t device, uint8_t function, void *ctx) 
     info->mouse_interface = 0;
     info->mouse_endpoint = 0;
     info->mouse_interval = 0;
+    info->mouse_protocol = 0;
+    info->mouse_hid_report_size = 0;
+    info->mouse_report_id = 0;
+    info->mouse_report_parsed = 0;
+    info->mouse_buttons_bit = 0;
+    info->mouse_x_bit = 0;
+    info->mouse_y_bit = 0;
+    info->mouse_wheel_bit = 0;
+    info->mouse_axis_size = 0;
+    info->mouse_wheel_size = 0;
+    info->mouse_last_transferred = 0;
+    info->mouse_last_report0 = 0;
+    info->mouse_last_report1 = 0;
+    info->mouse_last_report2 = 0;
+    info->mouse_last_report3 = 0;
+    info->mouse_last_report4 = 0;
+    info->mouse_last_wheel = 0;
+    info->mouse_last_nonzero_transferred = 0;
+    info->mouse_last_nonzero_report0 = 0;
+    info->mouse_last_nonzero_report1 = 0;
+    info->mouse_last_nonzero_report2 = 0;
+    info->mouse_last_nonzero_report3 = 0;
+    info->mouse_last_nonzero_report4 = 0;
+    info->mouse_last_nonzero_wheel = 0;
     info->enum_stage = 0;
     info->enum_port = 0;
     info->enum_portsc = 0;
@@ -1720,10 +2086,73 @@ void usb_poll(void) {
                 uint32_t transferred = xhci_mouse_report_size > residual ?
                                        xhci_mouse_report_size - residual :
                                        xhci_mouse_report_size;
-                int dx = (int)(int8_t)xhci_mouse_report[1];
-                int dy = (int)(int8_t)xhci_mouse_report[2];
+                int dx;
+                int dy;
+                int wheel;
+                int nonzero_report;
+
+                xhci_mouse_controller->mouse_last_transferred = transferred;
+                xhci_mouse_controller->mouse_last_report0 = xhci_mouse_report[0];
+                xhci_mouse_controller->mouse_last_report1 = transferred > 1u ? xhci_mouse_report[1] : 0u;
+                xhci_mouse_controller->mouse_last_report2 = transferred > 2u ? xhci_mouse_report[2] : 0u;
+                xhci_mouse_controller->mouse_last_report3 = transferred > 3u ? xhci_mouse_report[3] : 0u;
+                xhci_mouse_controller->mouse_last_report4 = transferred > 4u ? xhci_mouse_report[4] : 0u;
+                nonzero_report =
+                    xhci_mouse_controller->mouse_last_report0 != 0u ||
+                    xhci_mouse_controller->mouse_last_report1 != 0u ||
+                    xhci_mouse_controller->mouse_last_report2 != 0u ||
+                    xhci_mouse_controller->mouse_last_report3 != 0u ||
+                    xhci_mouse_controller->mouse_last_report4 != 0u;
+
+                if (xhci_mouse_controller->mouse_protocol == 1u &&
+                    xhci_mouse_controller->mouse_report_parsed != 0u &&
+                    (xhci_mouse_controller->mouse_report_id == 0u ||
+                     (transferred > 0u && xhci_mouse_report[0] == xhci_mouse_controller->mouse_report_id))) {
+                    uint8_t parsed_buttons =
+                        (uint8_t)(hid_extract_bits(xhci_mouse_report,
+                                                   transferred,
+                                                   xhci_mouse_controller->mouse_buttons_bit,
+                                                   3u) & 0x07u);
+                    uint32_t x_raw = hid_extract_bits(xhci_mouse_report,
+                                                      transferred,
+                                                      xhci_mouse_controller->mouse_x_bit,
+                                                      xhci_mouse_controller->mouse_axis_size);
+                    uint32_t y_raw = hid_extract_bits(xhci_mouse_report,
+                                                      transferred,
+                                                      xhci_mouse_controller->mouse_y_bit,
+                                                      xhci_mouse_controller->mouse_axis_size);
+                    uint32_t wheel_raw = xhci_mouse_controller->mouse_wheel_size != 0u ?
+                                         hid_extract_bits(xhci_mouse_report,
+                                                          transferred,
+                                                          xhci_mouse_controller->mouse_wheel_bit,
+                                                          xhci_mouse_controller->mouse_wheel_size) :
+                                         0u;
+
+                    dx = (int)sign_extend_bits(x_raw, xhci_mouse_controller->mouse_axis_size);
+                    dy = (int)sign_extend_bits(y_raw, xhci_mouse_controller->mouse_axis_size);
+                    wheel = xhci_mouse_controller->mouse_wheel_size != 0u ?
+                            (int)sign_extend_bits(wheel_raw, xhci_mouse_controller->mouse_wheel_size) :
+                            0;
+                    xhci_mouse_report[0] = parsed_buttons;
+                } else {
+                    dx = (int)(int8_t)xhci_mouse_report[1];
+                    dy = (int)(int8_t)xhci_mouse_report[2];
+                    wheel = xhci_mouse_controller->mouse_protocol == 0u && transferred >= 4u ?
+                            (int)(int8_t)xhci_mouse_report[3] :
+                            0;
+                }
+                xhci_mouse_controller->mouse_last_wheel = wheel;
+                if (nonzero_report) {
+                    xhci_mouse_controller->mouse_last_nonzero_transferred = transferred;
+                    xhci_mouse_controller->mouse_last_nonzero_report0 = xhci_mouse_controller->mouse_last_report0;
+                    xhci_mouse_controller->mouse_last_nonzero_report1 = xhci_mouse_controller->mouse_last_report1;
+                    xhci_mouse_controller->mouse_last_nonzero_report2 = xhci_mouse_controller->mouse_last_report2;
+                    xhci_mouse_controller->mouse_last_nonzero_report3 = xhci_mouse_controller->mouse_last_report3;
+                    xhci_mouse_controller->mouse_last_nonzero_report4 = xhci_mouse_controller->mouse_last_report4;
+                    xhci_mouse_controller->mouse_last_nonzero_wheel = wheel;
+                }
                 if (transferred >= 3u) {
-                    mouse_apply_usb_report(xhci_mouse_report[0], dx, dy);
+                    mouse_apply_usb_report(xhci_mouse_report[0], dx, dy, wheel);
                     ++xhci_mouse_controller->mouse_report_count;
                 }
             }

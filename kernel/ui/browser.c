@@ -720,6 +720,13 @@ int browser_run(char left_drive,
             }
         }
 
+        {
+            int wheel = mouse_consume_wheel();
+            if (wheel != 0) {
+                changed = move_selection(-wheel * 3) || changed;
+            }
+        }
+
         int buttons = mouse_buttons();
         int pressed = buttons & ~last_buttons;
         if ((pressed & (MOUSE_LEFT | MOUSE_RIGHT)) != 0) {

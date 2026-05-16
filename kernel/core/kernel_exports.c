@@ -63,6 +63,8 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("mouse_buttons", mouse_buttons),
     KERNEL_EXPORT("mouse_dx", mouse_dx),
     KERNEL_EXPORT("mouse_dy", mouse_dy),
+    KERNEL_EXPORT("mouse_wheel", mouse_wheel),
+    KERNEL_EXPORT("mouse_consume_wheel", mouse_consume_wheel),
     KERNEL_EXPORT("put_char_at", console_put_char_at),
     KERNEL_EXPORT("put_dec_at", console_put_dec_at),
     KERNEL_EXPORT("put_char_at_screen", console_put_char_at_screen),

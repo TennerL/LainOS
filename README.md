@@ -243,7 +243,8 @@ The console uses an 8x8 bitmap font with line wrapping, scrolling, decimal/hex
 printing, a tiny `kprintf` subset, and panic-screen support.
 
 Keyboard input supports basic PS/2 set-1 scancodes, Shift, Caps Lock, and
-layout switching:
+layout switching. Mouse input supports PS/2 and USB motion/buttons plus wheel
+deltas; the desktop editor and console file browser consume wheel scrolling.
 
 ```text
 keymap us

@@ -2323,6 +2323,39 @@ static void editor_scroll_to_point(uint32_t y) {
     editor_top_line = (pos * (total - rows)) / range;
 }
 
+static int editor_scroll_by_wheel(int wheel_delta) {
+    uint32_t total = editor_line_count();
+    uint32_t rows = editor_visible_rows();
+    uint32_t step;
+    uint32_t old_top = editor_top_line;
+
+    if (wheel_delta == 0 || rows == 0u || total <= rows) {
+        return 0;
+    }
+
+    step = (uint32_t)(wheel_delta < 0 ? -wheel_delta : wheel_delta) * 3u;
+    if (step == 0u) {
+        step = 1u;
+    }
+
+    if (wheel_delta > 0) {
+        editor_top_line = editor_top_line > step ? editor_top_line - step : 0u;
+    } else {
+        uint32_t max_top = total - rows;
+        editor_top_line = editor_top_line + step;
+        if (editor_top_line > max_top) {
+            editor_top_line = max_top;
+        }
+    }
+
+    if (editor_cursor_line() < editor_top_line) {
+        editor_cursor = editor_line_start(editor_top_line);
+    } else if (editor_cursor_line() >= editor_top_line + rows) {
+        editor_cursor = editor_line_start(editor_top_line + rows - 1u);
+    }
+    return editor_top_line != old_top;
+}
+
 static void editor_place_cursor_at(uint32_t x, uint32_t y) {
     uint32_t cols = editor_text_cols();
     uint32_t rows = editor_visible_rows();
@@ -3196,10 +3229,12 @@ void desktop_run(const boot_info_t *info) {
         int buttons;
         int motion_dx = 0;
         int motion_dy = 0;
+        int wheel_delta = 0;
 
         usb_poll();
         desktop_mouse_snapshot(&x, &y, &buttons);
         mouse_consume_motion(&motion_dx, &motion_dy, 0);
+        wheel_delta = mouse_consume_wheel();
         int left_pressed = (buttons & MOUSE_LEFT) != 0;
         int left_was_pressed = (last_buttons & MOUSE_LEFT) != 0;
 
@@ -3228,6 +3263,26 @@ void desktop_run(const boot_info_t *info) {
             desktop_mouse_snapshot(&x, &y, &buttons);
         }
         left_pressed = (buttons & MOUSE_LEFT) != 0;
+        if (wheel_delta != 0) {
+            desktop_mouse_last_activity_tick = timer_ticks();
+            if (editor_open &&
+                point_in_rect(x,
+                              y,
+                              editor_window.content_x,
+                              editor_window.content_y,
+                              editor_window.content_w,
+                              editor_window.content_h) &&
+                editor_scroll_by_wheel(wheel_delta)) {
+                cursor_restore();
+                editor_focused = 1;
+                desktop_terminal_blur();
+                desktop_redraw_editor_only(x, y);
+                last_x = x;
+                last_y = y;
+                last_buttons = buttons;
+                continue;
+            }
+        }
         if (left_pressed && (wm_action != DESKTOP_WM_IDLE || editor_scroll_drag)) {
             desktop_mouse_apply_drag_motion(&x, &y, last_x, last_y, motion_dx, motion_dy);
         }

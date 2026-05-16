@@ -1,5 +1,4 @@
 #include "kernel_api.Z"
-#include "mouse_api.Z"
 
 int x;
 int y;
@@ -37,6 +36,8 @@ print(" dx=");
 print(mouse_dx());
 print(" dy=");
 print(mouse_dy());
+print(" wheel=");
+print(mouse_wheel());
 print("\n");
 
 return 0;

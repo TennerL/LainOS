@@ -13,3 +13,5 @@ extern int mouse_y(void);
 extern int mouse_buttons(void);
 extern int mouse_dx(void);
 extern int mouse_dy(void);
+extern int mouse_wheel(void);
+extern int mouse_consume_wheel(void);

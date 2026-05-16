@@ -1218,6 +1218,7 @@ static void cmd_desktop(const char *args, const boot_info_t *info);
 static void cmd_ahci(const char *args, const boot_info_t *info);
 static void cmd_net(const char *args, const boot_info_t *info);
 static void cmd_wget(const char *args, const boot_info_t *info);
+static void cmd_mouse(const char *args, const boot_info_t *info);
 static void cmd_usb(const char *args, const boot_info_t *info);
 static void cmd_ticks(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
@@ -1294,6 +1295,7 @@ static const command_t commands[] = {
     { "ahci",    "show AHCI status",          cmd_ahci },
     { "net",     "show network devices",      cmd_net },
     { "wget",    "fetch http://IP/path to a file", cmd_wget },
+    { "mouse",   "show mouse diagnostics",    cmd_mouse },
     { "usb",     "show USB controllers",      cmd_usb },
     { "ticks",   "show timer ticks",          cmd_ticks },
     { "run",     "run a script file",         cmd_run },
@@ -3656,6 +3658,65 @@ static void cmd_desktop(const char *args, const boot_info_t *info) {
     desktop_run(info);
 }
 
+static void console_put_signed_dec(int value) {
+    if (value < 0) {
+        console_puts("-");
+        console_put_dec64((uint64_t)(-(int64_t)value));
+    } else {
+        console_put_dec64((uint64_t)value);
+    }
+}
+
+static void cmd_mouse(const char *args, const boot_info_t *info) {
+    mouse_debug_info_t debug;
+
+    (void)args;
+    (void)info;
+    mouse_debug_info(&debug);
+
+    console_puts("mouse: enabled=");
+    console_put_dec64((uint64_t)debug.enabled);
+    console_puts(" source=");
+    if (debug.last_source == 1) {
+        console_puts("ps2");
+    } else if (debug.last_source == 2) {
+        console_puts("usb");
+    } else {
+        console_puts("none");
+    }
+    console_puts(" ps2=");
+    console_put_dec64((uint64_t)debug.ps2_enabled);
+    console_puts(" ps2wheel=");
+    console_put_dec64((uint64_t)debug.ps2_has_wheel);
+    console_puts(" ps2size=");
+    console_put_dec64((uint64_t)debug.ps2_packet_size);
+    console_puts("\n");
+
+    console_puts("mouse: ps2pkts=");
+    console_put_dec64((uint64_t)debug.ps2_packets);
+    console_puts(" usbreports=");
+    console_put_dec64((uint64_t)debug.usb_reports);
+    console_puts(" rejected=");
+    console_put_dec64((uint64_t)debug.rejected_packets);
+    console_puts("\n");
+
+    console_puts("mouse: x=");
+    console_put_signed_dec(debug.x);
+    console_puts(" y=");
+    console_put_signed_dec(debug.y);
+    console_puts(" buttons=");
+    console_put_dec64((uint64_t)debug.buttons);
+    console_puts(" dx=");
+    console_put_signed_dec(debug.dx);
+    console_puts(" dy=");
+    console_put_signed_dec(debug.dy);
+    console_puts(" wheel=");
+    console_put_signed_dec(debug.wheel);
+    console_puts(" pendingwheel=");
+    console_put_signed_dec(debug.pending_wheel);
+    console_puts("\n");
+}
+
 static void cmd_usb(const char *args, const boot_info_t *info) {
     char *mutable_args = (char *)args;
     char *command = 0;
@@ -3819,6 +3880,33 @@ static void cmd_usb(const char *args, const boot_info_t *info) {
         }
     }
 
+    {
+        uint32_t before_reports = 0;
+
+        for (uint32_t i = 0; i < usb_controller_count(); ++i) {
+            const usb_controller_info_t *ctrl = usb_controller_info(i);
+            if (ctrl != 0) {
+                before_reports += ctrl->mouse_report_count;
+            }
+        }
+
+        for (uint32_t poll = 0; poll < 100000u; ++poll) {
+            uint32_t after_reports = 0;
+
+            usb_poll();
+            for (uint32_t i = 0; i < usb_controller_count(); ++i) {
+                const usb_controller_info_t *ctrl = usb_controller_info(i);
+                if (ctrl != 0) {
+                    after_reports += ctrl->mouse_report_count;
+                }
+            }
+            if (after_reports != before_reports) {
+                break;
+            }
+            __asm__ __volatile__("pause");
+        }
+    }
+
     console_puts("USB host controllers=");
     console_put_dec64(usb_controller_count());
     console_puts(" xhci=");
@@ -3903,6 +3991,64 @@ static void cmd_usb(const char *args, const boot_info_t *info) {
             console_put_hex32(ctrl->mouse_endpoint);
             console_puts(" mint=");
             console_put_dec64(ctrl->mouse_interval);
+            console_puts(" mproto=");
+            console_put_dec64(ctrl->mouse_protocol);
+            console_puts(" mhid=");
+            console_put_dec64(ctrl->mouse_hid_report_size);
+            console_puts(" mparsed=");
+            console_put_dec64(ctrl->mouse_report_parsed);
+            console_puts(" mrid=");
+            console_put_dec64(ctrl->mouse_report_id);
+            console_puts(" mbits=");
+            console_put_dec64(ctrl->mouse_buttons_bit);
+            console_puts("/");
+            console_put_dec64(ctrl->mouse_x_bit);
+            console_puts("/");
+            console_put_dec64(ctrl->mouse_y_bit);
+            console_puts("/");
+            console_put_dec64(ctrl->mouse_wheel_bit);
+            console_puts(" msz=");
+            console_put_dec64(ctrl->mouse_axis_size);
+            console_puts("/");
+            console_put_dec64(ctrl->mouse_wheel_size);
+            console_puts(" mxfer=");
+            console_put_dec64(ctrl->mouse_last_transferred);
+            console_puts(" mwheel=");
+            if (ctrl->mouse_last_wheel < 0) {
+                console_puts("-");
+                console_put_dec64((uint64_t)(-ctrl->mouse_last_wheel));
+            } else {
+                console_put_dec64((uint64_t)ctrl->mouse_last_wheel);
+            }
+            console_puts(" mrep=");
+            console_put_hex32(ctrl->mouse_last_report0);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_report1);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_report2);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_report3);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_report4);
+            console_puts(" mnzxfer=");
+            console_put_dec64(ctrl->mouse_last_nonzero_transferred);
+            console_puts(" mnzwheel=");
+            if (ctrl->mouse_last_nonzero_wheel < 0) {
+                console_puts("-");
+                console_put_dec64((uint64_t)(-ctrl->mouse_last_nonzero_wheel));
+            } else {
+                console_put_dec64((uint64_t)ctrl->mouse_last_nonzero_wheel);
+            }
+            console_puts(" mnzrep=");
+            console_put_hex32(ctrl->mouse_last_nonzero_report0);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_nonzero_report1);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_nonzero_report2);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_nonzero_report3);
+            console_puts(",");
+            console_put_hex32(ctrl->mouse_last_nonzero_report4);
             console_puts(" estage=");
             console_put_dec64(ctrl->enum_stage);
             console_puts(" eport=");

@@ -271,7 +271,7 @@ run-usb: all
 		-drive format=raw,file=build/$(DATA_IMG),if=ide,index=1 \
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd,bus=xhci.0 \
-		-device usb-tablet,bus=xhci.0
+		-device usb-mouse,bus=xhci.0
 
 run-net: all
 	qemu-system-x86_64 \
