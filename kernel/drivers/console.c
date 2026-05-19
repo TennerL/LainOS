@@ -18,6 +18,7 @@
 #define CONSOLE_SPLIT_DIVIDER_WIDTH 2u
 #define CONSOLE_SHADOW_MAX_COLS 512u
 #define CONSOLE_SHADOW_MAX_ROWS 256u
+#define CONSOLE_MAX_CPU_SUPPRESS 32u
 
 typedef struct {
     uint32_t left;
@@ -43,12 +44,48 @@ static uint32_t current_bg_color = DEFAULT_BG_COLOR;
 static char dec_buffer[32];
 static void (*console_output_hook)(char ch);
 static char console_shadow[CONSOLE_MAX_PANES][CONSOLE_SHADOW_MAX_ROWS][CONSOLE_SHADOW_MAX_COLS];
+static volatile unsigned int console_write_lock;
+static volatile unsigned int console_suppress_depth[CONSOLE_MAX_CPU_SUPPRESS];
 
 static uint32_t console_pane_index(const console_pane_t *pane);
 static void console_shadow_clear(uint32_t pane_index);
 
 static console_pane_t *active_pane(void) {
     return &console_panes[active_console_pane];
+}
+
+static void console_lock(void) {
+    while (__sync_lock_test_and_set(&console_write_lock, 1u) != 0u) {
+        __asm__ volatile("pause");
+    }
+}
+
+static void console_unlock(void) {
+    __sync_lock_release(&console_write_lock);
+}
+
+static unsigned int console_current_cpu_index(void) {
+    unsigned int index = cpu_current_index();
+
+    return index < CONSOLE_MAX_CPU_SUPPRESS ? index : 0u;
+}
+
+static int console_current_cpu_suppressed(void) {
+    return console_suppress_depth[console_current_cpu_index()] != 0u;
+}
+
+void console_suppress_current_cpu_push(void) {
+    unsigned int index = console_current_cpu_index();
+
+    __sync_fetch_and_add(&console_suppress_depth[index], 1u);
+}
+
+void console_suppress_current_cpu_pop(void) {
+    unsigned int index = console_current_cpu_index();
+
+    if (console_suppress_depth[index] != 0u) {
+        __sync_fetch_and_sub(&console_suppress_depth[index], 1u);
+    }
 }
 
 static const console_pane_t *active_pane_const(void) {
@@ -708,7 +745,7 @@ void console_cursor_enable(int enabled) {
     }
 }
 
-void console_puts(const char *s) {
+static void console_puts_unlocked(const char *s) {
     while (*s) {
         char ch = *s++;
         if (ch == '\n') {
@@ -727,6 +764,15 @@ void console_puts(const char *s) {
             putc_raw(ch);
         }
     }
+}
+
+void console_puts(const char *s) {
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    console_lock();
+    console_puts_unlocked(s);
+    console_unlock();
 }
 
 void console_set_output_hook(void (*hook)(char ch)) {
@@ -956,19 +1002,39 @@ unsigned int console_active_pane(void) {
     return active_console_pane;
 }
 
-static void put_hex_n(uint64_t value, unsigned digits) {
+static void put_hex_n_unlocked(uint64_t value, unsigned digits) {
     for (unsigned i = 0; i < digits; ++i) {
         unsigned nibble = (unsigned)((value >> ((digits - 1u - i) * 4u)) & 0xFu);
         putc_raw((char)(nibble < 10 ? ('0' + nibble) : ('A' + nibble - 10)));
     }
 }
 
-void console_put_hex64(unsigned long long value) { put_hex_n(value, 16); }
-void console_put_hex32(unsigned int value) { put_hex_n(value, 8); }
+void console_put_hex64(unsigned long long value) {
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    console_lock();
+    put_hex_n_unlocked(value, 16);
+    console_unlock();
+}
+
+void console_put_hex32(unsigned int value) {
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    console_lock();
+    put_hex_n_unlocked(value, 8);
+    console_unlock();
+}
 
 void console_put_dec64(unsigned long long value) {
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    console_lock();
     if (value == 0) {
         putc_raw('0');
+        console_unlock();
         return;
     }
     dec_buffer[31] = '\0';
@@ -977,7 +1043,8 @@ void console_put_dec64(unsigned long long value) {
         dec_buffer[i--] = (char)('0' + (value % 10));
         value /= 10;
     }
-    console_puts(&dec_buffer[i + 1]);
+    console_puts_unlocked(&dec_buffer[i + 1]);
+    console_unlock();
 }
 
 static unsigned long long next_arg(int *idx, unsigned long long a1, unsigned long long a2) {
@@ -988,11 +1055,15 @@ static unsigned long long next_arg(int *idx, unsigned long long a1, unsigned lon
 
 static void kprintf_common(const char *fmt, unsigned long long a1, unsigned long long a2) {
     int idx = 0;
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    console_lock();
     while (*fmt) {
         char ch = *fmt++;
         if (ch != '%') {
             char tmp[2] = { ch, 0 };
-            console_puts(tmp);
+            console_puts_unlocked(tmp);
             continue;
         }
         ch = *fmt++;
@@ -1000,17 +1071,29 @@ static void kprintf_common(const char *fmt, unsigned long long a1, unsigned long
         if (ch == '%') {
             putc_raw('%');
         } else if (ch == 's') {
-            console_puts((const char *)(uintptr_t)next_arg(&idx, a1, a2));
+            console_puts_unlocked((const char *)(uintptr_t)next_arg(&idx, a1, a2));
         } else if (ch == 'x') {
-            console_put_hex64(next_arg(&idx, a1, a2));
+            put_hex_n_unlocked(next_arg(&idx, a1, a2), 16);
         } else if (ch == 'u') {
-            console_put_dec64(next_arg(&idx, a1, a2));
+            unsigned long long value = next_arg(&idx, a1, a2);
+            if (value == 0) {
+                putc_raw('0');
+            } else {
+                dec_buffer[31] = '\0';
+                int i = 30;
+                while (value && i >= 0) {
+                    dec_buffer[i--] = (char)('0' + (value % 10));
+                    value /= 10;
+                }
+                console_puts_unlocked(&dec_buffer[i + 1]);
+            }
         } else if (ch == 'c') {
             putc_raw((char)next_arg(&idx, a1, a2));
         } else {
             putc_raw(ch);
         }
     }
+    console_unlock();
 }
 
 void console_kprintf1(const char *fmt, unsigned long long a1) { kprintf_common(fmt, a1, 0); }

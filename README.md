@@ -206,12 +206,27 @@ from the BSP:
 - `kernel_task_poll()`
 - `kernel_task_wait(id)`
 - `kernel_task_done(id)`
+- `kernel_task_release(id)`
 - `kernel_task_pending_count()`
 
-The shell command `smp` submits visible test work. CPU usage accounting uses
+The shell command `smp` submits visible test work. Shell commands can also be
+started through the kernel task layer with a trailing `&`; `jobs` shows running
+or completed jobs and `wait [job]` joins and clears them. Completed jobs report
+status `0` for a dispatched command, `1` for a failed drive switch, `126` for a
+command that cannot run in the background yet, and `127` for an unknown command.
+`tasktest &` uses a direct background workload instead of recursively waiting on
+more task-queue work. Console writes are serialized so background output does
+not corrupt foreground output byte-by-byte. CPU usage accounting uses
 cycle-based idle/busy sampling on the bootstrap CPU and records busy ticks for
 AP-executed work, so `taskmgr_module` can show foreground activity and
 secondary CPU queue work without charging whole PIT ticks for tiny redraws.
+Desktop mode also has a tiny job table backed by this task layer. The Start
+menu `Jobs Test` entry submits a CPU-only background job, and the taskbar shows
+`Jobs running/done` while desktop input remains live. The desktop editor uses
+the same job table for Build and Inst, so long `.Z` project builds no longer
+block mouse and window interaction. Quiet shell APIs suppress build/install
+console chatter on the worker CPU, keeping foreground desktop output clean while
+the editor reads the saved build log on completion.
 
 This is not a preemptive scheduler yet. There are no per-core run queues,
 kernel threads, TSS/IST setup, or userspace processes. Basic per-core state
@@ -279,13 +294,21 @@ The block/storage stack can expose:
 - MBR/GPT partitions as `hd1p1`, `sd0p1`, and similar names
 
 `lainfs` is the current native filesystem. It is intentionally tiny: small
-directory tables, contiguous file data, and a 512 KiB file cap. It supports
-directories, parent links, scoped `ls`, `cd`, `pwd`, move/rename, copy, and
-delete operations.
+directory tables, up to three extents per file, and a 4 MiB file cap. It validates
+directory metadata while loading a filesystem, including entry types, names,
+parent links, directory parent cycles, file extents, partition bounds, and
+overlapping allocations. Old single-extent files remain readable; new writes can
+fall back to a small non-contiguous extent list when one large free run is unavailable. It
+supports directories, parent links, scoped `ls`, `cd`, `pwd`, move/rename,
+copy, and delete operations.
 
 `lainfs` keeps a write-back cache for the active directory table and a small
 data-sector cache for repeated file reads/writes. Use `fsflush` to flush dirty
-cached blocks and print cache counters; `reboot` and `poweroff` also flush the
+cached blocks and print cache counters; `fscheck` reports metadata validation
+failures with entry details and file extent ranges, and `fsrepair` applies
+conservative metadata-only fixes for simple parent-link, directory-entry, and
+recoverable extent-metadata problems, including breaking directory parent cycles
+by moving a cycle member to root. `reboot` and `poweroff` also flush the
 cache before leaving the OS.
 
 The build creates `build/data.img`, attaches it in QEMU, and keeps it persistent
@@ -341,6 +364,8 @@ Core commands:
 - `smp`
 - `tasks`
 - `tasktest`
+- `jobs`
+- `wait [job]`
 - `ticks`
 - `date`
 - `reboot`
@@ -377,6 +402,8 @@ Storage and files:
 - `cp source dest`
 - `write name text`
 - `cat name`
+- `fscheck [drive:]`
+- `fsrepair [drive:]`
 - `fsflush [drive:|all]`
 - `browse [path-or-drive:]`
 
@@ -428,7 +455,8 @@ Desktop features:
 - File browser window.
 - File browser delete support from the `Del` button or right-click menu.
 - Modules window and module app windows.
-- Native `.Z` editor with Save, Build, Inst, Load, and Log buttons.
+- Native `.Z` editor with Save, asynchronous Build/Inst, Load, and Log buttons.
+- Desktop background job indicator plus `Jobs Test` launcher.
 - Registry-backed desktop themes via the `theme` and `reg` shell commands.
 - Mouse drag/resize with lightweight outline previews.
 - Up to six open module app windows.
@@ -445,6 +473,16 @@ desktop
 
 Open the task manager module from the Modules list or Start menu, then run
 `smp` from the terminal to see secondary-core activity.
+
+To smoke-test desktop jobs, open `Apps -> Jobs Test`. The taskbar should show
+`Jobs 1/0` while the job runs, then `Jobs 0/1` when it completes; the mouse,
+Start menu, and windows should keep responding during the run.
+
+To test a real desktop job, open a `.Z` project file in the editor and press
+`Build` or `Inst`. The editor status should change to `build running` or
+`install running`, the taskbar should show an active job, and the desktop should
+remain responsive until the status changes to `build ok`, `build failed`,
+`install ok`, or `install failed`.
 
 ## In-Kernel Toolchain
 
@@ -464,6 +502,8 @@ loads/stores, calls, and references to exported kernel symbols.
 - local arrays and simple multidimensional local arrays
 - structs, nested fields, pointer-to-struct access, and mixed-width fields
 - pointers, address-of, dereference, and scaled pointer arithmetic
+- arithmetic, comparison, logical, bitwise, shift, unary `~`, and compound
+  assignment operators
 - `if`, `else`, `while`, `for`, `do while`, `switch`, `break`, `continue`
 - numeric `#define`, include guards, `#include`, and `#pragma once`
 - comments
@@ -480,6 +520,32 @@ zbuild sysstat
 ztest sysstat
 zinstall sysstat
 ```
+
+On the host, `make zcc-smoke` compiles the non-header `.Z` examples through
+`tools/zcc_host`. The host compiler expands quoted local `#include` directives,
+so examples that include `kernel_api.Z` are covered by the smoke check.
+The in-kernel compiler accepts expanded sources and generated assembly up to
+1 MiB each; the host compiler allows 2 MiB expanded source and 4 MiB generated
+assembly. Current fixed tables cover 256 functions/signatures, 128 locals,
+128 globals, 64 structs with 32 fields each, 512 string literals, and 32 linked
+objects with up to 256 object symbols.
+
+On the host, `make lainfs-smoke` builds `tools/lainfs_check_host` and runs a
+small corruption/repair regression pass for parent cycles, directory metadata,
+recoverable extent metadata. It also checks that overlapping and out-of-bounds
+file extents are reported and left unrepaired. The tool can also inspect images
+directly:
+
+```bash
+build/tools/lainfs_check_host check build/data.img
+build/tools/lainfs_check_host repair build/data.img
+```
+
+LainFS v1 keeps its fixed 64-byte directory entries. The reserved bytes are
+now frozen for parent links and compact extent metadata: bytes 0..3 store the
+parent entry id, bytes 4..7 store the extent count plus the first extent block
+count, and bytes 8..23 store two extra start/block-count pairs. A zero extent
+metadata word keeps legacy contiguous files readable.
 
 `.zo` objects carry section records, exports, externs, entry offsets, and
 relocations. `zlink` lays out `.text`, `.data`, and `.bss`, resolves symbols,
@@ -640,13 +706,13 @@ Here are high-leverage next steps, roughly ordered by payoff:
    interactive shell, editor, browser, and module workflows.
 
 2. Background kernel jobs.
-   Move real shell and desktop jobs such as builds, file copies, and redraw
-   preparation onto the cooperative task layer so long work can progress off
-   the BSP.
+   Harden `cmd &` and desktop job output isolation, add cancellation/status
+   details, and move more desktop work such as downloads and redraw preparation
+   onto the desktop job table.
 
 3. Expand `lainfs`.
-   Lift file count/file size limits, support non-contiguous extents, and add
-   more robust metadata validation.
+   Lift file count limits, grow past the current three-extents-per-file model,
+   and keep extending metadata repair/diagnostic tooling.
 
 4. Desktop window damage model.
    Extend the current dirty-rectangle path into a z-order-aware compositor so

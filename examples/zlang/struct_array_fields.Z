@@ -1,0 +1,15 @@
+struct Packet {
+    uint32_t id;
+    uint8_t bytes[8];
+    uint16_t words[4];
+};
+
+struct Packet packet;
+
+packet.id = sizeof(packet);
+
+print("packet size=");
+print(packet.id);
+print("\n");
+
+return packet.id;

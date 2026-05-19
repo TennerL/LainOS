@@ -8,6 +8,7 @@
 #define KEY_UP 8
 #define KEY_DOWN 9
 #define MOUSE_LEFT 1
+#define NET_HTTP_FLAG_TRUNCATED 1
 
 extern uint32_t gfx_width(void);
 extern uint32_t gfx_height(void);
@@ -18,6 +19,18 @@ extern int os_load_file_shared(const uint8_t *path);
 extern uint8_t *os_file_buffer(void);
 extern int os_http_get(const uint8_t *url, uint8_t *buffer, uint32_t capacity);
 extern int os_strlen(const uint8_t *text);
+
+struct HttpInfo {
+    uint32_t status_code;
+    uint32_t content_length;
+    uint32_t body_size;
+    uint32_t header_size;
+    uint32_t flags;
+    int32_t error;
+    uint8_t content_type[64];
+};
+
+extern int os_http_get_ex(const uint8_t *url, uint8_t *buffer, uint32_t capacity, struct HttpInfo *info);
 
 struct ImageInfo {
     uint32_t width;
@@ -47,6 +60,7 @@ global uint32_t zbrowser_line_no;
 global uint32_t zbrowser_scroll;
 global uint32_t zbrowser_editing;
 global uint32_t zbrowser_needs_redraw;
+global struct HttpInfo zbrowser_http_info;
 
 void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
     uint32_t i;
@@ -60,6 +74,79 @@ void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
         i = i + 1;
     }
     dst[i] = 0;
+}
+
+void append_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
+    uint32_t len;
+    uint32_t i;
+
+    len = os_strlen(dst);
+    i = 0;
+    while (src[i] != 0 && len + 1 < capacity) {
+        dst[len] = src[i];
+        len = len + 1;
+        i = i + 1;
+    }
+    dst[len] = 0;
+}
+
+void append_dec(uint8_t *dst, uint32_t capacity, uint32_t value) {
+    uint8_t digits[12];
+    uint32_t count;
+    uint32_t len;
+
+    len = os_strlen(dst);
+    if (len + 1 >= capacity) {
+        return;
+    }
+    if (value == 0) {
+        dst[len] = 48;
+        dst[len + 1] = 0;
+        return;
+    }
+    count = 0;
+    while (value != 0 && count < 12) {
+        digits[count] = (uint8_t)(48 + (value % 10));
+        value = value / 10;
+        count = count + 1;
+    }
+    while (count != 0 && len + 1 < capacity) {
+        count = count - 1;
+        dst[len] = digits[count];
+        len = len + 1;
+    }
+    dst[len] = 0;
+}
+
+void set_loaded_status(const uint8_t *scheme) {
+    uint32_t flags;
+    uint32_t truncated;
+
+    copy_text(zbrowser_status, 96, "loaded ");
+    append_text(zbrowser_status, 96, scheme);
+    if (zbrowser_http_info.status_code != 0) {
+        append_text(zbrowser_status, 96, " ");
+        append_dec(zbrowser_status, 96, zbrowser_http_info.status_code);
+    }
+    flags = zbrowser_http_info.flags;
+    truncated = flags % 2;
+    if (truncated != 0) {
+        append_text(zbrowser_status, 96, " truncated");
+    }
+}
+
+void set_failed_status(const uint8_t *scheme, int code) {
+    copy_text(zbrowser_status, 96, scheme);
+    append_text(zbrowser_status, 96, " failed");
+    if (code != 0) {
+        append_text(zbrowser_status, 96, " ");
+        if (code < 0) {
+            append_text(zbrowser_status, 96, "-");
+            append_dec(zbrowser_status, 96, (uint32_t)(0 - code));
+        } else {
+            append_dec(zbrowser_status, 96, (uint32_t)code);
+        }
+    }
 }
 
 int starts_with(const uint8_t *text, const uint8_t *prefix) {
@@ -470,23 +557,23 @@ void load_document(void) {
             copy_text(zbrowser_status, 96, "fetching http");
         }
         draw_shell();
-        size = os_http_get(zbrowser_url, buffer, ZBROWSER_HTTP_CAPACITY);
+        size = os_http_get_ex(zbrowser_url, buffer, ZBROWSER_HTTP_CAPACITY, &zbrowser_http_info);
         if (size >= 0) {
             buffer[size] = 0;
             zbrowser_size = size;
             zbrowser_has_document = 1;
             if (starts_with(zbrowser_url, "https://")) {
-                copy_text(zbrowser_status, 96, "loaded https");
+                set_loaded_status("https");
             } else {
-                copy_text(zbrowser_status, 96, "loaded http");
+                set_loaded_status("http");
             }
             zbrowser_loaded = 1;
             return;
         }
         if (starts_with(zbrowser_url, "https://")) {
-            copy_text(zbrowser_status, 96, "https failed");
+            set_failed_status("https", size);
         } else {
-            copy_text(zbrowser_status, 96, "http failed");
+            set_failed_status("http", size);
         }
         zbrowser_loaded = 1;
         return;

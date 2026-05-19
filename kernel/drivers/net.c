@@ -115,6 +115,10 @@ typedef struct {
     uint32_t out_size;
     int header_done;
     int full;
+    char header[1024];
+    uint32_t header_size;
+    int header_truncated;
+    net_http_info_t *info;
     char header_tail[4];
     uint32_t header_tail_count;
 } net_tcp_get_t;
@@ -174,6 +178,7 @@ static net_debug_info_t debug_info;
 
 static void net_zero(void *ptr, uint32_t size);
 static int net_hostname_is_ipv4(const char *name, uint32_t *out);
+static uint32_t net_strlen(const char *s);
 
 static void copy_name(char *dst, const char *src) {
     uint32_t i = 0;
@@ -747,8 +752,146 @@ static int net_send_tcp(uint32_t index,
     return net_send_frame(index, frame, frame_size);
 }
 
+static int net_http_header_match_at(const char *header, uint32_t header_size, uint32_t pos, const char *needle) {
+    uint32_t i = 0;
+
+    while (needle[i]) {
+        char a;
+        char b = needle[i];
+
+        if (pos + i >= header_size) {
+            return 0;
+        }
+        a = header[pos + i];
+        if (a >= 'A' && a <= 'Z') {
+            a = (char)(a + ('a' - 'A'));
+        }
+        if (a != b) {
+            return 0;
+        }
+        ++i;
+    }
+    return 1;
+}
+
+static int net_http_line_start(const char *header, uint32_t pos) {
+    return pos == 0 || header[pos - 1u] == '\n';
+}
+
+static uint32_t net_http_parse_uint(const char *header, uint32_t header_size, uint32_t *pos, int *saw_digit) {
+    uint32_t value = 0;
+
+    *saw_digit = 0;
+    while (*pos < header_size &&
+           header[*pos] >= '0' &&
+           header[*pos] <= '9') {
+        *saw_digit = 1;
+        value = value * 10u + (uint32_t)(header[*pos] - '0');
+        *pos = *pos + 1u;
+    }
+    return value;
+}
+
+static void net_http_copy_header_value(const char *header,
+                                       uint32_t header_size,
+                                       uint32_t pos,
+                                       char *out,
+                                       uint32_t out_capacity) {
+    uint32_t out_pos = 0;
+
+    if (!out || out_capacity == 0) {
+        return;
+    }
+    while (pos < header_size && (header[pos] == ' ' || header[pos] == '\t')) {
+        ++pos;
+    }
+    while (pos < header_size &&
+           header[pos] != '\r' &&
+           header[pos] != '\n' &&
+           out_pos + 1u < out_capacity) {
+        out[out_pos++] = header[pos++];
+    }
+    out[out_pos] = '\0';
+}
+
+void net_http_parse_info(const char *header,
+                         uint32_t header_size,
+                         uint32_t body_size,
+                         int body_truncated,
+                         int header_truncated,
+                         int error,
+                         net_http_info_t *info) {
+    uint32_t pos;
+    int saw_digit;
+
+    if (!info) {
+        return;
+    }
+
+    net_zero(info, sizeof(*info));
+    info->body_size = body_size;
+    info->header_size = header_size;
+    info->error = error;
+    if (body_truncated) {
+        info->flags |= NET_HTTP_FLAG_TRUNCATED;
+    }
+    if (header_truncated) {
+        info->flags |= NET_HTTP_FLAG_HEADER_TRUNCATED;
+    }
+
+    if (!header || header_size == 0) {
+        return;
+    }
+
+    if (header_size >= 12u &&
+        header[0] == 'H' &&
+        header[1] == 'T' &&
+        header[2] == 'T' &&
+        header[3] == 'P') {
+        pos = 5u;
+        while (pos < header_size && header[pos] != ' ') {
+            ++pos;
+        }
+        while (pos < header_size && header[pos] == ' ') {
+            ++pos;
+        }
+        info->status_code = net_http_parse_uint(header, header_size, &pos, &saw_digit);
+        if (!saw_digit) {
+            info->status_code = 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < header_size; ++i) {
+        if (!net_http_line_start(header, i)) {
+            continue;
+        }
+        if (net_http_header_match_at(header, header_size, i, "content-length:")) {
+            pos = i + 15u;
+            while (pos < header_size && (header[pos] == ' ' || header[pos] == '\t')) {
+                ++pos;
+            }
+            info->content_length = net_http_parse_uint(header, header_size, &pos, &saw_digit);
+            if (saw_digit) {
+                info->flags |= NET_HTTP_FLAG_CONTENT_LENGTH;
+            }
+        } else if (net_http_header_match_at(header, header_size, i, "content-type:")) {
+            net_http_copy_header_value(header,
+                                       header_size,
+                                       i + 13u,
+                                       info->content_type,
+                                       sizeof(info->content_type));
+        }
+    }
+}
+
 static void net_http_copy_body_byte(net_tcp_get_t *ctx, char ch) {
     if (!ctx->header_done) {
+        if (ctx->header_size + 1u < sizeof(ctx->header)) {
+            ctx->header[ctx->header_size++] = ch;
+            ctx->header[ctx->header_size] = '\0';
+        } else {
+            ctx->header_truncated = 1;
+        }
         if (ctx->header_tail_count < sizeof(ctx->header_tail)) {
             ctx->header_tail[ctx->header_tail_count++] = ch;
         } else {
@@ -764,12 +907,26 @@ static void net_http_copy_body_byte(net_tcp_get_t *ctx, char ch) {
             ctx->header_tail[2] == '\r' &&
             ctx->header_tail[3] == '\n') {
             ctx->header_done = 1;
+            net_http_parse_info(ctx->header,
+                                ctx->header_size,
+                                ctx->out_size,
+                                ctx->full,
+                                ctx->header_truncated,
+                                0,
+                                ctx->info);
         }
         return;
     }
 
     if (ctx->out_size + 1u >= ctx->out_capacity) {
         ctx->full = 1;
+        net_http_parse_info(ctx->header,
+                            ctx->header_size,
+                            ctx->out_size,
+                            ctx->full,
+                            ctx->header_truncated,
+                            0,
+                            ctx->info);
         return;
     }
     ctx->out[ctx->out_size++] = ch;
@@ -1798,6 +1955,15 @@ int net_http_get(uint32_t index,
                  char *out,
                  uint32_t out_capacity,
                  uint32_t *out_size) {
+    return net_http_get_ex(index, url, out, out_capacity, out_size, 0);
+}
+
+int net_http_get_ex(uint32_t index,
+                    const char *url,
+                    char *out,
+                    uint32_t out_capacity,
+                    uint32_t *out_size,
+                    net_http_info_t *info) {
     uint32_t ip = 0;
     uint16_t port = 80u;
     const char *path = 0;
@@ -1811,19 +1977,25 @@ int net_http_get(uint32_t index,
     if (out_size) {
         *out_size = 0;
     }
+    if (info) {
+        net_zero(info, sizeof(*info));
+    }
     if (!url || !out || out_capacity == 0 || index >= device_count) {
+        net_http_parse_info(0, 0, 0, 0, 0, -1, info);
         return -1;
     }
     out[0] = '\0';
 
     if (net_parse_url(url, &ip, &port, host, sizeof(host), &path, &is_https) != 0) {
+        net_http_parse_info(0, 0, 0, 0, 0, -2, info);
         return -2;
     }
     if (ip == 0 && net_dns_resolve(index, host, &ip) != 0) {
+        net_http_parse_info(0, 0, 0, 0, 0, -8, info);
         return -8;
     }
     if (is_https) {
-        return net_tls_http_get(index, ip, port, host, path, out, out_capacity, out_size);
+        return net_tls_http_get(index, ip, port, host, path, out, out_capacity, out_size, info);
     }
 
     if ((ip & local_netmask) == (local_ip & local_netmask)) {
@@ -1831,14 +2003,17 @@ int net_http_get(uint32_t index,
     } else if (local_gateway != 0) {
         arp_ip = local_gateway;
     } else {
+        net_http_parse_info(0, 0, 0, 0, 0, -7, info);
         return -7;
     }
 
     if (net_arp_resolve(index, arp_ip, mac) != 0) {
+        net_http_parse_info(0, 0, 0, 0, 0, -3, info);
         return -3;
     }
 
     if (net_build_http_request(path, ip, host, request, sizeof(request)) != 0) {
+        net_http_parse_info(0, 0, 0, 0, 0, -2, info);
         return -2;
     }
     request_size = net_strlen(request);
@@ -1855,15 +2030,24 @@ int net_http_get(uint32_t index,
     tcp_get.out = out;
     tcp_get.out_capacity = out_capacity;
     tcp_get.out_size = 0;
+    tcp_get.info = info;
 
     if (net_send_tcp(index, mac, ip, tcp_get.local_port, port, tcp_get.seq, 0, 0x02u, 0, 0) != 0) {
         tcp_get.active = 0;
+        net_http_parse_info(0, 0, 0, 0, 0, -4, info);
         return -4;
     }
     ++tcp_get.seq;
 
     if (net_wait_for_tcp_connected(index) != 0) {
         tcp_get.active = 0;
+        net_http_parse_info(tcp_get.header,
+                            tcp_get.header_size,
+                            tcp_get.out_size,
+                            tcp_get.full,
+                            tcp_get.header_truncated,
+                            -5,
+                            info);
         return -5;
     }
 
@@ -1878,18 +2062,39 @@ int net_http_get(uint32_t index,
                      request,
                      request_size) != 0) {
         tcp_get.active = 0;
+        net_http_parse_info(tcp_get.header,
+                            tcp_get.header_size,
+                            tcp_get.out_size,
+                            tcp_get.full,
+                            tcp_get.header_truncated,
+                            -4,
+                            info);
         return -4;
     }
     tcp_get.seq += request_size;
 
     if (net_wait_for_tcp_done(index) != 0) {
         tcp_get.active = 0;
+        net_http_parse_info(tcp_get.header,
+                            tcp_get.header_size,
+                            tcp_get.out_size,
+                            tcp_get.full,
+                            tcp_get.header_truncated,
+                            -6,
+                            info);
         return -6;
     }
 
     if (out_size) {
         *out_size = tcp_get.out_size;
     }
+    net_http_parse_info(tcp_get.header,
+                        tcp_get.header_size,
+                        tcp_get.out_size,
+                        tcp_get.full,
+                        tcp_get.header_truncated,
+                        0,
+                        info);
     tcp_get.active = 0;
     return 0;
 }

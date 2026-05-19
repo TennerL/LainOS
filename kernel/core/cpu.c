@@ -873,6 +873,13 @@ unsigned int cpu_lapic_id(unsigned int index) {
     return detected_lapic_ids[index];
 }
 
+unsigned int cpu_current_index(void) {
+    if (detected_lapic_base == 0 || detected_core_count == 0) {
+        return 0u;
+    }
+    return cpu_index_for_lapic_id(lapic_current_id());
+}
+
 unsigned long long cpu_lapic_base(void) {
     return detected_lapic_base;
 }
@@ -1123,7 +1130,7 @@ static void kernel_task_release_finished_smp(void) {
     }
 }
 
-static void kernel_task_release(unsigned int id) {
+void kernel_task_release(unsigned int id) {
     if (id == 0u) {
         return;
     }

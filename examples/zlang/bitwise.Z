@@ -1,0 +1,33 @@
+uint32_t flags = 0x35;
+uint32_t mask = 0x0f;
+uint32_t value = (flags & mask) | 0x80;
+uint32_t mixed = value ^ 0x05;
+uint32_t shifted = (mixed << 1) | (flags >> 4);
+uint32_t inverted = ~mask & 0xff;
+int signed_value = -16;
+int signed_shifted = signed_value >> 2;
+
+shifted <<= 1;
+shifted >>= 1;
+
+print("value=");
+print_hex(value);
+print("\n");
+
+print("mixed=");
+print_hex(mixed);
+print("\n");
+
+print("shifted=");
+print_hex(shifted);
+print("\n");
+
+print("inverted=");
+print_hex(inverted);
+print("\n");
+
+print("signed_shifted=");
+print(signed_shifted);
+print("\n");
+
+return shifted;

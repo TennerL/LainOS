@@ -10,6 +10,9 @@ enum {
     MOUSE_MIDDLE = 4,
     OS_ENTRY_FILE = 1,
     OS_ENTRY_DIR = 2,
+    NET_HTTP_FLAG_TRUNCATED = 1,
+    NET_HTTP_FLAG_CONTENT_LENGTH = 2,
+    NET_HTTP_FLAG_HEADER_TRUNCATED = 4,
 };
 
 extern uint64_t ticks(void);
@@ -73,6 +76,16 @@ extern int os_read_file(const uint8_t *path, uint8_t *buffer, uint32_t capacity)
 extern int os_load_file_shared(const uint8_t *path);
 extern uint8_t *os_file_buffer(void);
 extern int os_http_get(const uint8_t *url, uint8_t *buffer, uint32_t capacity);
+struct HttpInfo {
+    uint32_t status_code;
+    uint32_t content_length;
+    uint32_t body_size;
+    uint32_t header_size;
+    uint32_t flags;
+    int32_t error;
+    uint8_t content_type[64];
+};
+extern int os_http_get_ex(const uint8_t *url, uint8_t *buffer, uint32_t capacity, struct HttpInfo *info);
 extern int os_rename(const uint8_t *old_path, const uint8_t *new_path);
 extern int os_copy_file(const uint8_t *src_path, const uint8_t *dst_path);
 extern int os_strlen(const uint8_t *text);

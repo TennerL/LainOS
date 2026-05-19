@@ -22,22 +22,24 @@
 #define SCRIPT_BUFFER_SIZE 65536u
 #define SCRIPT_LINE_SIZE 128u
 #define SCRIPT_MAX_DEPTH 4
-#define EXEC_BUFFER_SIZE 524288u
+#define EXEC_BUFFER_SIZE (1024u * 1024u)
 #define EXEC_API_MAGIC 0x4C41494E45584543ull
-#define ASM_SOURCE_SIZE 524288u
-#define Z_INCLUDE_BUFFER_SIZE 65536u
-#define ZMODULE_IMAGE_SIZE 131072u
+#define ASM_SOURCE_SIZE (1024u * 1024u)
+#define Z_INCLUDE_BUFFER_SIZE (128u * 1024u)
+#define ZMODULE_IMAGE_SIZE (512u * 1024u)
 #define SHELL_PATH_SIZE 128u
 #define SHELL_MAX_SESSIONS 2u
 #define Z_INCLUDE_MAX_DEPTH 4u
 #define Z_INCLUDE_MAX_DIRS 4u
-#define Z_INCLUDE_ONCE_MAX 16u
-#define ZLINK_MAX_OBJECTS 16u
-#define ZMODULE_MAX_MODULES 6u
+#define Z_INCLUDE_ONCE_MAX 32u
+#define ZLINK_MAX_OBJECTS 32u
+#define ZMODULE_MAX_MODULES 8u
 #define ZMODULE_MAX_EXPORTS ZOBJECT_MAX_RESOLVED_SYMBOLS
 #define ZMODULE_NAME_SIZE 32u
 #define ZMODULE_TICK_HZ 20u
 #define SHELL_REGISTRY_FILE "registry.cfg"
+#define SHELL_BG_JOBS 8u
+#define SHELL_BG_LINE_SIZE SCRIPT_LINE_SIZE
 
 static int script_depth;
 static char (*script_buffers)[SCRIPT_BUFFER_SIZE + 1];
@@ -51,6 +53,29 @@ static char *shell_wget_buffer;
 static char zbuild_report[512];
 static char ztest_report[256];
 static int shell_work_buffers_ready;
+static unsigned int shell_bg_next_id = 1u;
+
+typedef enum {
+    SHELL_BG_FREE = 0,
+    SHELL_BG_RUNNING,
+    SHELL_BG_DONE
+} shell_bg_state_t;
+
+typedef struct {
+    shell_bg_state_t state;
+    unsigned int job_id;
+    unsigned int task_id;
+    int status;
+    char line[SHELL_BG_LINE_SIZE];
+} shell_bg_job_t;
+
+typedef struct {
+    unsigned int slot;
+    boot_info_t info;
+    char line[SHELL_BG_LINE_SIZE];
+} shell_bg_context_t;
+
+static shell_bg_job_t shell_bg_jobs[SHELL_BG_JOBS];
 
 typedef struct {
     int loaded;
@@ -148,12 +173,27 @@ static int streq(const char *a, const char *b) {
 
 static int active_drive(void);
 static int append_text_limited(char *out, uint32_t out_size, uint32_t *pos, const char *text);
+static int shell_run_command_foreground(char *line, const boot_info_t *info, int background);
 
 static void zero_memory(void *ptr, uint32_t size) {
     unsigned char *p = (unsigned char *)ptr;
     for (uint32_t i = 0; i < size; ++i) {
         p[i] = 0;
     }
+}
+
+static void copy_string_limited(char *dst, uint32_t dst_size, const char *src) {
+    uint32_t i = 0;
+
+    if (dst_size == 0) {
+        return;
+    }
+
+    while (src && src[i] && i + 1u < dst_size) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
 }
 
 static int shell_alloc_work_buffers(void) {
@@ -1296,6 +1336,115 @@ static void run_script_text(char *script, uint32_t size, const boot_info_t *info
     }
 }
 
+static void shell_bg_worker(void *arg) {
+    shell_bg_context_t *ctx = (shell_bg_context_t *)arg;
+
+    if (ctx == 0 || ctx->slot >= SHELL_BG_JOBS) {
+        if (ctx != 0) {
+            kfree(ctx);
+        }
+        return;
+    }
+
+    shell_bg_jobs[ctx->slot].status = shell_run_command_foreground(ctx->line, &ctx->info, 1);
+    shell_bg_jobs[ctx->slot].state = SHELL_BG_DONE;
+    kfree(ctx);
+}
+
+static void shell_bg_poll(void) {
+    for (uint32_t i = 0; i < SHELL_BG_JOBS; ++i) {
+        if (shell_bg_jobs[i].state == SHELL_BG_RUNNING &&
+            kernel_task_done(shell_bg_jobs[i].task_id)) {
+            kernel_task_release(shell_bg_jobs[i].task_id);
+            shell_bg_jobs[i].state = SHELL_BG_DONE;
+        }
+    }
+}
+
+static int shell_bg_start(char *line, const boot_info_t *info) {
+    shell_bg_context_t *ctx;
+    unsigned int task_id;
+    uint32_t slot = SHELL_BG_JOBS;
+
+    shell_bg_poll();
+    for (uint32_t i = 0; i < SHELL_BG_JOBS; ++i) {
+        if (shell_bg_jobs[i].state == SHELL_BG_FREE || shell_bg_jobs[i].state == SHELL_BG_DONE) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot == SHELL_BG_JOBS) {
+        return -1;
+    }
+
+    ctx = (shell_bg_context_t *)kmalloc(sizeof(*ctx));
+    if (ctx == 0) {
+        return -2;
+    }
+
+    zero_memory(ctx, sizeof(*ctx));
+    ctx->slot = slot;
+    if (info) {
+        ctx->info = *info;
+    }
+    copy_string_limited(ctx->line, sizeof(ctx->line), line);
+
+    shell_bg_jobs[slot].state = SHELL_BG_RUNNING;
+    shell_bg_jobs[slot].job_id = shell_bg_next_id++;
+    if (shell_bg_jobs[slot].job_id == 0u) {
+        shell_bg_jobs[slot].job_id = shell_bg_next_id++;
+    }
+    copy_string_limited(shell_bg_jobs[slot].line, sizeof(shell_bg_jobs[slot].line), ctx->line);
+
+    task_id = kernel_task_submit(shell_bg_worker, ctx);
+    if (task_id == 0u) {
+        shell_bg_jobs[slot].state = SHELL_BG_FREE;
+        shell_bg_jobs[slot].job_id = 0u;
+        shell_bg_jobs[slot].task_id = 0u;
+        shell_bg_jobs[slot].status = 0;
+        shell_bg_jobs[slot].line[0] = '\0';
+        kfree(ctx);
+        return -3;
+    }
+
+    shell_bg_jobs[slot].task_id = task_id;
+    console_puts("[");
+    console_put_dec64(shell_bg_jobs[slot].job_id);
+    console_puts("] ");
+    console_puts(shell_bg_jobs[slot].line);
+    console_puts(" &\n");
+    return 0;
+}
+
+static void shell_bg_list(void) {
+    int found = 0;
+
+    shell_bg_poll();
+    for (uint32_t i = 0; i < SHELL_BG_JOBS; ++i) {
+        if (shell_bg_jobs[i].state == SHELL_BG_FREE) {
+            continue;
+        }
+
+        found = 1;
+        console_puts("[");
+        console_put_dec64(shell_bg_jobs[i].job_id);
+        console_puts("] ");
+        console_puts(shell_bg_jobs[i].state == SHELL_BG_DONE ? "done    " : "running ");
+        if (shell_bg_jobs[i].state == SHELL_BG_DONE) {
+            console_puts("status=");
+            console_put_dec64((uint32_t)shell_bg_jobs[i].status);
+            console_puts(" ");
+        }
+        console_puts(shell_bg_jobs[i].line);
+        console_puts("\n");
+    }
+
+    if (!found) {
+        console_puts("no background jobs\n");
+    }
+}
+
 static void cmd_help(const char *args, const boot_info_t *info);
 static void cmd_bgcolor(const char *args, const boot_info_t *info);
 static void cmd_fgcolor(const char *args, const boot_info_t *info);
@@ -1311,7 +1460,11 @@ static void cmd_cpus(const char *args, const boot_info_t *info);
 static void cmd_smp(const char *args, const boot_info_t *info);
 static void cmd_tasks(const char *args, const boot_info_t *info);
 static void cmd_tasktest(const char *args, const boot_info_t *info);
+static void cmd_jobs(const char *args, const boot_info_t *info);
+static void cmd_wait(const char *args, const boot_info_t *info);
 static void cmd_gfx(const char *args, const boot_info_t *info);
+static void cmd_fscheck(const char *args, const boot_info_t *info);
+static void cmd_fsrepair(const char *args, const boot_info_t *info);
 static void cmd_fsflush(const char *args, const boot_info_t *info);
 static void cmd_reboot(const char *args, const boot_info_t *info);
 static void cmd_poweroff(const char *args, const boot_info_t *info);
@@ -1391,7 +1544,11 @@ static const command_t commands[] = {
     { "smp",     "run a multicore work test", cmd_smp },
     { "tasks",   "show cooperative tasks",     cmd_tasks },
     { "tasktest", "run cooperative task test", cmd_tasktest },
+    { "jobs",    "show background jobs",       cmd_jobs },
+    { "wait",    "wait for background jobs",   cmd_wait },
     { "gfx",     "show graphics SMP stats",   cmd_gfx },
+    { "fscheck", "check lainfs metadata",      cmd_fscheck },
+    { "fsrepair", "repair safe lainfs metadata", cmd_fsrepair },
     { "fsflush", "flush filesystem cache",     cmd_fsflush },
     { "reboot",  "restart the machine",       cmd_reboot },
     { "poweroff", "power off the machine",     cmd_poweroff },
@@ -2072,6 +2229,69 @@ static void cmd_tasktest(const char *args, const boot_info_t *info) {
     console_puts("\n");
 }
 
+static void run_background_tasktest(void) {
+    smp_test_job_t job;
+
+    job.value = 0;
+    job.iterations = 45000000u;
+    smp_test_worker(&job);
+}
+
+static void cmd_jobs(const char *args, const boot_info_t *info) {
+    (void)args;
+    (void)info;
+
+    shell_bg_list();
+}
+
+static void cmd_wait(const char *args, const boot_info_t *info) {
+    uint64_t requested = 0;
+    int wait_all;
+    int matched = 0;
+
+    (void)info;
+
+    args = skip_const_spaces(args);
+    wait_all = *args == '\0';
+    if (!wait_all && parse_u64_arg(args, &requested) != 0) {
+        console_puts("usage: wait [job]\n");
+        return;
+    }
+
+    shell_bg_poll();
+    for (uint32_t i = 0; i < SHELL_BG_JOBS; ++i) {
+        if (shell_bg_jobs[i].state == SHELL_BG_FREE) {
+            continue;
+        }
+        if (!wait_all && shell_bg_jobs[i].job_id != (unsigned int)requested) {
+            continue;
+        }
+
+        matched = 1;
+        if (shell_bg_jobs[i].state == SHELL_BG_RUNNING) {
+            kernel_task_wait(shell_bg_jobs[i].task_id);
+            shell_bg_jobs[i].state = SHELL_BG_DONE;
+        }
+
+            console_puts("[");
+            console_put_dec64(shell_bg_jobs[i].job_id);
+        console_puts("] done    status=");
+        console_put_dec64((uint32_t)shell_bg_jobs[i].status);
+        console_puts(" ");
+        console_puts(shell_bg_jobs[i].line);
+        console_puts("\n");
+        shell_bg_jobs[i].state = SHELL_BG_FREE;
+        shell_bg_jobs[i].job_id = 0u;
+        shell_bg_jobs[i].task_id = 0u;
+        shell_bg_jobs[i].status = 0;
+        shell_bg_jobs[i].line[0] = '\0';
+    }
+
+    if (!matched) {
+        console_puts("wait: no matching background job\n");
+    }
+}
+
 static void cmd_gfx(const char *args, const boot_info_t *info) {
     (void)args;
     (void)info;
@@ -2125,6 +2345,165 @@ static void print_lainfs_cache_stats(void) {
     console_puts("\nflushes: ");
     console_put_dec64(stats.flushes);
     console_puts("\n");
+}
+
+static const char *lainfs_check_reason_text(uint32_t reason) {
+    switch (reason) {
+        case LAINFS_CHECK_OK:
+            return "ok";
+        case LAINFS_CHECK_NO_PARTITION:
+            return "drive is not mounted";
+        case LAINFS_CHECK_BAD_SUPERBLOCK:
+            return "bad or missing lainfs superblock";
+        case LAINFS_CHECK_BAD_LAYOUT:
+            return "invalid filesystem layout";
+        case LAINFS_CHECK_BAD_ENTRY_TYPE:
+            return "invalid directory entry type";
+        case LAINFS_CHECK_BAD_NAME:
+            return "invalid directory entry name";
+        case LAINFS_CHECK_BAD_PARENT:
+            return "invalid parent directory link";
+        case LAINFS_CHECK_BAD_DIRECTORY:
+            return "invalid directory entry metadata";
+        case LAINFS_CHECK_BAD_FILE_SIZE:
+            return "invalid file size";
+        case LAINFS_CHECK_BAD_FILE_EXTENT:
+            return "invalid file extent";
+        case LAINFS_CHECK_OVERLAPPING_EXTENTS:
+            return "overlapping file extents";
+        default:
+            return "unknown validation failure";
+    }
+}
+
+static void print_lainfs_entry_detail(char drive_letter, uint32_t entry_id) {
+    lainfs_entry_detail_t detail;
+
+    if (entry_id == 0 || lainfs_entry_detail(drive_letter, entry_id, &detail) != 0) {
+        return;
+    }
+
+    console_puts("\nentry ");
+    console_put_dec64(detail.entry_id);
+    console_puts(": name=");
+    console_puts(detail.name[0] ? detail.name : "?");
+    console_puts(" type=");
+    if (detail.type == LAINFS_ENTRY_TYPE_DIR) {
+        console_puts("dir");
+    } else if (detail.type == LAINFS_ENTRY_TYPE_FILE) {
+        console_puts("file");
+    } else {
+        console_put_dec64(detail.type);
+    }
+    console_puts(" parent=");
+    console_put_dec64(detail.parent_id);
+    console_puts(" size=");
+    console_put_dec64(detail.size);
+
+    if (detail.type == LAINFS_ENTRY_TYPE_FILE) {
+        if (detail.extent_valid) {
+            console_puts(" extents=");
+            console_put_dec64(detail.extent_count);
+            for (uint32_t i = 0; i < detail.extent_count; ++i) {
+                console_puts(" [");
+                console_put_dec64(detail.extent_start_lba[i]);
+                console_puts("+");
+                console_put_dec64(detail.extent_blocks[i]);
+                console_puts("]");
+            }
+        } else {
+            console_puts(" extents=invalid legacy=[");
+            console_put_dec64(detail.legacy_start_lba);
+            console_puts("+");
+            console_put_dec64(detail.legacy_blocks);
+            console_puts("]");
+        }
+    }
+    console_puts("\n");
+}
+
+static void cmd_fscheck(const char *args, const boot_info_t *info) {
+    const char *target = skip_const_spaces(args);
+    uint32_t reason = LAINFS_CHECK_OK;
+    uint32_t entry_id = 0;
+    int drive;
+    int status;
+
+    (void)info;
+
+    if (*target == '\0') {
+        drive = active_drive();
+    } else {
+        drive = parse_drive_spec(target);
+    }
+
+    if (drive < 0 || drive >= MAX_DRIVES) {
+        console_puts("usage: fscheck [drive:]\n");
+        return;
+    }
+
+    status = lainfs_check((char)('A' + drive), &reason, &entry_id);
+    console_puts("fscheck ");
+    print_drive_name(drive);
+    console_puts(": ");
+    if (status == 0) {
+        console_puts("ok\n");
+        return;
+    }
+
+    console_puts(lainfs_check_reason_text(reason));
+    if (entry_id != 0) {
+        console_puts(" at entry ");
+        console_put_dec64(entry_id);
+    }
+    console_puts("\n");
+    print_lainfs_entry_detail((char)('A' + drive), entry_id);
+}
+
+static void cmd_fsrepair(const char *args, const boot_info_t *info) {
+    const char *target = skip_const_spaces(args);
+    uint32_t reason = LAINFS_CHECK_OK;
+    uint32_t entry_id = 0;
+    uint32_t repairs = 0;
+    int drive;
+    int status;
+
+    (void)info;
+
+    if (*target == '\0') {
+        drive = active_drive();
+    } else {
+        drive = parse_drive_spec(target);
+    }
+
+    if (drive < 0 || drive >= MAX_DRIVES) {
+        console_puts("usage: fsrepair [drive:]\n");
+        return;
+    }
+
+    status = lainfs_repair((char)('A' + drive), &reason, &entry_id, &repairs);
+    console_puts("fsrepair ");
+    print_drive_name(drive);
+    console_puts(": ");
+    if (status == 0) {
+        console_puts("ok, repairs=");
+        console_put_dec64(repairs);
+        console_puts("\n");
+        return;
+    }
+
+    if (repairs != 0) {
+        console_puts("partial, repairs=");
+        console_put_dec64(repairs);
+        console_puts(", remaining ");
+    }
+    console_puts(lainfs_check_reason_text(reason));
+    if (entry_id != 0) {
+        console_puts(" at entry ");
+        console_put_dec64(entry_id);
+    }
+    console_puts("\n");
+    print_lainfs_entry_detail((char)('A' + drive), entry_id);
 }
 
 static void cmd_fsflush(const char *args, const boot_info_t *info) {
@@ -3215,17 +3594,32 @@ uint8_t *shell_api_file_buffer(void) {
 }
 
 int shell_api_http_get(const char *url, char *buffer, uint32_t capacity) {
+    return shell_api_http_get_ex(url, buffer, capacity, 0);
+}
+
+int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_http_info_t *info) {
     uint32_t size = 0;
     int status;
 
+    if (info != 0) {
+        for (uint32_t i = 0; i < sizeof(*info); ++i) {
+            ((uint8_t *)info)[i] = 0;
+        }
+    }
     if (url == 0 || buffer == 0 || capacity == 0) {
+        if (info != 0) {
+            info->error = -1;
+        }
         return -1;
     }
     if (net_device_count() == 0) {
+        if (info != 0) {
+            info->error = -2;
+        }
         return -2;
     }
 
-    status = net_http_get(0, url, buffer, capacity, &size);
+    status = net_http_get_ex(0, url, buffer, capacity, &size, info);
     if (status != 0) {
         return status;
     }
@@ -3516,8 +3910,10 @@ int shell_api_zbuild(const char *target) {
         return -1;
     }
 
+    console_suppress_current_cpu_push();
     cmd_zclean(command, 0);
     cmd_zbuild(command, 0);
+    console_suppress_current_cpu_pop();
     if (lainfs_load_file_in_dir((char)('A' + drive),
                                 build_dir,
                                 output_name,
@@ -3604,7 +4000,9 @@ int shell_api_zinstall(const char *target) {
     (void)build_dir;
     (void)output_name;
 
+    console_suppress_current_cpu_push();
     cmd_zinstall(command, 0);
+    console_suppress_current_cpu_pop();
     if (lainfs_load_file_in_dir((char)('A' + drive),
                                 install_dir,
                                 install_name,
@@ -5364,7 +5762,14 @@ static void cmd_zlink(const char *args, const boot_info_t *info) {
     zero_memory(asm_output, EXEC_BUFFER_SIZE);
 
     for (uint32_t i = 0; i + 1u < token_count; ++i) {
-        uint32_t remaining = EXEC_BUFFER_SIZE - object_offset;
+        uint32_t remaining;
+
+        if (object_offset >= EXEC_BUFFER_SIZE) {
+            console_puts("zlink failed: object set is too large\n");
+            return;
+        }
+
+        remaining = EXEC_BUFFER_SIZE - object_offset;
 
         objects[object_count] = asm_output + object_offset;
         status = lainfs_load_file_in_dir((char)('A' + drive),
@@ -7390,6 +7795,8 @@ void shell_run_autoexec(const char *name, const boot_info_t *info) {
 }
 
 void shell_print_prompt(void) {
+    shell_bg_poll();
+
     if (current_drive >= 0 && drives[current_drive].present) {
         print_drive_name(current_drive);
         console_puts(cwd_paths[current_drive]);
@@ -7400,7 +7807,7 @@ void shell_print_prompt(void) {
     console_puts("> ");
 }
 
-void shell_run_command(char *line, const boot_info_t *info) {
+static int shell_run_command_foreground(char *line, const boot_info_t *info, int background) {
     char *name = skip_spaces(line);
     char *args = name;
 
@@ -7414,7 +7821,7 @@ void shell_run_command(char *line, const boot_info_t *info) {
     }
 
     if (*name == '\0') {
-        return;
+        return 0;
     }
 
     int requested_drive = parse_drive_spec(name);
@@ -7426,18 +7833,53 @@ void shell_run_command(char *line, const boot_info_t *info) {
             console_puts(" does not exist. create it with mkdrive ");
             print_drive_name(requested_drive);
             console_puts("\n");
+            return 1;
         }
-        return;
+        return 0;
+    }
+
+    if (background && streq(name, "tasktest")) {
+        run_background_tasktest();
+        return 0;
+    }
+    if (background && (streq(name, "tasks") || streq(name, "smp"))) {
+        return 126;
     }
 
     for (unsigned int i = 0; i < command_count; ++i) {
         if (streq(name, commands[i].name)) {
             commands[i].handler(args, info);
-            return;
+            return 0;
         }
     }
 
     console_puts("unknown command: ");
     console_puts(name);
     console_puts("\n");
+    return 127;
+}
+
+void shell_run_command(char *line, const boot_info_t *info) {
+    char *command = trim_spaces_mutable(line);
+    char *end = command;
+
+    shell_bg_poll();
+
+    while (*end != '\0') {
+        ++end;
+    }
+    if (end > command && end[-1] == '&') {
+        end[-1] = '\0';
+        command = trim_spaces_mutable(command);
+        if (*command == '\0') {
+            console_puts("background: empty command\n");
+            return;
+        }
+        if (shell_bg_start(command, info) != 0) {
+            console_puts("background: could not start job\n");
+        }
+        return;
+    }
+
+    (void)shell_run_command_foreground(command, info, 0);
 }

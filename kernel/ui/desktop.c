@@ -49,6 +49,10 @@
 #define TERMINAL_CARET_BLINK_HZ 2u
 #define DESKTOP_CLOCK_TEXT_W 152u
 #define DESKTOP_CLOCK_PANEL_W 168u
+#define DESKTOP_JOB_SLOTS 4u
+#define DESKTOP_JOB_LABEL_SIZE 24u
+#define DESKTOP_JOB_PANEL_W 96u
+#define DESKTOP_JOB_TARGET_SIZE 32u
 
 typedef enum {
     FILE_KIND_OTHER = 0,
@@ -66,6 +70,7 @@ typedef enum {
     DESKTOP_APP_BROWSER,
     DESKTOP_APP_MODULES,
     DESKTOP_APP_MODULE_APP,
+    DESKTOP_APP_JOB_TEST,
     DESKTOP_APP_EDITOR
 } desktop_app_t;
 
@@ -74,6 +79,37 @@ typedef enum {
     DESKTOP_WM_DRAG,
     DESKTOP_WM_RESIZE
 } desktop_wm_action_t;
+
+struct desktop_job;
+typedef int (*desktop_job_fn_t)(void *arg);
+typedef void (*desktop_job_complete_fn_t)(struct desktop_job *job);
+
+typedef enum {
+    DESKTOP_JOB_FREE = 0,
+    DESKTOP_JOB_RUNNING,
+    DESKTOP_JOB_DONE,
+    DESKTOP_JOB_FAILED
+} desktop_job_state_t;
+
+typedef struct desktop_job {
+    volatile desktop_job_state_t state;
+    unsigned int id;
+    unsigned int task_id;
+    int status;
+    int completed;
+    char label[DESKTOP_JOB_LABEL_SIZE];
+    desktop_job_fn_t fn;
+    desktop_job_complete_fn_t complete;
+    void *arg;
+} desktop_job_t;
+
+typedef struct {
+    uint32_t slot;
+} desktop_job_context_t;
+
+typedef struct {
+    char target[DESKTOP_JOB_TARGET_SIZE];
+} desktop_editor_job_arg_t;
 
 typedef struct {
     uint32_t x;
@@ -192,6 +228,12 @@ static uint32_t editor_output_len;
 static int editor_scroll_drag;
 static unsigned long long desktop_mouse_last_activity_tick;
 static uint64_t desktop_clock_last_stamp = 0xffffffffffffffffull;
+static desktop_job_t desktop_jobs[DESKTOP_JOB_SLOTS];
+static unsigned int desktop_next_job_id = 1u;
+static volatile uint32_t desktop_job_generation;
+static uint32_t desktop_job_seen_generation;
+static volatile uint64_t desktop_demo_job_result;
+static volatile int desktop_editor_job_active;
 static const desktop_launcher_t launchers[] = {
     { 20u, 48u, 54u, 54u, DESKTOP_APP_TERMINAL, "Terminal" },
     { 20u, 124u, 54u, 54u, DESKTOP_APP_BROWSER, "Files" },
@@ -344,6 +386,13 @@ static int text_equals(const char *a, const char *b);
 static void text_copy_limited(char *dst, uint32_t dst_size, const char *src);
 static void desktop_draw_taskbar(void);
 static int desktop_taskbar_clock_tick_due(void);
+static unsigned int desktop_job_submit(const char *label,
+                                       desktop_job_fn_t fn,
+                                       desktop_job_complete_fn_t complete,
+                                       void *arg);
+static int desktop_jobs_poll(void);
+static void desktop_draw_job_indicator(void);
+static void desktop_editor_load_buildlog(void);
 
 typedef struct {
     uint32_t bg_top;
@@ -711,6 +760,222 @@ static int desktop_taskbar_clock_tick_due(void) {
     return 1;
 }
 
+static void desktop_job_worker(void *arg) {
+    desktop_job_context_t *ctx = (desktop_job_context_t *)arg;
+    desktop_job_t *job;
+    int status = -1;
+
+    if (ctx == 0 || ctx->slot >= DESKTOP_JOB_SLOTS) {
+        kfree(ctx);
+        return;
+    }
+
+    job = &desktop_jobs[ctx->slot];
+    if (job->fn != 0) {
+        status = job->fn(job->arg);
+    }
+    job->status = status;
+    job->state = status == 0 ? DESKTOP_JOB_DONE : DESKTOP_JOB_FAILED;
+    ++desktop_job_generation;
+    kfree(ctx);
+}
+
+static void desktop_job_complete_on_ui(desktop_job_t *job) {
+    void *arg;
+
+    if (job == 0 || job->completed ||
+        (job->state != DESKTOP_JOB_DONE && job->state != DESKTOP_JOB_FAILED)) {
+        return;
+    }
+
+    arg = job->arg;
+    job->completed = 1;
+    if (job->complete != 0) {
+        job->complete(job);
+    }
+    job->fn = 0;
+    job->complete = 0;
+    job->arg = 0;
+    if (arg != 0) {
+        kfree(arg);
+    }
+    ++desktop_job_generation;
+}
+
+static unsigned int desktop_job_submit(const char *label,
+                                       desktop_job_fn_t fn,
+                                       desktop_job_complete_fn_t complete,
+                                       void *arg) {
+    desktop_job_context_t *ctx;
+    desktop_job_t *job;
+    unsigned int task_id;
+    uint32_t slot;
+
+    if (fn == 0) {
+        return 0;
+    }
+
+    for (slot = 0; slot < DESKTOP_JOB_SLOTS; ++slot) {
+        if (desktop_jobs[slot].state != DESKTOP_JOB_RUNNING) {
+            break;
+        }
+    }
+    if (slot >= DESKTOP_JOB_SLOTS) {
+        return 0;
+    }
+
+    job = &desktop_jobs[slot];
+    if (job->task_id != 0u && kernel_task_done(job->task_id)) {
+        kernel_task_release(job->task_id);
+        job->task_id = 0u;
+    }
+    desktop_job_complete_on_ui(job);
+    if (job->arg != 0) {
+        kfree(job->arg);
+    }
+
+    ctx = (desktop_job_context_t *)kmalloc(sizeof(desktop_job_context_t));
+    if (ctx == 0) {
+        return 0;
+    }
+    ctx->slot = slot;
+
+    job->id = desktop_next_job_id++;
+    if (desktop_next_job_id == 0u) {
+        desktop_next_job_id = 1u;
+    }
+    job->task_id = 0u;
+    job->status = 0;
+    job->completed = 0;
+    job->fn = fn;
+    job->complete = complete;
+    job->arg = arg;
+    text_copy_limited(job->label, sizeof(job->label), label != 0 ? label : "job");
+    job->state = DESKTOP_JOB_RUNNING;
+
+    task_id = kernel_task_submit(desktop_job_worker, ctx);
+    if (task_id == 0u) {
+        job->state = DESKTOP_JOB_FREE;
+        job->status = -1;
+        job->fn = 0;
+        job->complete = 0;
+        job->arg = 0;
+        job->completed = 0;
+        ++desktop_job_generation;
+        kfree(ctx);
+        return 0;
+    }
+
+    job->task_id = task_id;
+    ++desktop_job_generation;
+    return job->id;
+}
+
+static int desktop_jobs_poll(void) {
+    for (uint32_t i = 0; i < DESKTOP_JOB_SLOTS; ++i) {
+        desktop_job_t *job = &desktop_jobs[i];
+        if (job->task_id != 0u &&
+            kernel_task_done(job->task_id)) {
+            kernel_task_release(job->task_id);
+            job->task_id = 0u;
+            if (job->state == DESKTOP_JOB_RUNNING) {
+                job->state = DESKTOP_JOB_DONE;
+                job->status = 0;
+                ++desktop_job_generation;
+            }
+        }
+        desktop_job_complete_on_ui(job);
+    }
+
+    if (desktop_job_seen_generation == desktop_job_generation) {
+        return 0;
+    }
+    desktop_job_seen_generation = desktop_job_generation;
+    return 1;
+}
+
+static uint32_t desktop_jobs_count_state(desktop_job_state_t state) {
+    uint32_t count = 0;
+
+    for (uint32_t i = 0; i < DESKTOP_JOB_SLOTS; ++i) {
+        if (desktop_jobs[i].state == state) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static void desktop_format_job_text(char *out, uint32_t out_size, uint32_t running, uint32_t finished) {
+    if (out == 0 || out_size < 9u) {
+        return;
+    }
+    if (running > 9u) {
+        running = 9u;
+    }
+    if (finished > 9u) {
+        finished = 9u;
+    }
+    out[0] = 'J';
+    out[1] = 'o';
+    out[2] = 'b';
+    out[3] = 's';
+    out[4] = ' ';
+    out[5] = (char)('0' + running);
+    out[6] = '/';
+    out[7] = (char)('0' + finished);
+    out[8] = '\0';
+}
+
+static void desktop_draw_job_indicator(void) {
+    uint32_t height = graphics_height();
+    uint32_t task_h = desktop_taskbar_height();
+    uint32_t clock_x;
+    uint32_t clock_y;
+    uint32_t clock_w;
+    uint32_t clock_h;
+    uint32_t panel_x;
+    uint32_t running;
+    uint32_t finished;
+    desktop_theme_t theme = desktop_theme();
+    char text[12];
+
+    if (!desktop_taskbar_clock_rect(&clock_x, &clock_y, &clock_w, &clock_h) ||
+        clock_x < DESKTOP_JOB_PANEL_W + 84u ||
+        height < task_h) {
+        return;
+    }
+
+    running = desktop_jobs_count_state(DESKTOP_JOB_RUNNING);
+    finished = desktop_jobs_count_state(DESKTOP_JOB_DONE) + desktop_jobs_count_state(DESKTOP_JOB_FAILED);
+    if (running == 0u && finished == 0u) {
+        return;
+    }
+
+    panel_x = clock_x - DESKTOP_JOB_PANEL_W - 8u;
+    desktop_format_job_text(text, sizeof(text), running, finished);
+    graphics_fill_rect(panel_x, clock_y, DESKTOP_JOB_PANEL_W, clock_h, theme.task_inactive);
+    if (task_h >= 30u) {
+        graphics_draw_rect(panel_x, clock_y, DESKTOP_JOB_PANEL_W, clock_h, theme.panel_inner);
+    }
+    console_draw_text_at_pixel(panel_x + 8u,
+                               height - task_h + (task_h >= 30u ? 13u : 8u),
+                               text,
+                               theme.text,
+                               theme.task_inactive);
+}
+
+static int desktop_demo_job(void *arg) {
+    uint64_t value = (uint64_t)(uintptr_t)arg;
+
+    for (uint64_t i = 0; i < 30000000ull; ++i) {
+        value ^= (i << 7) ^ (i >> 3) ^ 0x9e3779b97f4a7c15ull;
+        value = (value << 9) | (value >> 55);
+    }
+
+    desktop_demo_job_result = value;
+    return 0;
+}
+
 static void desktop_draw_taskbar(void) {
     uint32_t width = graphics_width();
     uint32_t height = graphics_height();
@@ -729,6 +994,7 @@ static void desktop_draw_taskbar(void) {
         console_draw_text_at_pixel(22u, height - task_h + 13u, "Apps", theme.text, theme.button);
         desktop_draw_task_buttons();
     }
+    desktop_draw_job_indicator();
     desktop_draw_taskbar_clock();
 }
 
@@ -891,7 +1157,7 @@ static void desktop_draw_button(uint32_t x, uint32_t y, uint32_t w, const char *
 }
 
 static void desktop_start_menu_rect(uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h) {
-    uint32_t menu_h = 122u + desktop_app_catalog_count() * START_MENU_ITEM_H;
+    uint32_t menu_h = 146u + desktop_app_catalog_count() * START_MENU_ITEM_H;
     uint32_t menu_y = graphics_height() > desktop_taskbar_height() + menu_h ?
                       graphics_height() - desktop_taskbar_height() - menu_h :
                       28u;
@@ -928,6 +1194,7 @@ static void desktop_draw_start_menu(void) {
     desktop_draw_button(menu_x + 12u, menu_y + 32u, menu_w - 24u, "Terminal", 0);
     desktop_draw_button(menu_x + 12u, menu_y + 56u, menu_w - 24u, "Files", 0);
     desktop_draw_button(menu_x + 12u, menu_y + 80u, menu_w - 24u, "Modules", 0);
+    desktop_draw_button(menu_x + 12u, menu_y + 104u, menu_w - 24u, "Jobs Test", 0);
 
     uint32_t module_count = desktop_app_catalog_count();
     for (uint32_t i = 0; i < module_count; ++i) {
@@ -935,7 +1202,7 @@ static void desktop_draw_start_menu(void) {
         if (desktop_app_catalog_name_at(i, name, sizeof(name)) != 0) {
             text_copy_limited(name, sizeof(name), "module");
         }
-        desktop_draw_button(menu_x + 22u, menu_y + 110u + i * START_MENU_ITEM_H, menu_w - 44u, name, 0);
+        desktop_draw_button(menu_x + 22u, menu_y + 134u + i * START_MENU_ITEM_H, menu_w - 44u, name, 0);
     }
 }
 
@@ -961,10 +1228,13 @@ static desktop_app_t desktop_start_menu_hit(uint32_t x, uint32_t y, uint32_t *mo
         }
         return DESKTOP_APP_MODULES;
     }
+    if (point_in_rect(x, y, menu_x + 12u, menu_y + 104u, menu_w - 24u, START_MENU_ITEM_H)) {
+        return DESKTOP_APP_JOB_TEST;
+    }
 
     uint32_t count = desktop_app_catalog_count();
     for (uint32_t i = 0; i < count; ++i) {
-        if (point_in_rect(x, y, menu_x + 22u, menu_y + 110u + i * START_MENU_ITEM_H, menu_w - 44u, START_MENU_ITEM_H)) {
+        if (point_in_rect(x, y, menu_x + 22u, menu_y + 134u + i * START_MENU_ITEM_H, menu_w - 44u, START_MENU_ITEM_H)) {
             if (module_index != 0) {
                 *module_index = i;
             }
@@ -3176,40 +3446,108 @@ static void desktop_editor_save(void) {
     editor_status = status == 0 ? "saved" : "save failed";
 }
 
-static void desktop_editor_build(void) {
-    char target[32];
+static int desktop_editor_build_job(void *arg) {
+    desktop_editor_job_arg_t *ctx = (desktop_editor_job_arg_t *)arg;
 
-    desktop_editor_save();
-    if (desktop_editor_target_name(target, sizeof(target)) != 0 ||
-        desktop_editor_enter_project_dir() != 0) {
-        editor_status = "bad build target";
-        desktop_editor_output_clear();
-        return;
+    if (ctx == 0) {
+        return -1;
     }
+    return shell_api_zbuild(ctx->target);
+}
 
-    desktop_editor_output_begin("Build", target);
-    editor_status = shell_api_zbuild(target) == 0 ? "build ok" : "build failed";
-    desktop_editor_output_end();
-    if (text_equals(editor_status, "build ok")) {
+static int desktop_editor_install_job(void *arg) {
+    desktop_editor_job_arg_t *ctx = (desktop_editor_job_arg_t *)arg;
+
+    if (ctx == 0) {
+        return -1;
+    }
+    return shell_api_zinstall(ctx->target);
+}
+
+static void desktop_editor_build_complete(desktop_job_t *job) {
+    desktop_editor_job_active = 0;
+    if (job != 0 && job->status == 0) {
+        editor_status = "build ok";
         desktop_editor_load_buildlog();
         editor_status = "build ok";
+    } else {
+        editor_status = "build failed";
+        desktop_editor_output_append("build failed\n");
+    }
+}
+
+static void desktop_editor_install_complete(desktop_job_t *job) {
+    desktop_editor_job_active = 0;
+    if (job != 0 && job->status == 0) {
+        editor_status = "install ok";
+        desktop_editor_output_append("install ok\n");
+    } else {
+        editor_status = "install failed";
+        desktop_editor_output_append("install failed\n");
+    }
+}
+
+static desktop_editor_job_arg_t *desktop_editor_prepare_async_job(const char *action,
+                                                                  const char *running_status,
+                                                                  const char *bad_status) {
+    desktop_editor_job_arg_t *ctx;
+    char target[DESKTOP_JOB_TARGET_SIZE];
+
+    desktop_editor_save();
+    if (desktop_editor_job_active) {
+        editor_status = "editor job running";
+        return 0;
+    }
+    if (desktop_editor_target_name(target, sizeof(target)) != 0 ||
+        desktop_editor_enter_project_dir() != 0) {
+        editor_status = bad_status;
+        desktop_editor_output_clear();
+        return 0;
+    }
+
+    ctx = (desktop_editor_job_arg_t *)kmalloc(sizeof(desktop_editor_job_arg_t));
+    if (ctx == 0) {
+        editor_status = "job alloc failed";
+        return 0;
+    }
+    text_copy_limited(ctx->target, sizeof(ctx->target), target);
+    desktop_editor_output_clear();
+    desktop_editor_output_append(action);
+    desktop_editor_output_append(" ");
+    desktop_editor_output_append(target);
+    desktop_editor_output_append("\nrunning in background\n");
+    editor_status = running_status;
+    return ctx;
+}
+
+static void desktop_editor_build(void) {
+    desktop_editor_job_arg_t *ctx = desktop_editor_prepare_async_job("Build", "build running", "bad build target");
+
+    if (ctx == 0) {
+        return;
+    }
+    desktop_editor_job_active = 1;
+    if (desktop_job_submit("build", desktop_editor_build_job, desktop_editor_build_complete, ctx) == 0u) {
+        desktop_editor_job_active = 0;
+        editor_status = "build queue full";
+        desktop_editor_output_append("could not queue build\n");
+        kfree(ctx);
     }
 }
 
 static void desktop_editor_install(void) {
-    char target[32];
+    desktop_editor_job_arg_t *ctx = desktop_editor_prepare_async_job("Install", "install running", "bad install target");
 
-    desktop_editor_save();
-    if (desktop_editor_target_name(target, sizeof(target)) != 0 ||
-        desktop_editor_enter_project_dir() != 0) {
-        editor_status = "bad install target";
-        desktop_editor_output_clear();
+    if (ctx == 0) {
         return;
     }
-
-    desktop_editor_output_begin("Install", target);
-    editor_status = shell_api_zinstall(target) == 0 ? "install ok" : "install failed";
-    desktop_editor_output_end();
+    desktop_editor_job_active = 1;
+    if (desktop_job_submit("install", desktop_editor_install_job, desktop_editor_install_complete, ctx) == 0u) {
+        desktop_editor_job_active = 0;
+        editor_status = "install queue full";
+        desktop_editor_output_append("could not queue install\n");
+        kfree(ctx);
+    }
 }
 
 static void desktop_editor_load_module(void) {
@@ -3552,6 +3890,12 @@ void desktop_run(const boot_info_t *info) {
 
         usb_poll();
         desktop_mouse_snapshot(&x, &y, &buttons);
+        if (desktop_jobs_poll() && wm_action == DESKTOP_WM_IDLE) {
+            cursor_restore();
+            desktop_damage_taskbar();
+            desktop_redraw_all();
+            cursor_draw_at(x, y);
+        }
         mouse_consume_motion(&motion_dx, &motion_dy, 0);
         wheel_delta = mouse_consume_wheel();
         int left_pressed = (buttons & MOUSE_LEFT) != 0;
@@ -4222,14 +4566,19 @@ void desktop_run(const boot_info_t *info) {
                 if (menu_app != DESKTOP_APP_NONE) {
                     cursor_restore();
                     start_menu_open = 0;
-                    desktop_launch_app(menu_app, info);
+                    if (menu_app == DESKTOP_APP_JOB_TEST) {
+                        (void)desktop_job_submit("demo", desktop_demo_job, 0, 0);
+                        desktop_damage_taskbar();
+                    } else {
+                        desktop_launch_app(menu_app, info);
+                    }
                     if (menu_app == DESKTOP_APP_MODULES && module_index != DESKTOP_MODULE_INDEX_NONE) {
                         char module_name[DESKTOP_MODULE_NAME_SIZE];
                         if (desktop_app_catalog_name_at(module_index, module_name, sizeof(module_name)) == 0) {
                             (void)desktop_open_module_app_by_name(module_name, 1);
                         }
                     }
-                    if (menu_app != DESKTOP_APP_TERMINAL) {
+                    if (menu_app != DESKTOP_APP_TERMINAL && menu_app != DESKTOP_APP_JOB_TEST) {
                         desktop_terminal_blur();
                     }
                     desktop_damage_full();

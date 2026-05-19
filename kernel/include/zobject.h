@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define ZOBJECT_SYMBOL_NAME_SIZE 32u
-#define ZOBJECT_MAX_RESOLVED_SYMBOLS 64u
+#define ZOBJECT_MAX_RESOLVED_SYMBOLS 256u
 
 typedef struct {
     char name[ZOBJECT_SYMBOL_NAME_SIZE];

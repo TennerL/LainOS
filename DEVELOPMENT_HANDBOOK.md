@@ -119,6 +119,11 @@ Good practices:
 Useful shell commands:
 
 ```text
+fscheck
+fscheck C:
+fsrepair
+fsrepair C:
+fsflush
 heap
 heaptest
 info
@@ -173,9 +178,14 @@ The shell is the integration hub. It owns:
 `lainfs` is intentionally simple. Current limits matter:
 
 - small directory tables
-- contiguous file allocation
-- limited maximum file size
+- file allocation uses the legacy contiguous start field plus up to two extra
+  extents in spare directory-entry metadata
+- limited maximum file size, currently 4 MiB per file
 - no journaling
+- metadata is validated on directory-table load
+- `fsrepair` only performs conservative metadata-only fixes for simple
+  parent-link, directory parent-cycle, directory-entry, and recoverable
+  extent-metadata problems
 
 When developing filesystem features, preserve old images where possible, or add
 clear format-version handling. The shell should print specific errors for disk
@@ -189,6 +199,14 @@ directories are refused until recursive delete has explicit UI/confirmation.
 
 `.Z` is a small C-like language compiled inside the kernel. It is meant for
 small apps, modules, demos, tests, and eventually selected kernel-adjacent code.
+It supports fixed-width integer types, structs, typedefs, enums, arrays,
+function pointers, kernel externs, object/module exports, C-like control flow,
+bitwise operators including `&`, `|`, `^`, `~`, `<<`, and `>>`, plus the common
+compound assignments including `<<=` and `>>=`.
+The current in-kernel source and generated-assembly buffers are 1 MiB each.
+Compiler tables are deliberately fixed-size but large enough for small projects:
+256 functions/signatures, 128 locals, 128 globals, 64 structs with 32 fields
+each, 512 string literals, and 32 linked objects with up to 256 object symbols.
 
 Common commands:
 
@@ -200,6 +218,15 @@ zlink source.zo output.bin
 exec output.bin
 zasm source.Z output.asm
 ```
+
+For a quick host-side compiler regression check, run:
+
+```bash
+make zcc-smoke
+```
+
+This compiles the non-header `.Z` examples with `tools/zcc_host`, including
+sources that use quoted local includes.
 
 Project commands use `.zbuild` manifests:
 
@@ -344,6 +371,22 @@ Before finishing a kernel-facing change, at minimum run:
 ```bash
 make build/kernel.elf
 ```
+
+Before finishing a Z compiler change, run:
+
+```bash
+make zcc-smoke
+```
+
+Before finishing a lainfs metadata validation or repair change, run:
+
+```bash
+make lainfs-smoke
+```
+
+That host-side pass covers repairable parent-cycle, directory-metadata, and
+extent-metadata corruption, plus unrepaired overlap and out-of-bounds extent
+reports.
 
 For boot, storage, or image layout changes, run:
 

@@ -15,6 +15,7 @@ typedef struct {
     uint32_t header_tail_count;
     char header[1024];
     uint32_t header_size;
+    int header_truncated;
     char *out;
     uint32_t out_capacity;
     uint32_t out_size;
@@ -107,6 +108,8 @@ static void tls_http_body_byte(tls_http_body_t *body, char ch) {
         if (body->header_size + 1u < sizeof(body->header)) {
             body->header[body->header_size++] = ch;
             body->header[body->header_size] = '\0';
+        } else {
+            body->header_truncated = 1;
         }
         if (body->header_tail_count < sizeof(body->header_tail)) {
             body->header_tail[body->header_tail_count++] = ch;
@@ -176,7 +179,8 @@ int net_tls_http_get(uint32_t index,
                      const char *path,
                      char *out,
                      uint32_t out_capacity,
-                     uint32_t *out_size) {
+                     uint32_t *out_size,
+                     net_http_info_t *info) {
     br_ssl_client_context *cc;
     br_x509_minimal_context *xc;
     uint8_t *iobuf;
@@ -192,12 +196,17 @@ int net_tls_http_get(uint32_t index,
     if (out_size) {
         *out_size = 0;
     }
+    if (info) {
+        tls_zero(info, sizeof(*info));
+    }
     if (!host || !path || !out || out_capacity == 0) {
+        net_http_parse_info(0, 0, 0, 0, 0, -1, info);
         return -1;
     }
     out[0] = '\0';
 
     if (tls_build_http_request(path, host, request, sizeof(request)) != 0) {
+        net_http_parse_info(0, 0, 0, 0, 0, -2, info);
         return -2;
     }
     request_len = tls_strlen(request);
@@ -208,11 +217,13 @@ int net_tls_http_get(uint32_t index,
     rxbuf = (uint8_t *)kmalloc(TLS_TCP_RX_SIZE);
     if (!cc || !xc || !iobuf || !rxbuf) {
         result = -11;
+        net_http_parse_info(0, 0, 0, 0, 0, result, info);
         goto cleanup;
     }
 
     if (net_tcp_stream_connect(index, ip, port, rxbuf, TLS_TCP_RX_SIZE) != 0) {
         result = -5;
+        net_http_parse_info(0, 0, 0, 0, 0, result, info);
         goto cleanup;
     }
 
@@ -221,6 +232,7 @@ int net_tls_http_get(uint32_t index,
         rtc_time_t now;
         if (clock_get_rtc_time(&now) != 0) {
             result = -12;
+            net_http_parse_info(0, 0, 0, 0, 0, result, info);
             goto cleanup;
         }
         br_x509_minimal_set_time(xc,
@@ -244,6 +256,7 @@ int net_tls_http_get(uint32_t index,
 
     if (!br_ssl_client_reset(cc, host, 0)) {
         result = -10;
+        net_http_parse_info(0, 0, 0, 0, 0, result, info);
         goto cleanup;
     }
 
@@ -349,6 +362,13 @@ int net_tls_http_get(uint32_t index,
     if (result == 0 && out_size) {
         *out_size = body.out_size;
     }
+    net_http_parse_info(body.header,
+                        body.header_size,
+                        body.out_size,
+                        body.full,
+                        body.header_truncated,
+                        result,
+                        info);
 
 cleanup:
     net_tcp_stream_close();

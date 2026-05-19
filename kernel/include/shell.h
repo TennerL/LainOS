@@ -2,6 +2,7 @@
 #define SHELL_H
 
 #include "bootinfo.h"
+#include "net.h"
 
 void shell_init(void);
 int shell_mount_first_lainfs(char drive_letter);
@@ -29,6 +30,7 @@ int shell_api_read_file(const char *path, char *buffer, uint32_t capacity);
 int shell_api_load_file_shared(const char *path);
 uint8_t *shell_api_file_buffer(void);
 int shell_api_http_get(const char *url, char *buffer, uint32_t capacity);
+int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_http_info_t *info);
 int shell_api_rename(const char *old_path, const char *new_path);
 int shell_api_copy_file(const char *src_path, const char *dst_path);
 int shell_api_strlen(const char *text);
