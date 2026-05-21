@@ -22,6 +22,12 @@ extern void kfree(uint8_t *ptr);
 extern uint8_t *page_alloc(uint32_t page_count);
 extern void page_free(uint8_t *ptr, uint32_t page_count);
 extern uint64_t heap_used_bytes(void);
+extern int registry_set(const uint8_t *key, const uint8_t *value);
+extern const uint8_t *registry_get(const uint8_t *key);
+extern int registry_get_u32(const uint8_t *key, uint32_t default_value, uint32_t *out_value);
+extern uint32_t registry_count(void);
+extern const uint8_t *registry_key_at(uint32_t index);
+extern const uint8_t *registry_value_at(uint32_t index);
 extern uint32_t cpu_count(void);
 extern uint32_t cpu_usage(uint32_t core);
 extern uint64_t cpu_local_timer_ticks(uint32_t core);
@@ -106,3 +112,4 @@ extern int image_decode_to_screen(const uint8_t *data,
                                   uint32_t origin_x,
                                   uint32_t origin_y,
                                   struct ImageInfo *out_image);
+extern const uint8_t *image_supported_formats(void);

@@ -244,6 +244,62 @@ void graphics_backbuffer_flush(void) {
     graphics_backbuffer_flush_rect(0, 0, graphics_fb_width, graphics_fb_height);
 }
 
+int graphics_capture_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t *out, uint32_t out_pixels) {
+    uint32_t *fb = graphics_target_base();
+
+    if (fb == 0 || out == 0 || width == 0u || height == 0u || width > 0xffffffffu / height) {
+        return -1;
+    }
+    if (out_pixels < width * height || x >= graphics_fb_width || y >= graphics_fb_height ||
+        x + width < x || y + height < y ||
+        x + width > graphics_fb_width || y + height > graphics_fb_height) {
+        return -1;
+    }
+
+    for (uint32_t row = 0; row < height; ++row) {
+        uint32_t *src = fb + (uint64_t)(y + row) * graphics_fb_pitch + x;
+        uint32_t *dst = out + (uint64_t)row * width;
+        uint32_t col = 0;
+
+        for (; col + 1u < width; col += 2u) {
+            *(uint64_t *)(void *)(dst + col) = *(const uint64_t *)(const void *)(src + col);
+        }
+        if (col < width) {
+            dst[col] = src[col];
+        }
+    }
+
+    return 0;
+}
+
+int graphics_draw_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t height, const uint32_t *pixels, uint32_t pixel_count) {
+    uint32_t *fb = graphics_target_base();
+
+    if (fb == 0 || pixels == 0 || width == 0u || height == 0u || width > 0xffffffffu / height) {
+        return -1;
+    }
+    if (pixel_count < width * height || x >= graphics_fb_width || y >= graphics_fb_height ||
+        x + width < x || y + height < y ||
+        x + width > graphics_fb_width || y + height > graphics_fb_height) {
+        return -1;
+    }
+
+    for (uint32_t row = 0; row < height; ++row) {
+        uint32_t *dst = fb + (uint64_t)(y + row) * graphics_fb_pitch + x;
+        const uint32_t *src = pixels + (uint64_t)row * width;
+        uint32_t col = 0;
+
+        for (; col + 1u < width; col += 2u) {
+            *(uint64_t *)(void *)(dst + col) = *(const uint64_t *)(const void *)(src + col);
+        }
+        if (col < width) {
+            dst[col] = src[col];
+        }
+    }
+
+    return 0;
+}
+
 void graphics_backbuffer_flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     uint32_t *fb = (uint32_t *)(uintptr_t)graphics_fb_base;
     uint64_t pixels;

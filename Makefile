@@ -62,6 +62,7 @@ KERNEL_C_SOURCES := \
 	kernel/core/cpu.c \
 	kernel/core/dma.c \
 	kernel/core/kmem.c \
+	kernel/core/registry.c \
 	kernel/core/libc.c \
 	kernel/core/power.c \
 	kernel/drivers/graphics.c \
@@ -159,9 +160,28 @@ build/tools/zcc_host: tools/zcc_host.c kernel/z/zscript.c kernel/include/zscript
 	$(MKDIR_P) build/tools
 	$(CC) $(HOST_CFLAGS) tools/zcc_host.c kernel/z/zscript.c -o $@
 
+zcc-smoke: build/tools/zcc_host | build
+	$(MKDIR_P) build/zcc-smoke
+	@set -e; \
+	for f in examples/*.Z examples/zlang/*.Z; do \
+		case "$$f" in \
+			examples/kernel_api.Z|examples/jpg_decoder_api.Z|examples/zlang/kernel_api.Z|examples/zlang/mouse_api.Z|examples/zlang/header_controls.Z) continue ;; \
+		esac; \
+		out="build/zcc-smoke/$$(basename "$$f" .Z).asm"; \
+		printf 'ZCC %s\n' "$$f"; \
+		build/tools/zcc_host "$$f" "$$out"; \
+	done
+
 build/tools/lainfs_seed: tools/lainfs_seed.c | build
 	$(MKDIR_P) build/tools
 	$(CC) $(HOST_CFLAGS) tools/lainfs_seed.c -o $@
+
+build/tools/lainfs_check_host: tools/lainfs_check_host.c | build
+	$(MKDIR_P) build/tools
+	$(CC) $(HOST_CFLAGS) tools/lainfs_check_host.c -o $@
+
+lainfs-smoke: build/tools/lainfs_check_host | build
+	build/tools/lainfs_check_host smoke
 
 build/tools/ramdisk_seed_gen: tools/ramdisk_seed_gen.c | build
 	$(MKDIR_P) build/tools
@@ -345,4 +365,4 @@ print-efi-config:
 	@echo EFI_LDS=$(EFI_LDS)
 	@echo EFI_ARCH=$(EFI_ARCH)
 
-.PHONY: all build image pxe run run-ahci run-usb run-net run-bootdisk run-bootdisk-gpt run-iso reseed-data clean inspect-efi print-efi-config FORCE
+.PHONY: all build image pxe run run-ahci run-usb run-net run-bootdisk run-bootdisk-gpt run-iso reseed-data zcc-smoke lainfs-smoke clean inspect-efi print-efi-config FORCE

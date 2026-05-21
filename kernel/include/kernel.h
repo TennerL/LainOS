@@ -24,6 +24,8 @@ unsigned int console_columns(void);
 void console_clear_line(unsigned int row);
 void console_puts(const char *s);
 void console_set_output_hook(void (*hook)(char ch));
+void console_suppress_current_cpu_push(void);
+void console_suppress_current_cpu_pop(void);
 void console_newline(void);
 void console_cursor_enable(int enabled);
 void console_cursor_tick(void);
@@ -40,6 +42,18 @@ unsigned int graphics_height(void);
 unsigned int graphics_pitch(void);
 unsigned int graphics_format(void);
 int graphics_backbuffer_active(void);
+int graphics_capture_rect_packed(unsigned int x,
+                                 unsigned int y,
+                                 unsigned int width,
+                                 unsigned int height,
+                                 unsigned int *out,
+                                 unsigned int out_pixels);
+int graphics_draw_rect_packed(unsigned int x,
+                              unsigned int y,
+                              unsigned int width,
+                              unsigned int height,
+                              const unsigned int *pixels,
+                              unsigned int pixel_count);
 unsigned int graphics_viewport_active(void);
 unsigned int graphics_viewport_x(void);
 unsigned int graphics_viewport_y(void);
@@ -73,6 +87,7 @@ void cpu_detect_topology(const boot_info_t *info);
 unsigned int cpu_start_secondary_cores(void);
 unsigned int cpu_core_count(void);
 unsigned int cpu_online_core_count(void);
+unsigned int cpu_current_index(void);
 unsigned int cpu_lapic_id(unsigned int index);
 unsigned long long cpu_lapic_base(void);
 unsigned long long cpu_core_busy_ticks(unsigned int core);
@@ -86,6 +101,13 @@ unsigned int smp_submit_work(smp_work_fn_t fn, void *arg);
 int smp_work_done(unsigned int id);
 void smp_wait_work(unsigned int id);
 unsigned int smp_pending_work_count(void);
+typedef void (*kernel_task_fn_t)(void *arg);
+unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg);
+int kernel_task_done(unsigned int id);
+void kernel_task_release(unsigned int id);
+void kernel_task_wait(unsigned int id);
+unsigned int kernel_task_poll(void);
+unsigned int kernel_task_pending_count(void);
 void interrupts_init(void);
 void keyboard_init(void);
 int mouse_init(void);

@@ -12,6 +12,11 @@
 #define CPU_SMP_WORK_QUEUED 1u
 #define CPU_SMP_WORK_RUNNING 2u
 #define CPU_SMP_WORK_DONE 3u
+#define CPU_TASK_SLOTS 32u
+#define CPU_TASK_FREE 0u
+#define CPU_TASK_QUEUED 1u
+#define CPU_TASK_RUNNING 2u
+#define CPU_TASK_DONE 3u
 #define ACPI_MADT_TYPE_LOCAL_APIC 0u
 #define ACPI_MADT_TYPE_LOCAL_APIC_ADDRESS_OVERRIDE 5u
 #define ACPI_MADT_TYPE_LOCAL_X2APIC 9u
@@ -159,6 +164,8 @@ static unsigned int bsp_lapic_id;
 static volatile unsigned int online_core_count = 1u;
 static volatile unsigned int smp_work_lock;
 static volatile unsigned int smp_next_work_id = 1u;
+static volatile unsigned int kernel_task_lock;
+static volatile unsigned int kernel_task_next_id = 1u;
 static volatile unsigned int lapic_timer_enabled;
 static volatile unsigned int lapic_timer_initial_count;
 static volatile unsigned int lapic_timer_hz;
@@ -178,8 +185,17 @@ typedef struct {
     void *arg;
 } smp_work_slot_t;
 
+typedef struct {
+    volatile unsigned int state;
+    unsigned int id;
+    unsigned int smp_id;
+    kernel_task_fn_t fn;
+    void *arg;
+} kernel_task_slot_t;
+
 static cpu_core_state_t cpu_cores[CPU_MAX_CORES];
 static smp_work_slot_t smp_work_slots[CPU_SMP_WORK_SLOTS];
+static kernel_task_slot_t kernel_task_slots[CPU_TASK_SLOTS];
 
 static void cpu_relax(void) {
     __asm__ __volatile__("pause");
@@ -348,6 +364,16 @@ static void smp_lock(void) {
 
 static void smp_unlock(void) {
     __sync_lock_release(&smp_work_lock);
+}
+
+static void task_lock(void) {
+    while (__sync_lock_test_and_set(&kernel_task_lock, 1u) != 0u) {
+        cpu_relax();
+    }
+}
+
+static void task_unlock(void) {
+    __sync_lock_release(&kernel_task_lock);
 }
 
 static int smp_take_work(smp_work_fn_t *out_fn, void **out_arg, unsigned int *out_slot) {
@@ -847,6 +873,13 @@ unsigned int cpu_lapic_id(unsigned int index) {
     return detected_lapic_ids[index];
 }
 
+unsigned int cpu_current_index(void) {
+    if (detected_lapic_base == 0 || detected_core_count == 0) {
+        return 0u;
+    }
+    return cpu_index_for_lapic_id(lapic_current_id());
+}
+
 unsigned long long cpu_lapic_base(void) {
     return detected_lapic_base;
 }
@@ -1042,6 +1075,203 @@ unsigned int smp_pending_work_count(void) {
         }
     }
     smp_unlock();
+
+    return count;
+}
+
+static void kernel_task_worker(void *arg) {
+    kernel_task_slot_t *slot = (kernel_task_slot_t *)arg;
+    kernel_task_fn_t fn = 0;
+    void *fn_arg = 0;
+
+    if (slot == 0) {
+        return;
+    }
+
+    task_lock();
+    if (slot->state == CPU_TASK_QUEUED || slot->state == CPU_TASK_RUNNING) {
+        slot->state = CPU_TASK_RUNNING;
+        fn = slot->fn;
+        fn_arg = slot->arg;
+    }
+    task_unlock();
+
+    if (fn != 0) {
+        fn(fn_arg);
+    }
+
+    task_lock();
+    if (slot->state == CPU_TASK_RUNNING) {
+        __sync_synchronize();
+        slot->state = CPU_TASK_DONE;
+    }
+    task_unlock();
+}
+
+static void kernel_task_release_finished_smp(void) {
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS; ++i) {
+        unsigned int smp_id = 0;
+
+        task_lock();
+        if (kernel_task_slots[i].state == CPU_TASK_DONE &&
+            kernel_task_slots[i].smp_id != 0u) {
+            smp_id = kernel_task_slots[i].smp_id;
+        }
+        task_unlock();
+
+        if (smp_id != 0u && smp_work_done(smp_id)) {
+            smp_wait_work(smp_id);
+            task_lock();
+            if (kernel_task_slots[i].smp_id == smp_id) {
+                kernel_task_slots[i].smp_id = 0u;
+            }
+            task_unlock();
+        }
+    }
+}
+
+void kernel_task_release(unsigned int id) {
+    if (id == 0u) {
+        return;
+    }
+
+    kernel_task_release_finished_smp();
+
+    task_lock();
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS; ++i) {
+        if (kernel_task_slots[i].id == id && kernel_task_slots[i].state == CPU_TASK_DONE) {
+            kernel_task_slots[i].fn = 0;
+            kernel_task_slots[i].arg = 0;
+            kernel_task_slots[i].id = 0u;
+            kernel_task_slots[i].smp_id = 0u;
+            __sync_synchronize();
+            kernel_task_slots[i].state = CPU_TASK_FREE;
+            break;
+        }
+    }
+    task_unlock();
+}
+
+unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg) {
+    kernel_task_slot_t *slot = 0;
+    unsigned int id = 0;
+    unsigned int smp_id;
+
+    if (fn == 0) {
+        return 0u;
+    }
+
+    task_lock();
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS; ++i) {
+        if (kernel_task_slots[i].state == CPU_TASK_FREE) {
+            id = kernel_task_next_id++;
+            if (id == 0u) {
+                id = kernel_task_next_id++;
+            }
+            kernel_task_slots[i].id = id;
+            kernel_task_slots[i].fn = fn;
+            kernel_task_slots[i].arg = arg;
+            kernel_task_slots[i].smp_id = 0u;
+            kernel_task_slots[i].state = CPU_TASK_RUNNING;
+            slot = &kernel_task_slots[i];
+            break;
+        }
+    }
+    task_unlock();
+
+    if (slot == 0) {
+        return 0u;
+    }
+
+    smp_id = smp_submit_work(kernel_task_worker, slot);
+    if (smp_id != 0u) {
+        task_lock();
+        if (slot->id == id) {
+            slot->smp_id = smp_id;
+        }
+        task_unlock();
+    } else {
+        task_lock();
+        if (slot->id == id && slot->state == CPU_TASK_RUNNING) {
+            slot->state = CPU_TASK_QUEUED;
+        }
+        task_unlock();
+    }
+
+    return id;
+}
+
+unsigned int kernel_task_poll(void) {
+    kernel_task_slot_t *slot = 0;
+
+    kernel_task_release_finished_smp();
+
+    task_lock();
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS; ++i) {
+        if (kernel_task_slots[i].state == CPU_TASK_QUEUED) {
+            kernel_task_slots[i].state = CPU_TASK_RUNNING;
+            slot = &kernel_task_slots[i];
+            break;
+        }
+    }
+    task_unlock();
+
+    if (slot == 0) {
+        return 0u;
+    }
+
+    kernel_task_worker(slot);
+    return 1u;
+}
+
+int kernel_task_done(unsigned int id) {
+    int done = 0;
+
+    if (id == 0u) {
+        return 1;
+    }
+
+    kernel_task_release_finished_smp();
+
+    task_lock();
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS; ++i) {
+        if (kernel_task_slots[i].id == id) {
+            done = kernel_task_slots[i].state == CPU_TASK_DONE &&
+                   kernel_task_slots[i].smp_id == 0u;
+            break;
+        }
+    }
+    task_unlock();
+
+    return done;
+}
+
+void kernel_task_wait(unsigned int id) {
+    if (id == 0u) {
+        return;
+    }
+
+    while (!kernel_task_done(id)) {
+        (void)kernel_task_poll();
+        cpu_send_smp_ipi();
+        cpu_relax();
+    }
+    kernel_task_release(id);
+}
+
+unsigned int kernel_task_pending_count(void) {
+    unsigned int count = 0;
+
+    kernel_task_release_finished_smp();
+
+    task_lock();
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS; ++i) {
+        if (kernel_task_slots[i].state == CPU_TASK_QUEUED ||
+            kernel_task_slots[i].state == CPU_TASK_RUNNING) {
+            ++count;
+        }
+    }
+    task_unlock();
 
     return count;
 }

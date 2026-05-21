@@ -7,6 +7,10 @@
 #define NET_MAC_SIZE 6u
 #define NET_MIN_FRAME_SIZE 60u
 #define NET_MAX_FRAME_SIZE 1518u
+#define NET_HTTP_CONTENT_TYPE_SIZE 64u
+#define NET_HTTP_FLAG_TRUNCATED 0x00000001u
+#define NET_HTTP_FLAG_CONTENT_LENGTH 0x00000002u
+#define NET_HTTP_FLAG_HEADER_TRUNCATED 0x00000004u
 
 typedef int (*net_send_frame_t)(void *ctx, const void *data, uint32_t size);
 typedef int (*net_poll_t)(void *ctx);
@@ -117,6 +121,16 @@ typedef struct {
     uint64_t first_rx_phys;
 } e1000_debug_info_t;
 
+typedef struct {
+    uint32_t status_code;
+    uint32_t content_length;
+    uint32_t body_size;
+    uint32_t header_size;
+    uint32_t flags;
+    int32_t error;
+    char content_type[NET_HTTP_CONTENT_TYPE_SIZE];
+} net_http_info_t;
+
 void net_init(void);
 int net_register_device(const char *name,
                         const char *driver,
@@ -152,6 +166,12 @@ int net_http_get(uint32_t index,
                  char *out,
                  uint32_t out_capacity,
                  uint32_t *out_size);
+int net_http_get_ex(uint32_t index,
+                    const char *url,
+                    char *out,
+                    uint32_t out_capacity,
+                    uint32_t *out_size,
+                    net_http_info_t *info);
 int net_tls_http_get(uint32_t index,
                      uint32_t ip,
                      uint16_t port,
@@ -159,7 +179,15 @@ int net_tls_http_get(uint32_t index,
                      const char *path,
                      char *out,
                      uint32_t out_capacity,
-                     uint32_t *out_size);
+                     uint32_t *out_size,
+                     net_http_info_t *info);
+void net_http_parse_info(const char *header,
+                         uint32_t header_size,
+                         uint32_t body_size,
+                         int body_truncated,
+                         int header_truncated,
+                         int error,
+                         net_http_info_t *info);
 int net_tcp_stream_connect(uint32_t index,
                            uint32_t ip,
                            uint16_t port,

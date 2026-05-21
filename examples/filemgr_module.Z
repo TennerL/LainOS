@@ -141,6 +141,30 @@ int selected_is_image(void) {
     if (has_suffix(filemgr_selected_name, ".PNG")) {
         return 1;
     }
+    if (has_suffix(filemgr_selected_name, ".bmp") || has_suffix(filemgr_selected_name, ".BMP")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".gif") || has_suffix(filemgr_selected_name, ".GIF")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".tga") || has_suffix(filemgr_selected_name, ".TGA")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".psd") || has_suffix(filemgr_selected_name, ".PSD")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".pic") || has_suffix(filemgr_selected_name, ".PIC")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".pnm") || has_suffix(filemgr_selected_name, ".PNM")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".ppm") || has_suffix(filemgr_selected_name, ".PPM")) {
+        return 1;
+    }
+    if (has_suffix(filemgr_selected_name, ".pgm") || has_suffix(filemgr_selected_name, ".PGM")) {
+        return 1;
+    }
     return 0;
 }
 
