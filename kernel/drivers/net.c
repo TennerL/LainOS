@@ -880,6 +880,12 @@ void net_http_parse_info(const char *header,
                                        i + 13u,
                                        info->content_type,
                                        sizeof(info->content_type));
+        } else if (net_http_header_match_at(header, header_size, i, "location:")) {
+            net_http_copy_header_value(header,
+                                       header_size,
+                                       i + 9u,
+                                       info->location,
+                                       sizeof(info->location));
         }
     }
 }
@@ -1767,7 +1773,7 @@ static int net_build_http_request(const char *path,
         APPEND_DEC(parts[2]); APPEND_CH('.');
         APPEND_DEC(parts[3]);
     }
-    APPEND_TEXT("\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_DEC
 #undef APPEND_TEXT

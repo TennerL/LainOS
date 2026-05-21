@@ -164,7 +164,7 @@ static int tls_build_http_request(const char *path,
     APPEND_TEXT(path);
     APPEND_TEXT(" HTTP/1.0\r\nHost: ");
     APPEND_TEXT(host);
-    APPEND_TEXT("\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_TEXT
 #undef APPEND_CH

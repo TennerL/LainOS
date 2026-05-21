@@ -49,6 +49,7 @@ global uint32_t zbrowser_line_no;
 global uint32_t zbrowser_scroll;
 global uint32_t zbrowser_editing;
 global uint32_t zbrowser_needs_redraw;
+global uint8_t zbrowser_attr[160];
 
 void copy_text(uint8_t *dst, uint32_t capacity, const uint8_t *src) {
     uint32_t i;
@@ -208,6 +209,29 @@ void emit_text(const uint8_t *text) {
     }
 }
 
+uint32_t render_inline_until_close_tag(const uint8_t *html, uint32_t pos, const uint8_t *name) {
+    uint32_t advance;
+    uint8_t ch;
+
+    while (html[pos] != 0) {
+        ch = html[pos];
+        if (ch == 60) {
+            if (zb_is_closing_tag(html, pos) != 0 && zb_tag_name_is(html, pos, name) != 0) {
+                return zb_skip_tag(html, pos);
+            }
+            pos = zb_skip_tag(html, pos);
+        } else if (ch == 38) {
+            ch = zb_entity_char(html, pos, &advance);
+            emit_char(ch);
+            pos = pos + advance;
+        } else {
+            emit_char(ch);
+            pos = pos + 1;
+        }
+    }
+    return pos;
+}
+
 void render_html(const uint8_t *html) {
     uint32_t pos;
     uint32_t advance;
@@ -236,8 +260,11 @@ void render_html(const uint8_t *html) {
                 pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "style");
                 continue;
             }
-            if (zb_tag_name_is(html, pos, "head")) {
-                pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "head");
+            if (zb_tag_name_is(html, pos, "title")) {
+                blank_line();
+                emit_text("Title: ");
+                pos = render_inline_until_close_tag(html, zb_skip_tag(html, pos), "title");
+                blank_line();
                 continue;
             }
             if (zb_tag_name_is(html, pos, "br")) {
@@ -254,13 +281,38 @@ void render_html(const uint8_t *html) {
                        zb_tag_name_is(html, pos, "h2") ||
                        zb_tag_name_is(html, pos, "h3")) {
                 blank_line();
+                if (!zb_is_closing_tag(html, pos)) {
+                    emit_text("# ");
+                }
             } else if (zb_tag_name_is(html, pos, "li")) {
                 if (!zb_is_closing_tag(html, pos)) {
                     flush_line();
                     emit_text("- ");
                 }
+            } else if (zb_tag_name_is(html, pos, "a")) {
+                if (!zb_is_closing_tag(html, pos) && zb_attr_value(html, pos, "href", zbrowser_attr, 160) != 0) {
+                    emit_text(" [");
+                    emit_text(zbrowser_attr);
+                    emit_text("] ");
+                }
             } else if (zb_tag_name_is(html, pos, "img")) {
-                emit_text("[image]");
+                if (zb_attr_value(html, pos, "alt", zbrowser_attr, 160) != 0 && zbrowser_attr[0] != 0) {
+                    emit_text("[image: ");
+                    emit_text(zbrowser_attr);
+                    emit_text("]");
+                } else if (zb_attr_value(html, pos, "src", zbrowser_attr, 160) != 0 && zbrowser_attr[0] != 0) {
+                    emit_text("[image: ");
+                    emit_text(zbrowser_attr);
+                    emit_text("]");
+                } else {
+                    emit_text("[image]");
+                }
+            } else if (zb_tag_name_is(html, pos, "input")) {
+                emit_text("[input]");
+            } else if (zb_tag_name_is(html, pos, "button")) {
+                if (!zb_is_closing_tag(html, pos)) {
+                    emit_text("[button] ");
+                }
             }
             pos = zb_skip_tag(html, pos);
         } else if (ch == 38) {

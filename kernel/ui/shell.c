@@ -3882,12 +3882,115 @@ uint8_t *shell_api_file_buffer(void) {
     return (uint8_t *)shell_wget_buffer;
 }
 
+static int shell_http_url_starts_with(const char *text, const char *prefix) {
+    uint32_t i = 0;
+
+    while (prefix[i] != '\0') {
+        if (text[i] != prefix[i]) {
+            return 0;
+        }
+        ++i;
+    }
+    return 1;
+}
+
+static int shell_http_make_redirect_url(const char *current_url,
+                                        const char *location,
+                                        char *out,
+                                        uint32_t out_size) {
+    uint32_t pos = 0;
+    uint32_t scheme_len = 0;
+    const char *host_start;
+    const char *path_start;
+    const char *base_end;
+
+    if (current_url == 0 || location == 0 || out == 0 || out_size == 0 || location[0] == '\0') {
+        return -1;
+    }
+    out[0] = '\0';
+
+    if (shell_http_url_starts_with(location, "http://") ||
+        shell_http_url_starts_with(location, "https://")) {
+        copy_text_limited(out, out_size, location);
+        return out[0] != '\0' ? 0 : -1;
+    }
+
+    if (shell_http_url_starts_with(current_url, "https://")) {
+        scheme_len = 8;
+    } else if (shell_http_url_starts_with(current_url, "http://")) {
+        scheme_len = 7;
+    } else {
+        return -1;
+    }
+
+    if (shell_http_url_starts_with(location, "//")) {
+        (void)scheme_len;
+        if (shell_http_url_starts_with(current_url, "https://")) {
+            if (append_text_limited(out, out_size, &pos, "https:") != 0) {
+                return -1;
+            }
+        } else if (append_text_limited(out, out_size, &pos, "http:") != 0) {
+            return -1;
+        }
+        for (uint32_t i = 0; location[i] != '\0' && pos + 1u < out_size; ++i) {
+            out[pos++] = location[i];
+        }
+        out[pos] = '\0';
+        return location[0] != '\0' && pos + 1u < out_size ? 0 : -1;
+    }
+
+    host_start = current_url + scheme_len;
+    path_start = host_start;
+    while (*path_start != '\0' && *path_start != '/') {
+        ++path_start;
+    }
+
+    if (location[0] == '/') {
+        for (const char *s = current_url; s < path_start && pos + 1u < out_size; ++s) {
+            out[pos++] = *s;
+        }
+        for (uint32_t i = 0; location[i] != '\0' && pos + 1u < out_size; ++i) {
+            out[pos++] = location[i];
+        }
+        out[pos] = '\0';
+        return pos + 1u < out_size ? 0 : -1;
+    }
+
+    base_end = path_start;
+    if (*path_start == '/') {
+        const char *s = path_start;
+        base_end = path_start + 1;
+        while (*s != '\0') {
+            if (*s == '/') {
+                base_end = s + 1;
+            }
+            ++s;
+        }
+    }
+
+    for (const char *s = current_url; s < base_end && pos + 1u < out_size; ++s) {
+        out[pos++] = *s;
+    }
+    if (*path_start == '\0' && pos + 1u < out_size) {
+        out[pos++] = '/';
+    }
+    for (uint32_t i = 0; location[i] != '\0' && pos + 1u < out_size; ++i) {
+        out[pos++] = location[i];
+    }
+    out[pos] = '\0';
+    return pos + 1u < out_size ? 0 : -1;
+}
+
 int shell_api_http_get(const char *url, char *buffer, uint32_t capacity) {
     return shell_api_http_get_ex(url, buffer, capacity, 0);
 }
 
 int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_http_info_t *info) {
     uint32_t size = 0;
+    char current_url[256];
+    char next_url[256];
+    net_http_info_t local_info;
+    net_http_info_t *fetch_info = info != 0 ? info : &local_info;
     int status;
 
     if (info != 0) {
@@ -3908,9 +4011,33 @@ int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_
         return -2;
     }
 
-    status = net_http_get_ex(0, url, buffer, capacity, &size, info);
-    if (status != 0) {
-        return status;
+    copy_text_limited(current_url, sizeof(current_url), url);
+    for (uint32_t redirects = 0; redirects < 5u; ++redirects) {
+        for (uint32_t i = 0; i < sizeof(*fetch_info); ++i) {
+            ((uint8_t *)fetch_info)[i] = 0;
+        }
+        status = net_http_get_ex(0, current_url, buffer, capacity, &size, fetch_info);
+        if (status != 0) {
+            return status;
+        }
+        if (fetch_info->status_code >= 300u &&
+            fetch_info->status_code < 400u &&
+            fetch_info->location[0] != '\0') {
+            if (shell_http_make_redirect_url(current_url,
+                                             fetch_info->location,
+                                             next_url,
+                                             sizeof(next_url)) != 0) {
+                return -13;
+            }
+            copy_text_limited(current_url, sizeof(current_url), next_url);
+            continue;
+        }
+        break;
+    }
+    if (fetch_info->status_code >= 300u &&
+        fetch_info->status_code < 400u &&
+        fetch_info->location[0] != '\0') {
+        return -13;
     }
     if (size < capacity) {
         buffer[size] = '\0';

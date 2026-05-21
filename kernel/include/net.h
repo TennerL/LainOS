@@ -8,6 +8,7 @@
 #define NET_MIN_FRAME_SIZE 60u
 #define NET_MAX_FRAME_SIZE 1518u
 #define NET_HTTP_CONTENT_TYPE_SIZE 64u
+#define NET_HTTP_LOCATION_SIZE 160u
 #define NET_HTTP_FLAG_TRUNCATED 0x00000001u
 #define NET_HTTP_FLAG_CONTENT_LENGTH 0x00000002u
 #define NET_HTTP_FLAG_HEADER_TRUNCATED 0x00000004u
@@ -129,6 +130,7 @@ typedef struct {
     uint32_t flags;
     int32_t error;
     char content_type[NET_HTTP_CONTENT_TYPE_SIZE];
+    char location[NET_HTTP_LOCATION_SIZE];
 } net_http_info_t;
 
 void net_init(void);
