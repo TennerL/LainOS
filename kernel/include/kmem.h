@@ -74,6 +74,7 @@ void kmem_init(const boot_info_t *info);
 void *kmalloc(uint32_t size);
 void *kzalloc(uint32_t size);
 void kfree(void *ptr);
+uint32_t kmalloc_size(void *ptr);
 void *page_alloc(uint32_t page_count);
 void page_free(void *ptr, uint32_t page_count);
 uint64_t kmem_total_pages(void);

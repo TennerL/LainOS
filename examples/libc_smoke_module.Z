@@ -1,0 +1,89 @@
+#include "libc_api.Z"
+
+extern void put_char_at_screen(uint32_t col, uint32_t row, uint32_t ch);
+extern void put_dec_at_screen(uint32_t col, uint32_t row, uint64_t value);
+
+global uint32_t libc_smoke_passed;
+
+void put_label(uint32_t row, const uint8_t *label, uint32_t value) {
+    uint32_t i;
+
+    i = 0;
+    while (label[i] != 0) {
+        put_char_at_screen(2 + i, row, label[i]);
+        i = i + 1;
+    }
+    put_dec_at_screen(18, row, value);
+}
+
+export void zmodule_redraw(void) {
+    put_label(2, "LIBC SMOKE", libc_smoke_passed);
+}
+
+export void zmodule_unload(void) {
+    libc_smoke_passed = 0;
+}
+
+uint32_t run_libc_smoke(void) {
+    uint8_t *buf;
+    uint8_t *copy;
+    int *err;
+    uint32_t ok;
+
+    ok = 1;
+    buf = malloc(16);
+    if (buf == 0) {
+        return 0;
+    }
+
+    memset(buf, 0, 16);
+    strcpy(buf, "web");
+    strcat(buf, "-libs");
+    if (strlen(buf) != 8) {
+        ok = 0;
+    }
+    if (strcmp(buf, "web-libs") != 0) {
+        ok = 0;
+    }
+    if (strncmp(buf, "web", 3) != 0) {
+        ok = 0;
+    }
+    if (strchr(buf, 45) == 0) {
+        ok = 0;
+    }
+    if (strstr(buf, "libs") == 0) {
+        ok = 0;
+    }
+
+    copy = strdup(buf);
+    if (copy == 0) {
+        ok = 0;
+    } else {
+        if (memcmp(buf, copy, 9) != 0) {
+            ok = 0;
+        }
+        copy = realloc(copy, 24);
+        if (copy == 0) {
+            ok = 0;
+        } else {
+            memmove(copy + 4, copy, 4);
+            memcpy(copy, "lib-", 4);
+            if (strncmp(copy, "lib-web", 7) != 0) {
+                ok = 0;
+            }
+            free(copy);
+        }
+    }
+
+    err = errno_location();
+    if (err == 0) {
+        ok = 0;
+    }
+
+    free(buf);
+    return ok;
+}
+
+libc_smoke_passed = run_libc_smoke();
+
+return 0;

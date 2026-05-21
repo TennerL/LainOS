@@ -531,6 +531,23 @@ void kfree(void *ptr) {
     unlock();
 }
 
+uint32_t kmalloc_size(void *ptr) {
+    kmalloc_header_t *header;
+
+    if (ptr == 0) {
+        return 0;
+    }
+
+    header = ((kmalloc_header_t *)ptr) - 1;
+    if (header->magic != KMEM_ALLOC_MAGIC) {
+        return 0;
+    }
+    if (*kmalloc_guard_for_header(header) != KMEM_GUARD_MAGIC) {
+        return 0;
+    }
+    return header->bytes;
+}
+
 uint64_t kmem_total_pages(void) {
     return total_page_count;
 }

@@ -1,0 +1,3 @@
+include .
+module
+libc_smoke_module.Z libc_smoke_module.zo

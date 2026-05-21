@@ -507,6 +507,9 @@ zmod filemgr_module.zo
 
 zbuild zbrowser_module
 zmod zbrowser_module.zo
+
+zbuild libc_smoke_module
+zmod libc_smoke_module.zo
 ```
 
 The example `autoexec` preloads useful modules and can enter desktop mode.
@@ -537,6 +540,10 @@ objects, and resident modules. Current groups include:
 - console output: `puts`, `put_hex64`, `put_dec64`
 - timer/clock: `ticks`, `clock_unix_time`, `clock_get_rtc_time`
 - memory status: `mem_total_kb`, `mem_free_kb`, `mem_used_kb`
+- libc compatibility: `malloc`, `calloc`, `realloc`, `free`, `memcpy`,
+  `memset`, `memmove`, `memcmp`, `strlen`, `strcpy`, `strncpy`, `strcat`,
+  `strcmp`, `strncmp`, `strchr`, `strrchr`, `strstr`, `strdup`, and
+  `errno_location`
 - CPU status: `cpu_count`, `cpu_usage`
 - SMP work queue: `smp_submit_work`, `smp_work_done`, `smp_wait_work`,
   `smp_pending_work_count`
@@ -554,6 +561,10 @@ objects, and resident modules. Current groups include:
 - desktop helper: `os_open_editor`
 
 See `kernel/core/kernel_exports.c` for the authoritative list.
+
+`examples/libc_api.Z` declares the libc-compatible module ABI. It is the
+starting point for porting small C libraries into `.zo` modules before taking
+on larger browser dependencies.
 
 ## VirtualBox
 

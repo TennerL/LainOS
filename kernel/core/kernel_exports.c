@@ -3,6 +3,7 @@
 #include "image.h"
 #include "kernel.h"
 #include "kmem.h"
+#include "libc.h"
 #include "registry.h"
 #include "shell.h"
 
@@ -32,6 +33,27 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("kmalloc", kmalloc),
     KERNEL_EXPORT("kzalloc", kzalloc),
     KERNEL_EXPORT("kfree", kfree),
+    KERNEL_EXPORT("kmalloc_size", kmalloc_size),
+    KERNEL_EXPORT("malloc", malloc),
+    KERNEL_EXPORT("calloc", calloc),
+    KERNEL_EXPORT("realloc", realloc),
+    KERNEL_EXPORT("free", free),
+    KERNEL_EXPORT("memcpy", memcpy),
+    KERNEL_EXPORT("memset", memset),
+    KERNEL_EXPORT("memmove", memmove),
+    KERNEL_EXPORT("memcmp", memcmp),
+    KERNEL_EXPORT("strlen", strlen),
+    KERNEL_EXPORT("strcpy", strcpy),
+    KERNEL_EXPORT("strncpy", strncpy),
+    KERNEL_EXPORT("strcat", strcat),
+    KERNEL_EXPORT("strcmp", strcmp),
+    KERNEL_EXPORT("strncmp", strncmp),
+    KERNEL_EXPORT("strchr", strchr),
+    KERNEL_EXPORT("strrchr", strrchr),
+    KERNEL_EXPORT("strstr", strstr),
+    KERNEL_EXPORT("strdup", strdup),
+    KERNEL_EXPORT("__errno_location", __errno_location),
+    KERNEL_EXPORT("errno_location", errno_location),
     KERNEL_EXPORT("page_alloc", page_alloc),
     KERNEL_EXPORT("page_free", page_free),
     KERNEL_EXPORT("heap_used_bytes", kmem_heap_used_bytes),
