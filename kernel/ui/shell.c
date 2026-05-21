@@ -4264,12 +4264,16 @@ int shell_api_zinstall(const char *target) {
     char command[64];
     char output_name[32];
     char install_name[32];
+    char report_name[32];
     uint32_t build_dir = 0;
     uint32_t install_dir = 0;
     uint32_t installed_size = 0;
+    int objects_only = 0;
+    uint32_t object_count = 0;
     int drive = active_drive();
 
     if (drive < 0 || copy_command_arg(target, command, sizeof(command)) != 0 ||
+        make_suffixed_name(command, ".buildlog", report_name, sizeof(report_name)) != 0 ||
         zbuild_read_layout(drive,
                            command,
                            manifest,
@@ -4282,16 +4286,29 @@ int shell_api_zinstall(const char *target) {
                            sizeof(install_name),
                            0,
                            0,
-                           0,
-                           0) != 0) {
+                           &objects_only,
+                           &object_count) != 0) {
         return -1;
     }
-    (void)build_dir;
-    (void)output_name;
 
     console_suppress_current_cpu_push();
     cmd_zinstall(command, 0);
     console_suppress_current_cpu_pop();
+    if (objects_only && object_count != 1) {
+        if (lainfs_load_file_in_dir((char)('A' + drive),
+                                    build_dir,
+                                    report_name,
+                                    zinclude_buffers[0],
+                                    ASM_SOURCE_SIZE,
+                                    &installed_size) != 0 ||
+            installed_size >= ASM_SOURCE_SIZE) {
+            return -1;
+        }
+        zinclude_buffers[0][installed_size] = '\0';
+        return contains_text(zinclude_buffers[0], "\nstatus module\n") ? 0 : -1;
+    }
+
+    (void)output_name;
     if (lainfs_load_file_in_dir((char)('A' + drive),
                                 install_dir,
                                 install_name,
@@ -7061,6 +7078,143 @@ static int zbuild_read_layout(int drive,
     return 0;
 }
 
+static int zinstall_module_objects_from_manifest(int drive,
+                                                 const char *target_name,
+                                                 char *manifest,
+                                                 uint32_t manifest_capacity,
+                                                 uint32_t build_dir,
+                                                 uint32_t install_dir,
+                                                 uint32_t *installed_count) {
+    uint32_t manifest_size = 0;
+    char manifest_name[32];
+    int status;
+
+    *installed_count = 0;
+    if (make_suffixed_name(target_name, ".zbuild", manifest_name, sizeof(manifest_name)) != 0) {
+        return -20;
+    }
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     manifest_name,
+                                     manifest,
+                                     manifest_capacity,
+                                     &manifest_size);
+    if (status != 0) {
+        return status;
+    }
+    manifest[manifest_size] = '\0';
+
+    for (uint32_t pos = 0, line = 1; pos < manifest_size;) {
+        char *line_start = manifest + pos;
+        char *line_text;
+        char *source_name;
+        char *object_name;
+        char object_name_buffer[32];
+        uint32_t object_size = 0;
+
+        while (pos < manifest_size && manifest[pos] != '\n' && manifest[pos] != '\r') {
+            ++pos;
+        }
+        if (pos < manifest_size) {
+            manifest[pos++] = '\0';
+            if (pos < manifest_size && manifest[pos - 1u] == '\r' && manifest[pos] == '\n') {
+                manifest[pos++] = '\0';
+            }
+        }
+
+        line_text = skip_spaces(line_start);
+        if (*line_text == '\0' ||
+            *line_text == '#' ||
+            *line_text == ';' ||
+            (line_text[0] == '/' && line_text[1] == '/')) {
+            ++line;
+            continue;
+        }
+
+        split_first_arg(line_text, &source_name, &object_name);
+        if (streq(source_name, "src") ||
+            streq(source_name, "source") ||
+            streq(source_name, "include") ||
+            streq(source_name, "build") ||
+            streq(source_name, "output") ||
+            streq(source_name, "module") ||
+            streq(source_name, "objects-only") ||
+            streq(source_name, "test-return") ||
+            streq(source_name, "install") ||
+            streq(source_name, "install-name")) {
+            ++line;
+            continue;
+        }
+
+        if (*object_name == '\0') {
+            if (make_object_name_from_source(source_name,
+                                             object_name_buffer,
+                                             sizeof(object_name_buffer)) != 0) {
+                console_puts("zinstall failed: bad source name on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return -27;
+            }
+            object_name = object_name_buffer;
+        } else {
+            char *unused = 0;
+            char *first_object_name = object_name;
+            split_first_arg(object_name, &first_object_name, &unused);
+            if (*unused != '\0') {
+                console_puts("zinstall failed: too many fields on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return -28;
+            }
+            object_name = first_object_name;
+        }
+
+        zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+        status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         build_dir,
+                                         object_name,
+                                         (char *)exec_buffer,
+                                         EXEC_BUFFER_SIZE,
+                                         &object_size);
+        if (status == -5) {
+            console_puts("zinstall failed: build did not produce ");
+            console_puts(object_name);
+            console_puts("\n");
+            return status;
+        }
+        if (status != 0 || object_size == 0) {
+            console_puts("zinstall failed: could not load ");
+            console_puts(object_name);
+            console_puts("\n");
+            return status != 0 ? status : -1;
+        }
+
+        status = lainfs_save_file_in_dir((char)('A' + drive),
+                                         install_dir,
+                                         object_name,
+                                         (const char *)exec_buffer,
+                                         object_size);
+        if (status == -9) {
+            console_puts("zinstall failed: disk is full\n");
+            zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+            return status;
+        }
+        if (status != 0) {
+            console_puts("zinstall failed: could not save ");
+            console_puts(object_name);
+            console_puts("\n");
+            zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+            return status;
+        }
+
+        ++*installed_count;
+        ++line;
+    }
+
+    zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+    return 0;
+}
+
 static void cmd_ztest(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -7209,6 +7363,7 @@ static void cmd_zinstall(const char *args, const boot_info_t *info) {
     uint32_t install_dir = 0;
     uint32_t output_size = 0;
     uint32_t object_count = 0;
+    uint32_t installed_count = 0;
     int objects_only = 0;
     int drive = active_drive();
     int status;
@@ -7251,10 +7406,6 @@ static void cmd_zinstall(const char *args, const boot_info_t *info) {
         console_puts("zinstall failed: bad manifest layout\n");
         return;
     }
-    if (objects_only && object_count != 1) {
-        console_puts("zinstall failed: module target has multiple objects\n");
-        return;
-    }
 
     if (*dest_path != '\0' &&
         resolve_file_path((char)('A' + drive),
@@ -7269,6 +7420,27 @@ static void cmd_zinstall(const char *args, const boot_info_t *info) {
 
     cmd_zclean(target_name, 0);
     cmd_zbuild(target_name, 0);
+
+    if (objects_only && object_count != 1) {
+        if (*dest_path != '\0') {
+            console_puts("zinstall failed: multi-object module cannot install as one file\n");
+            return;
+        }
+        status = zinstall_module_objects_from_manifest(drive,
+                                                       target_name,
+                                                       manifest,
+                                                       ASM_SOURCE_SIZE,
+                                                       build_dir,
+                                                       install_dir,
+                                                       &installed_count);
+        if (status != 0) {
+            return;
+        }
+        console_puts("zinstall: installed ");
+        console_put_dec64(installed_count);
+        console_puts(" module object(s)\n");
+        return;
+    }
 
     zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
     status = lainfs_load_file_in_dir((char)('A' + drive),
