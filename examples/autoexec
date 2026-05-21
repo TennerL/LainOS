@@ -13,6 +13,8 @@ cp R:/examples/filemgr_module.Z filemgr_module.Z
 cp R:/examples/filemgr_module.zbuild filemgr_module.zbuild
 
 cp R:/examples/zbrowser_module.Z zbrowser_module.Z
+cp R:/examples/zbrowser_html.Z zbrowser_html.Z
+cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
 cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
 
 cp R:/examples/personalize_module.Z personalize_module.Z
