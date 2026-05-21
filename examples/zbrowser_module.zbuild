@@ -1,3 +1,4 @@
 include .
 module
+zbrowser_html.Z zbrowser_html.zo
 zbrowser_module.Z zbrowser_module.zo

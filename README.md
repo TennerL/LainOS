@@ -506,7 +506,7 @@ zbuild filemgr_module
 zmod filemgr_module.zo
 
 zbuild zbrowser_module
-zmod zbrowser_module.zo
+zmod zbrowser_html.zo zbrowser_module.zo
 
 zbuild libc_smoke_module
 zmod libc_smoke_module.zo
@@ -531,7 +531,7 @@ For example:
 ```text
 write browser.url http://10.0.2.2:8000/index.html
 zbuild zbrowser_module
-zmod zbrowser_module.zo
+zmod zbrowser_html.zo zbrowser_module.zo
 desktop
 ```
 
@@ -570,6 +570,9 @@ starting point for porting small C libraries into `.zo` modules before taking
 on larger browser dependencies. `examples/mini_zlib.Z` is a tiny zlib-style
 library object used by `clib_port_smoke_module` to prove the multi-object
 module pattern for reusable C-library ports.
+`examples/zbrowser_html.Z` is the first browser library object; it owns HTML
+tag/entity scanning while `zbrowser_module.Z` owns browser UI, fetching, and
+rendering.
 
 ## VirtualBox
 
