@@ -7881,7 +7881,8 @@ static void cmd_zmodtest(const char *args, const boot_info_t *info) {
         if (slot_index < 0) {
             console_puts("zmodtest failed: load failed on cycle ");
             console_put_dec64(i + 1u);
-            console_puts("\n");
+            console_puts("; retrying with diagnostics\n");
+            cmd_zmod(module_name, 0);
             return;
         }
 
