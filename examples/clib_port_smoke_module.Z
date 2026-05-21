@@ -1,0 +1,80 @@
+#include "libc_api.Z"
+#include "mini_zlib_api.Z"
+
+extern void put_char_at_screen(uint32_t col, uint32_t row, uint32_t ch);
+extern void put_dec_at_screen(uint32_t col, uint32_t row, uint64_t value);
+
+global uint32_t clib_port_passed;
+global uint32_t clib_port_checksum;
+
+void draw_text(uint32_t col, uint32_t row, const uint8_t *text) {
+    uint32_t i;
+
+    i = 0;
+    while (text[i] != 0) {
+        put_char_at_screen(col + i, row, text[i]);
+        i = i + 1;
+    }
+}
+
+export void zmodule_redraw(void) {
+    draw_text(2, 2, "CLIB PORT");
+    put_dec_at_screen(18, 2, clib_port_passed);
+    draw_text(2, 3, "ADLER32");
+    put_dec_at_screen(18, 3, clib_port_checksum);
+}
+
+export void zmodule_unload(void) {
+    clib_port_passed = 0;
+    clib_port_checksum = 0;
+}
+
+uint32_t run_clib_port_smoke(void) {
+    const uint8_t *source;
+    uint8_t *copy;
+    uint8_t *grown;
+    uint32_t len;
+    uint32_t ok;
+    uint32_t checksum_a;
+    uint32_t checksum_b;
+
+    source = "browser-lib-stage";
+    len = (uint32_t)strlen(source);
+    ok = 1;
+
+    copy = malloc(len + 1);
+    if (copy == 0) {
+        return 0;
+    }
+    memcpy(copy, source, len + 1);
+
+    checksum_a = mz_adler32_once(copy, len);
+    checksum_b = mz_adler32(1, "browser-", 8);
+    checksum_b = mz_adler32(checksum_b, "lib-stage", 9);
+    clib_port_checksum = checksum_a;
+
+    if (checksum_a != checksum_b) {
+        ok = 0;
+    }
+    if (strcmp(copy, source) != 0) {
+        ok = 0;
+    }
+
+    grown = realloc(copy, len + 8);
+    if (grown == 0) {
+        free(copy);
+        return 0;
+    }
+    copy = grown;
+    strcat(copy, "-ok");
+    if (strstr(copy, "stage-ok") == 0) {
+        ok = 0;
+    }
+
+    free(copy);
+    return ok;
+}
+
+clib_port_passed = run_clib_port_smoke();
+
+return 0;

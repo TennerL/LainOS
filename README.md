@@ -510,6 +510,9 @@ zmod zbrowser_module.zo
 
 zbuild libc_smoke_module
 zmod libc_smoke_module.zo
+
+zbuild clib_port_smoke_module
+zmod mini_zlib.zo clib_port_smoke_module.zo
 ```
 
 The example `autoexec` preloads useful modules and can enter desktop mode.
@@ -564,7 +567,9 @@ See `kernel/core/kernel_exports.c` for the authoritative list.
 
 `examples/libc_api.Z` declares the libc-compatible module ABI. It is the
 starting point for porting small C libraries into `.zo` modules before taking
-on larger browser dependencies.
+on larger browser dependencies. `examples/mini_zlib.Z` is a tiny zlib-style
+library object used by `clib_port_smoke_module` to prove the multi-object
+module pattern for reusable C-library ports.
 
 ## VirtualBox
 

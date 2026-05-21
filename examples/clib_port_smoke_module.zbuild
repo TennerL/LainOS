@@ -1,0 +1,4 @@
+include .
+module
+mini_zlib.Z mini_zlib.zo
+clib_port_smoke_module.Z clib_port_smoke_module.zo

@@ -1,0 +1,30 @@
+uint32_t mz_adler_reduce(uint32_t value) {
+    return value % 65521;
+}
+
+export uint32_t mz_adler32(uint32_t adler, const uint8_t *data, uint32_t size) {
+    uint32_t a;
+    uint32_t b;
+    uint32_t i;
+
+    if (data == 0) {
+        return 1;
+    }
+
+    a = mz_adler_reduce(adler);
+    b = mz_adler_reduce(adler / 65536);
+    i = 0;
+    while (i < size) {
+        a = mz_adler_reduce(a + data[i]);
+        b = mz_adler_reduce(b + a);
+        i = i + 1;
+    }
+
+    return b * 65536 + a;
+}
+
+export uint32_t mz_adler32_once(const uint8_t *data, uint32_t size) {
+    return mz_adler32(1, data, size);
+}
+
+return 0;

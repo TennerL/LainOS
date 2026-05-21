@@ -165,7 +165,7 @@ zcc-smoke: build/tools/zcc_host | build
 	@set -e; \
 	for f in examples/*.Z examples/zlang/*.Z; do \
 		case "$$f" in \
-			examples/kernel_api.Z|examples/jpg_decoder_api.Z|examples/libc_api.Z|examples/zlang/kernel_api.Z|examples/zlang/mouse_api.Z|examples/zlang/header_controls.Z) continue ;; \
+			examples/kernel_api.Z|examples/jpg_decoder_api.Z|examples/libc_api.Z|examples/mini_zlib_api.Z|examples/zlang/kernel_api.Z|examples/zlang/mouse_api.Z|examples/zlang/header_controls.Z) continue ;; \
 		esac; \
 		out="build/zcc-smoke/$$(basename "$$f" .Z).asm"; \
 		printf 'ZCC %s\n' "$$f"; \

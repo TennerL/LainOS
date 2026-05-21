@@ -1,0 +1,4 @@
+#pragma once
+
+extern uint32_t mz_adler32(uint32_t adler, const uint8_t *data, uint32_t size);
+extern uint32_t mz_adler32_once(const uint8_t *data, uint32_t size);
