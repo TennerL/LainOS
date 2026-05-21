@@ -8058,7 +8058,7 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
     zmodule_slots[slot_index].export_count = export_symbol_count;
     copy_text_limited(zmodule_slots[slot_index].name,
                       sizeof(zmodule_slots[slot_index].name),
-                      tokens[0]);
+                      tokens[token_count - 1u]);
     for (uint32_t i = 0; i < export_symbol_count; ++i) {
         zmodule_slots[slot_index].exports[i] = export_symbols[i];
     }

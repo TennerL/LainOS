@@ -1236,7 +1236,8 @@ static int desktop_find_module(const char *name) {
 }
 
 static int desktop_mods_file_is_app(const char *name) {
-    return desktop_name_has_zo_suffix(name);
+    return desktop_name_has_zo_suffix(name) &&
+           !text_equals(name, "zbrowser_html.zo");
 }
 
 static uint32_t desktop_app_catalog_count(void) {
@@ -1926,7 +1927,13 @@ static int desktop_open_module_app_by_name(const char *name, int load_from_mods)
 
     module_index = desktop_find_module(name);
     if (module_index < 0 && load_from_mods) {
-        desktop_mods_path_for_name(name, module_path, sizeof(module_path));
+        if (text_equals(name, "zbrowser_module.zo")) {
+            text_copy_limited(module_path,
+                              sizeof(module_path),
+                              "/mods/zbrowser_html.zo /mods/zbrowser_module.zo");
+        } else {
+            desktop_mods_path_for_name(name, module_path, sizeof(module_path));
+        }
         if (shell_api_zmod(module_path) != 0) {
             return -1;
         }
