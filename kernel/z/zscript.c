@@ -1,7 +1,7 @@
 #include "zscript.h"
 
 #define Z_MAX_TOKEN_TEXT 32u
-#define Z_MAX_FUNCTIONS 64u
+#define Z_MAX_FUNCTIONS 128u
 #define Z_MAX_LABEL_TEXT 32u
 #define Z_MAX_LABEL_PREFIX 8u
 #define Z_MAX_LOCALS 64u
@@ -15,7 +15,7 @@
 #define Z_MAX_LOOP_DEPTH 16u
 #define Z_MAX_CONSTANTS 64u
 #define Z_MAX_TYPEDEFS 32u
-#define Z_MAX_FUNCTION_SIGNATURES 64u
+#define Z_MAX_FUNCTION_SIGNATURES 128u
 
 typedef enum {
     Z_TOKEN_EOF = 0,
@@ -34,8 +34,14 @@ typedef enum {
     Z_TOKEN_COLON,
     Z_TOKEN_ASSIGN,
     Z_TOKEN_AMP,
+    Z_TOKEN_AMP_ASSIGN,
     Z_TOKEN_AMP_AMP,
+    Z_TOKEN_PIPE,
+    Z_TOKEN_PIPE_ASSIGN,
     Z_TOKEN_PIPE_PIPE,
+    Z_TOKEN_CARET,
+    Z_TOKEN_CARET_ASSIGN,
+    Z_TOKEN_TILDE,
     Z_TOKEN_BANG,
     Z_TOKEN_PLUS,
     Z_TOKEN_PLUS_PLUS,
@@ -54,8 +60,12 @@ typedef enum {
     Z_TOKEN_NE,
     Z_TOKEN_LT,
     Z_TOKEN_LE,
+    Z_TOKEN_SHIFT_LEFT,
+    Z_TOKEN_SHIFT_LEFT_ASSIGN,
     Z_TOKEN_GT,
     Z_TOKEN_GE,
+    Z_TOKEN_SHIFT_RIGHT,
+    Z_TOKEN_SHIFT_RIGHT_ASSIGN,
 } z_token_type_t;
 
 typedef struct {
@@ -1466,6 +1476,9 @@ static int z_next_token(z_compiler_t *c) {
             if (c->pos < c->size && c->source[c->pos] == '&') {
                 ++c->pos;
                 token.type = Z_TOKEN_AMP_AMP;
+            } else if (c->pos < c->size && c->source[c->pos] == '=') {
+                ++c->pos;
+                token.type = Z_TOKEN_AMP_ASSIGN;
             } else {
                 token.type = Z_TOKEN_AMP;
             }
@@ -1473,10 +1486,21 @@ static int z_next_token(z_compiler_t *c) {
             if (c->pos < c->size && c->source[c->pos] == '|') {
                 ++c->pos;
                 token.type = Z_TOKEN_PIPE_PIPE;
+            } else if (c->pos < c->size && c->source[c->pos] == '=') {
+                ++c->pos;
+                token.type = Z_TOKEN_PIPE_ASSIGN;
             } else {
-                z_set_error(c, token.line);
-                return -1;
+                token.type = Z_TOKEN_PIPE;
             }
+        } else if (ch == '^') {
+            if (c->pos < c->size && c->source[c->pos] == '=') {
+                ++c->pos;
+                token.type = Z_TOKEN_CARET_ASSIGN;
+            } else {
+                token.type = Z_TOKEN_CARET;
+            }
+        } else if (ch == '~') {
+            token.type = Z_TOKEN_TILDE;
         } else if (ch == '!') {
             if (c->pos < c->size && c->source[c->pos] == '=') {
                 ++c->pos;
@@ -1485,14 +1509,30 @@ static int z_next_token(z_compiler_t *c) {
                 token.type = Z_TOKEN_BANG;
             }
         } else if (ch == '<') {
-            if (c->pos < c->size && c->source[c->pos] == '=') {
+            if (c->pos < c->size && c->source[c->pos] == '<') {
+                ++c->pos;
+                if (c->pos < c->size && c->source[c->pos] == '=') {
+                    ++c->pos;
+                    token.type = Z_TOKEN_SHIFT_LEFT_ASSIGN;
+                } else {
+                    token.type = Z_TOKEN_SHIFT_LEFT;
+                }
+            } else if (c->pos < c->size && c->source[c->pos] == '=') {
                 ++c->pos;
                 token.type = Z_TOKEN_LE;
             } else {
                 token.type = Z_TOKEN_LT;
             }
         } else if (ch == '>') {
-            if (c->pos < c->size && c->source[c->pos] == '=') {
+            if (c->pos < c->size && c->source[c->pos] == '>') {
+                ++c->pos;
+                if (c->pos < c->size && c->source[c->pos] == '=') {
+                    ++c->pos;
+                    token.type = Z_TOKEN_SHIFT_RIGHT_ASSIGN;
+                } else {
+                    token.type = Z_TOKEN_SHIFT_RIGHT;
+                }
+            } else if (c->pos < c->size && c->source[c->pos] == '=') {
                 ++c->pos;
                 token.type = Z_TOKEN_GE;
             } else {
@@ -4114,6 +4154,20 @@ static int z_parse_unary(z_compiler_t *c, z_type_t *out_type) {
         return 0;
     }
 
+    if (c->current.type == Z_TOKEN_TILDE) {
+        z_type_t value_type;
+        if (z_next_token(c) != 0 ||
+            z_parse_unary(c, &value_type) != 0 ||
+            z_emit_instr1_text(c, "not", "rax") != 0) {
+            return -1;
+        }
+
+        if (out_type) {
+            *out_type = value_type;
+        }
+        return 0;
+    }
+
     {
         z_type_t value_type;
 
@@ -4180,7 +4234,7 @@ static int z_parse_mul(z_compiler_t *c, z_type_t *out_type) {
     return 0;
 }
 
-static int z_parse_expr(z_compiler_t *c, z_type_t *out_type) {
+static int z_parse_add(z_compiler_t *c, z_type_t *out_type) {
     z_type_t current_type;
 
     if (z_parse_mul(c, &current_type) != 0) {
@@ -4233,6 +4287,126 @@ static int z_parse_expr(z_compiler_t *c, z_type_t *out_type) {
         if (!(current_type.pointer_depth != 0 && right_type.pointer_depth == 0)) {
             current_type = z_type_promote_binary(current_type, right_type);
         }
+    }
+
+    if (out_type) {
+        *out_type = current_type;
+    }
+    return 0;
+}
+
+static int z_emit_shift_op(z_compiler_t *c, z_token_type_t op, int is_unsigned) {
+    const char *instr = op == Z_TOKEN_SHIFT_LEFT ? "shl" : (is_unsigned ? "shr" : "sar");
+
+    return z_emit_instr2_text(c, instr, "rax", "cl");
+}
+
+static int z_parse_shift(z_compiler_t *c, z_type_t *out_type) {
+    z_type_t current_type;
+
+    if (z_parse_add(c, &current_type) != 0) {
+        return -1;
+    }
+
+    while (c->current.type == Z_TOKEN_SHIFT_LEFT ||
+           c->current.type == Z_TOKEN_SHIFT_RIGHT) {
+        z_token_type_t op = c->current.type;
+        z_type_t right_type;
+
+        if (z_next_token(c) != 0 ||
+            z_emit_push_rax(c) != 0 ||
+            z_parse_add(c, &right_type) != 0 ||
+            z_emit_instr2_text(c, "mov", "rcx", "rax") != 0 ||
+            z_emit_pop_reg(c, "rax") != 0 ||
+            z_emit_shift_op(c, op, z_type_is_unsigned(&current_type)) != 0) {
+            return -1;
+        }
+
+        (void)right_type;
+    }
+
+    if (out_type) {
+        *out_type = current_type;
+    }
+    return 0;
+}
+
+static int z_parse_bitand(z_compiler_t *c, z_type_t *out_type) {
+    z_type_t current_type;
+
+    if (z_parse_shift(c, &current_type) != 0) {
+        return -1;
+    }
+
+    while (c->current.type == Z_TOKEN_AMP) {
+        z_type_t right_type;
+
+        if (z_next_token(c) != 0 ||
+            z_emit_push_rax(c) != 0 ||
+            z_parse_shift(c, &right_type) != 0 ||
+            z_emit_instr2_text(c, "mov", "rcx", "rax") != 0 ||
+            z_emit_pop_reg(c, "rax") != 0 ||
+            z_emit_instr2_text(c, "and", "rax", "rcx") != 0) {
+            return -1;
+        }
+
+        current_type = z_type_promote_binary(current_type, right_type);
+    }
+
+    if (out_type) {
+        *out_type = current_type;
+    }
+    return 0;
+}
+
+static int z_parse_bitxor(z_compiler_t *c, z_type_t *out_type) {
+    z_type_t current_type;
+
+    if (z_parse_bitand(c, &current_type) != 0) {
+        return -1;
+    }
+
+    while (c->current.type == Z_TOKEN_CARET) {
+        z_type_t right_type;
+
+        if (z_next_token(c) != 0 ||
+            z_emit_push_rax(c) != 0 ||
+            z_parse_bitand(c, &right_type) != 0 ||
+            z_emit_instr2_text(c, "mov", "rcx", "rax") != 0 ||
+            z_emit_pop_reg(c, "rax") != 0 ||
+            z_emit_instr2_text(c, "xor", "rax", "rcx") != 0) {
+            return -1;
+        }
+
+        current_type = z_type_promote_binary(current_type, right_type);
+    }
+
+    if (out_type) {
+        *out_type = current_type;
+    }
+    return 0;
+}
+
+static int z_parse_expr(z_compiler_t *c, z_type_t *out_type) {
+    z_type_t current_type;
+
+    if (z_parse_bitxor(c, &current_type) != 0) {
+        return -1;
+    }
+
+    while (c->current.type == Z_TOKEN_PIPE) {
+        z_type_t right_type;
+
+        if (z_next_token(c) != 0 ||
+            z_emit_push_rax(c) != 0 ||
+            z_parse_bitxor(c, &right_type) != 0 ||
+            z_emit_instr2_text(c, "mov", "rcx", "rax") != 0 ||
+            z_emit_pop_reg(c, "rax") != 0 ||
+            z_emit_instr2_text(c, "or", "rax", "rcx") != 0) {
+            return -1;
+        }
+
+        current_type = z_type_promote_binary(current_type, right_type);
     }
 
     if (out_type) {
@@ -4797,6 +4971,26 @@ static int z_emit_compound_op(z_compiler_t *c, z_token_type_t op) {
         return z_emit_instr2_text(c, "imul", "rax", "rcx");
     }
 
+    if (op == Z_TOKEN_AMP_ASSIGN) {
+        return z_emit_instr2_text(c, "and", "rax", "rcx");
+    }
+
+    if (op == Z_TOKEN_PIPE_ASSIGN) {
+        return z_emit_instr2_text(c, "or", "rax", "rcx");
+    }
+
+    if (op == Z_TOKEN_CARET_ASSIGN) {
+        return z_emit_instr2_text(c, "xor", "rax", "rcx");
+    }
+
+    if (op == Z_TOKEN_SHIFT_LEFT_ASSIGN) {
+        return z_emit_instr2_text(c, "shl", "rax", "cl");
+    }
+
+    if (op == Z_TOKEN_SHIFT_RIGHT_ASSIGN) {
+        return z_emit_instr2_text(c, "shr", "rax", "cl");
+    }
+
     if (op == Z_TOKEN_SLASH_ASSIGN || op == Z_TOKEN_PERCENT_ASSIGN) {
         if (z_emit_instr0(c, "cqo") != 0 ||
             z_emit_instr1_text(c, "idiv", "rcx") != 0) {
@@ -4819,7 +5013,12 @@ static int z_token_is_compound_assign(z_token_type_t type) {
            type == Z_TOKEN_MINUS_ASSIGN ||
            type == Z_TOKEN_STAR_ASSIGN ||
            type == Z_TOKEN_SLASH_ASSIGN ||
-           type == Z_TOKEN_PERCENT_ASSIGN;
+           type == Z_TOKEN_PERCENT_ASSIGN ||
+           type == Z_TOKEN_AMP_ASSIGN ||
+           type == Z_TOKEN_PIPE_ASSIGN ||
+           type == Z_TOKEN_CARET_ASSIGN ||
+           type == Z_TOKEN_SHIFT_LEFT_ASSIGN ||
+           type == Z_TOKEN_SHIFT_RIGHT_ASSIGN;
 }
 
 static int z_parse_compound_to_offset(z_compiler_t *c,

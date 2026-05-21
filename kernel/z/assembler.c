@@ -1646,16 +1646,49 @@ static int asm_assemble_instruction(char *line,
         return 0;
     }
 
+    if (streq(line, "not")) {
+        asm_reg_t reg;
+
+        if (asm_register(args, &reg) != 0) {
+            return -1;
+        }
+
+        if (asm_emit_rex(ctx, offset, emit, reg.bits == 64, 0, reg.code) != 0 ||
+            asm_emit_byte(ctx, offset, emit, 0xF7) != 0 ||
+            asm_emit_modrm_reg(ctx, offset, emit, 2, reg.code) != 0) {
+            return -1;
+        }
+
+        return 0;
+    }
+
     if (streq(line, "shl") || streq(line, "shr") || streq(line, "sar")) {
         char *dst_text;
         char *src_text;
         asm_reg_t dst;
+        asm_reg_t src;
         uint64_t value = 0;
         int group = 4;
 
         if (asm_split_two_args(args, &dst_text, &src_text) != 0 ||
             asm_register(dst_text, &dst) != 0) {
             return -1;
+        }
+
+        if (streq(line, "shl")) group = 4;
+        if (streq(line, "shr")) group = 5;
+        if (streq(line, "sar")) group = 7;
+
+        if (asm_register(src_text, &src) == 0) {
+            if (src.bits != 8 || src.code != 1) {
+                return -1;
+            }
+            if (asm_emit_rex(ctx, offset, emit, dst.bits == 64, 0, dst.code) != 0 ||
+                asm_emit_byte(ctx, offset, emit, 0xD3) != 0 ||
+                asm_emit_modrm_reg(ctx, offset, emit, group, dst.code) != 0) {
+                return -1;
+            }
+            return 0;
         }
 
         if (emit && asm_value(ctx, src_text, labels, label_count, &value) != 0) {
@@ -1665,10 +1698,6 @@ static int asm_assemble_instruction(char *line,
         if (value > 255ull) {
             return -1;
         }
-
-        if (streq(line, "shl")) group = 4;
-        if (streq(line, "shr")) group = 5;
-        if (streq(line, "sar")) group = 7;
 
         if (asm_emit_rex(ctx, offset, emit, dst.bits == 64, 0, dst.code) != 0 ||
             asm_emit_byte(ctx, offset, emit, 0xC1) != 0 ||
