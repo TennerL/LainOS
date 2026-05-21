@@ -406,6 +406,7 @@ void kernel_main(boot_info_t *info) {
 
         statusbar_update_if_due();
         shell_modules_tick();
+        (void)kernel_task_poll();
         if (session >= SHELL_SESSION_COUNT) {
             session = 0;
         }

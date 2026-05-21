@@ -1302,7 +1302,7 @@ static int resolve_dir_arg(int drive, const char *arg, uint32_t *out_dir) {
 
 static int is_script_comment_or_blank(const char *line) {
     line = skip_const_spaces(line);
-    return *line == '\0' || *line == '#';
+    return *line == '\0' || *line == '#' || (line[0] == '/' && line[1] == '/');
 }
 
 static void run_script_text(char *script, uint32_t size, const boot_info_t *info) {
