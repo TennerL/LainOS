@@ -1534,6 +1534,7 @@ static int zbuild_read_layout(int drive,
 static void cmd_zmod(const char *args, const boot_info_t *info);
 static void cmd_zunload(const char *args, const boot_info_t *info);
 static void cmd_zreload(const char *args, const boot_info_t *info);
+static void cmd_zmodtest(const char *args, const boot_info_t *info);
 static void cmd_zmods(const char *args, const boot_info_t *info);
 static int zmodule_find_slot_by_name(const char *name);
 static void zmodule_clear_slot(uint32_t slot_index);
@@ -1610,6 +1611,7 @@ static const command_t commands[] = {
     { "zmod",    "load and run .zo module(s)",  cmd_zmod },
     { "zunload", "unload a resident .zo module", cmd_zunload },
     { "zreload", "unload then load a .zo module", cmd_zreload },
+    { "zmodtest", "stress reload a .zo module", cmd_zmodtest },
     { "zmods",   "list loaded .zo modules",     cmd_zmods },
     { "zrun",    "compile and run a .Z file",  cmd_zrun },
     { "zasm",    "dump generated asm for a .Z file", cmd_zasm },
@@ -7813,6 +7815,91 @@ static void cmd_zreload(const char *args, const boot_info_t *info) {
     }
 
     cmd_zmod(name, 0);
+}
+
+static void cmd_zmodtest(const char *args, const boot_info_t *info) {
+    char command[96];
+    char module_name[64];
+    char *mutable_command = command;
+    char *name = 0;
+    char *count_text = 0;
+    char *extra = 0;
+    uint64_t cycles = 10;
+    uint64_t completed = 0;
+
+    (void)info;
+
+    if (copy_command_arg(args, command, sizeof(command)) != 0) {
+        console_puts("usage: zmodtest module [count]\n");
+        return;
+    }
+
+    split_first_arg(mutable_command, &name, &count_text);
+    split_first_arg(count_text, &count_text, &extra);
+    if (*name == '\0' || *extra != '\0') {
+        console_puts("usage: zmodtest module [count]\n");
+        return;
+    }
+    if (*count_text != '\0' && parse_u64_arg(count_text, &cycles) != 0) {
+        console_puts("usage: zmodtest module [count]\n");
+        return;
+    }
+    if (cycles == 0u || cycles > 100u) {
+        console_puts("zmodtest failed: count must be 1..100\n");
+        return;
+    }
+
+    copy_string_limited(module_name, sizeof(module_name), name);
+
+    {
+        int slot_index = zmodule_find_slot_by_name(module_name);
+        if (slot_index >= 0) {
+            zmodule_clear_slot((uint32_t)slot_index);
+            if (zmodule_find_slot_by_name(module_name) >= 0) {
+                console_puts("zmodtest failed: module is busy unloading: ");
+                console_puts(module_name);
+                console_puts("\n");
+                return;
+            }
+        }
+    }
+
+    console_puts("zmodtest: ");
+    console_puts(module_name);
+    console_puts(" cycles=");
+    console_put_dec64(cycles);
+    console_puts("\n");
+
+    for (uint64_t i = 0; i < cycles; ++i) {
+        int slot_index;
+
+        console_suppress_current_cpu_push();
+        cmd_zmod(module_name, 0);
+        console_suppress_current_cpu_pop();
+
+        slot_index = zmodule_find_slot_by_name(module_name);
+        if (slot_index < 0) {
+            console_puts("zmodtest failed: load failed on cycle ");
+            console_put_dec64(i + 1u);
+            console_puts("\n");
+            return;
+        }
+
+        zmodule_clear_slot((uint32_t)slot_index);
+        if (zmodule_find_slot_by_name(module_name) >= 0) {
+            console_puts("zmodtest failed: unload deferred on cycle ");
+            console_put_dec64(i + 1u);
+            console_puts("\n");
+            return;
+        }
+
+        ++completed;
+        (void)kernel_task_poll();
+    }
+
+    console_puts("zmodtest: ok cycles=");
+    console_put_dec64(completed);
+    console_puts("\n");
 }
 
 static void cmd_zmods(const char *args, const boot_info_t *info) {

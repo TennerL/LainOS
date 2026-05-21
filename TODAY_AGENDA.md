@@ -77,7 +77,8 @@ Acceptance:
 
 ## Parking Lot
 
-- Journaled or transactional LainFS metadata writes.
 - Module-owned heap/resource tracking.
+- `zmodtest` reload stress command for resident modules.
+- Journaled or transactional LainFS metadata writes.
 - Driver fault containment for USB/xHCI and e1000.
 - Better desktop settings persistence UX.
