@@ -396,10 +396,18 @@ void kernel_main(boot_info_t *info) {
     shell_init();
     registry_init();
     shell_mount_first_lainfs('S');
+    shell_boot_mode_load();
     shell_registry_load();
     registry_set_save_hook(shell_registry_save);
     shell_registry_save();
-    shell_run_autoexec("autoexec", info);
+    if (shell_boot_debug_mode_enabled()) {
+        console_puts("[boot] debug diagnostics mode active\n");
+    }
+    if (shell_boot_safe_mode_enabled()) {
+        console_puts("[boot] safe mode: skipping autoexec\n");
+    } else {
+        shell_run_autoexec("autoexec", info);
+    }
 
     for (;;) {
         unsigned int session = console_active_pane();

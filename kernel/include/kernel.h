@@ -102,12 +102,27 @@ int smp_work_done(unsigned int id);
 void smp_wait_work(unsigned int id);
 unsigned int smp_pending_work_count(void);
 typedef void (*kernel_task_fn_t)(void *arg);
+enum {
+    KERNEL_TASK_STATE_FREE = 0u,
+    KERNEL_TASK_STATE_QUEUED = 1u,
+    KERNEL_TASK_STATE_RUNNING = 2u,
+    KERNEL_TASK_STATE_DONE = 3u
+};
+#define KERNEL_TASK_NAME_SIZE 32u
+typedef struct {
+    unsigned int id;
+    unsigned int state;
+    unsigned int smp_id;
+    char name[KERNEL_TASK_NAME_SIZE];
+} kernel_task_info_t;
 unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg);
+unsigned int kernel_task_submit_named(kernel_task_fn_t fn, void *arg, const char *name);
 int kernel_task_done(unsigned int id);
 void kernel_task_release(unsigned int id);
 void kernel_task_wait(unsigned int id);
 unsigned int kernel_task_poll(void);
 unsigned int kernel_task_pending_count(void);
+unsigned int kernel_task_snapshot(kernel_task_info_t *out, unsigned int max_count);
 void interrupts_init(void);
 void keyboard_init(void);
 int mouse_init(void);

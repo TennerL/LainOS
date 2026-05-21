@@ -191,6 +191,7 @@ typedef struct {
     unsigned int smp_id;
     kernel_task_fn_t fn;
     void *arg;
+    char name[KERNEL_TASK_NAME_SIZE];
 } kernel_task_slot_t;
 
 static cpu_core_state_t cpu_cores[CPU_MAX_CORES];
@@ -374,6 +375,20 @@ static void task_lock(void) {
 
 static void task_unlock(void) {
     __sync_lock_release(&kernel_task_lock);
+}
+
+static void cpu_copy_task_name(char *dst, unsigned int dst_size, const char *src) {
+    unsigned int i = 0;
+
+    if (dst_size == 0u) {
+        return;
+    }
+
+    while (src && src[i] && i + 1u < dst_size) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
 }
 
 static int smp_take_work(smp_work_fn_t *out_fn, void **out_arg, unsigned int *out_slot) {
@@ -1144,6 +1159,7 @@ void kernel_task_release(unsigned int id) {
             kernel_task_slots[i].arg = 0;
             kernel_task_slots[i].id = 0u;
             kernel_task_slots[i].smp_id = 0u;
+            kernel_task_slots[i].name[0] = '\0';
             __sync_synchronize();
             kernel_task_slots[i].state = CPU_TASK_FREE;
             break;
@@ -1152,7 +1168,7 @@ void kernel_task_release(unsigned int id) {
     task_unlock();
 }
 
-unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg) {
+unsigned int kernel_task_submit_named(kernel_task_fn_t fn, void *arg, const char *name) {
     kernel_task_slot_t *slot = 0;
     unsigned int id = 0;
     unsigned int smp_id;
@@ -1172,6 +1188,9 @@ unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg) {
             kernel_task_slots[i].fn = fn;
             kernel_task_slots[i].arg = arg;
             kernel_task_slots[i].smp_id = 0u;
+            cpu_copy_task_name(kernel_task_slots[i].name,
+                               sizeof(kernel_task_slots[i].name),
+                               name && name[0] ? name : "task");
             kernel_task_slots[i].state = CPU_TASK_RUNNING;
             slot = &kernel_task_slots[i];
             break;
@@ -1199,6 +1218,10 @@ unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg) {
     }
 
     return id;
+}
+
+unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg) {
+    return kernel_task_submit_named(fn, arg, "task");
 }
 
 unsigned int kernel_task_poll(void) {
@@ -1270,6 +1293,32 @@ unsigned int kernel_task_pending_count(void) {
             kernel_task_slots[i].state == CPU_TASK_RUNNING) {
             ++count;
         }
+    }
+    task_unlock();
+
+    return count;
+}
+
+unsigned int kernel_task_snapshot(kernel_task_info_t *out, unsigned int max_count) {
+    unsigned int count = 0;
+
+    kernel_task_release_finished_smp();
+
+    if (out == 0 || max_count == 0u) {
+        return 0u;
+    }
+
+    task_lock();
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS && count < max_count; ++i) {
+        if (kernel_task_slots[i].state == CPU_TASK_FREE) {
+            continue;
+        }
+
+        out[count].id = kernel_task_slots[i].id;
+        out[count].state = kernel_task_slots[i].state;
+        out[count].smp_id = kernel_task_slots[i].smp_id;
+        cpu_copy_task_name(out[count].name, sizeof(out[count].name), kernel_task_slots[i].name);
+        ++count;
     }
     task_unlock();
 

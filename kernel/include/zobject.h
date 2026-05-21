@@ -48,5 +48,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                               zobject_resolved_symbol_t *export_symbols,
                               uint32_t export_symbol_capacity,
                               uint32_t *export_symbol_count);
+const char *zobject_last_error_reason(void);
+const char *zobject_last_error_symbol(void);
 
 #endif

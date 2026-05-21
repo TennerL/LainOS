@@ -36,6 +36,8 @@
 
 static char *zo_link_asm;
 static unsigned char *zo_image;
+static char zo_last_error_reason[64];
+static char zo_last_error_symbol[ZOBJECT_SYMBOL_NAME_SIZE];
 
 typedef struct {
     uint32_t type;
@@ -159,6 +161,24 @@ static void zo_copy_name(char *dst, uint32_t dst_size, const char *src) {
     }
 
     dst[i] = '\0';
+}
+
+static void zo_clear_last_error(void) {
+    zo_last_error_reason[0] = '\0';
+    zo_last_error_symbol[0] = '\0';
+}
+
+static void zo_set_last_error(const char *reason, const char *symbol) {
+    zo_copy_name(zo_last_error_reason, sizeof(zo_last_error_reason), reason ? reason : "link failed");
+    zo_copy_name(zo_last_error_symbol, sizeof(zo_last_error_symbol), symbol ? symbol : "");
+}
+
+const char *zobject_last_error_reason(void) {
+    return zo_last_error_reason;
+}
+
+const char *zobject_last_error_symbol(void) {
+    return zo_last_error_symbol;
 }
 
 static int zo_emit_char(uint32_t *size, char ch) {
@@ -905,9 +925,16 @@ static int zo_validate_link_symbols(const zo_object_info_t *infos,
                                              name,
                                              &owner);
 
-                if (found < 0 ||
-                    (found > 0 && owner != i) ||
-                    kernel_export_value(name, &kernel_value) == 0) {
+                if (found < 0) {
+                    zo_set_last_error("bad symbol table", name);
+                    return -1;
+                }
+                if (found > 0 && owner != i) {
+                    zo_set_last_error("duplicate export", name);
+                    return -1;
+                }
+                if (kernel_export_value(name, &kernel_value) == 0) {
+                    zo_set_last_error("export conflicts with kernel", name);
                     return -1;
                 }
             } else if (type == ZOBJECT_SYMBOL_EXTERN) {
@@ -919,6 +946,7 @@ static int zo_validate_link_symbols(const zo_object_info_t *infos,
                                      name,
                                      0) <= 0 &&
                     kernel_export_value(name, &kernel_value) != 0) {
+                    zo_set_last_error("unresolved external", name);
                     return -1;
                 }
             }
@@ -1008,11 +1036,15 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
     int have_v4_reloc = 0;
     int have_legacy = 0;
 
+    zo_clear_last_error();
+
     if (objects == 0 || object_sizes == 0 || object_count == 0 || out == 0 || out_size == 0) {
+        zo_set_last_error("bad linker arguments", "");
         return -1;
     }
 
     if (zo_ensure_work_buffers() != 0) {
+        zo_set_last_error("out of linker memory", "");
         return -1;
     }
 
