@@ -58,6 +58,7 @@ static int shell_work_buffers_ready;
 static unsigned int shell_bg_next_id = 1u;
 static int shell_boot_safe_mode;
 static int shell_boot_debug_mode;
+static int shell_boot_usb_safe_mode;
 
 typedef enum {
     SHELL_BG_FREE = 0,
@@ -2371,15 +2372,6 @@ static int text_contains_word(const char *text, const char *word) {
     return 0;
 }
 
-static uint32_t const_text_length(const char *text) {
-    uint32_t len = 0;
-
-    while (text && text[len] != '\0') {
-        ++len;
-    }
-    return len;
-}
-
 void shell_boot_mode_load(void) {
     uint32_t size = 0;
     int drive = active_drive();
@@ -2387,6 +2379,7 @@ void shell_boot_mode_load(void) {
 
     shell_boot_safe_mode = 0;
     shell_boot_debug_mode = 0;
+    shell_boot_usb_safe_mode = 0;
 
     if (drive < 0 || !shell_work_buffers_ready) {
         return;
@@ -2405,11 +2398,18 @@ void shell_boot_mode_load(void) {
     shell_source_buffer[size] = '\0';
     shell_boot_safe_mode = text_contains_word(shell_source_buffer, "safe");
     shell_boot_debug_mode = text_contains_word(shell_source_buffer, "debug");
+    shell_boot_usb_safe_mode = text_contains_word(shell_source_buffer, "usb-safe") ||
+                               text_contains_word(shell_source_buffer, "usbsafe") ||
+                               text_contains_word(shell_source_buffer, "nousb");
 
     if (shell_boot_safe_mode) {
         console_puts("bootmode: safe mode active, autoexec will be skipped\n");
-    } else if (shell_boot_debug_mode) {
+    }
+    if (shell_boot_debug_mode) {
         console_puts("bootmode: debug diagnostics active\n");
+    }
+    if (shell_boot_usb_safe_mode) {
+        console_puts("bootmode: USB safe mode active, automatic USB init will be skipped\n");
     }
 }
 
@@ -2421,55 +2421,99 @@ int shell_boot_debug_mode_enabled(void) {
     return shell_boot_debug_mode;
 }
 
+int shell_boot_usb_safe_mode_enabled(void) {
+    return shell_boot_usb_safe_mode;
+}
+
+static int shell_boot_mode_save_flags(void) {
+    char content[64];
+    uint32_t pos = 0;
+    int drive = active_drive();
+
+    if (drive < 0) {
+        return -1;
+    }
+
+    if (!shell_boot_safe_mode && !shell_boot_debug_mode && !shell_boot_usb_safe_mode) {
+        if (append_text_limited(content, sizeof(content), &pos, "normal\n") != 0) {
+            return -1;
+        }
+    } else {
+        if (shell_boot_safe_mode &&
+            append_text_limited(content, sizeof(content), &pos, "safe\n") != 0) {
+            return -1;
+        }
+        if (shell_boot_debug_mode &&
+            append_text_limited(content, sizeof(content), &pos, "debug\n") != 0) {
+            return -1;
+        }
+        if (shell_boot_usb_safe_mode &&
+            append_text_limited(content, sizeof(content), &pos, "usb-safe\n") != 0) {
+            return -1;
+        }
+    }
+
+    return lainfs_save_file_in_dir((char)('A' + drive),
+                                   LAINFS_ROOT_DIR,
+                                   SHELL_BOOTMODE_FILE,
+                                   content,
+                                   pos);
+}
+
 static void cmd_bootmode(const char *args, const boot_info_t *info) {
     const char *mode = skip_const_spaces(args);
-    const char *content = 0;
-    int drive = active_drive();
-    int status;
+    int old_safe = shell_boot_safe_mode;
+    int old_debug = shell_boot_debug_mode;
+    int old_usb_safe = shell_boot_usb_safe_mode;
 
     (void)info;
 
     if (*mode == '\0') {
-        console_puts("bootmode: ");
+        console_puts("bootmode:");
         if (shell_boot_safe_mode) {
-            console_puts("safe\n");
-        } else if (shell_boot_debug_mode) {
-            console_puts("debug\n");
-        } else {
-            console_puts("normal\n");
+            console_puts(" safe");
         }
-        console_puts("usage: bootmode [normal|safe|debug]\n");
+        if (shell_boot_debug_mode) {
+            console_puts(" debug");
+        }
+        if (shell_boot_usb_safe_mode) {
+            console_puts(" usb-safe");
+        }
+        if (!shell_boot_safe_mode && !shell_boot_debug_mode && !shell_boot_usb_safe_mode) {
+            console_puts(" normal");
+        }
+        console_puts("\nusage: bootmode [normal|safe|debug]\n");
+        return;
+    }
+
+    if (active_drive() < 0) {
+        console_puts("select a mounted drive first, for example S:\n");
         return;
     }
 
     if (streq(mode, "normal")) {
-        content = "normal\n";
+        shell_boot_safe_mode = 0;
+        shell_boot_debug_mode = 0;
+        shell_boot_usb_safe_mode = 0;
     } else if (streq(mode, "safe")) {
-        content = "safe\n";
+        shell_boot_safe_mode = 1;
+        shell_boot_debug_mode = 0;
     } else if (streq(mode, "debug")) {
-        content = "debug\n";
+        shell_boot_safe_mode = 0;
+        shell_boot_debug_mode = 1;
     } else {
         console_puts("usage: bootmode [normal|safe|debug]\n");
         return;
     }
 
-    if (drive < 0) {
-        console_puts("select a mounted drive first, for example S:\n");
-        return;
-    }
-
-    status = lainfs_save_file_in_dir((char)('A' + drive),
-                                     LAINFS_ROOT_DIR,
-                                     SHELL_BOOTMODE_FILE,
-                                     content,
-                                     const_text_length(content));
-    if (status != 0) {
+    if (shell_boot_mode_save_flags() != 0) {
+        shell_boot_safe_mode = old_safe;
+        shell_boot_debug_mode = old_debug;
+        shell_boot_usb_safe_mode = old_usb_safe;
         console_puts("bootmode failed: could not save bootmode.cfg\n");
         return;
     }
 
-    shell_boot_safe_mode = streq(mode, "safe");
-    shell_boot_debug_mode = streq(mode, "debug");
     console_puts("next boot mode: ");
     console_puts(mode);
     console_puts("\n");
@@ -5055,6 +5099,74 @@ static void cmd_mouse(const char *args, const boot_info_t *info) {
     console_puts("\n");
 }
 
+static void cmd_usb_health(void) {
+    uint32_t count = usb_controller_count();
+
+    console_puts("USB health: ");
+    if (shell_boot_usb_safe_mode) {
+        console_puts("usb-safe next boot");
+    } else {
+        console_puts("normal next boot");
+    }
+    console_puts("\ncontrollers=");
+    console_put_dec64(count);
+    console_puts(" xhci=");
+    console_put_dec64(usb_xhci_controller_count());
+    console_puts("\n");
+
+    if (count == 0u) {
+        console_puts(shell_boot_usb_safe_mode ? "  automatic USB init skipped\n" : "  no USB controllers detected\n");
+        return;
+    }
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const usb_controller_info_t *ctrl = usb_controller_info(i);
+
+        if (ctrl == 0) {
+            continue;
+        }
+
+        console_puts("  #");
+        console_put_dec64(i);
+        console_puts(" ");
+        console_puts(usb_controller_type_name(ctrl->type));
+        console_puts(" pci=");
+        console_put_dec64(ctrl->bus);
+        console_puts(":");
+        console_put_dec64(ctrl->device);
+        console_puts(".");
+        console_put_dec64(ctrl->function);
+        console_puts(" ");
+        if (ctrl->type != USB_CONTROLLER_XHCI) {
+            console_puts("detected");
+        } else if (ctrl->running) {
+            console_puts("running");
+        } else if (ctrl->initialized) {
+            console_puts("initialized-stopped");
+        } else {
+            console_puts("detected-not-started");
+        }
+        if (ctrl->connected_port_count != 0u) {
+            console_puts(" ports-connected=");
+            console_put_dec64(ctrl->connected_port_count);
+        }
+        if (ctrl->mouse_configured) {
+            console_puts(" mouse=ok reports=");
+            console_put_dec64(ctrl->mouse_report_count);
+        } else if (ctrl->type == USB_CONTROLLER_XHCI && ctrl->enum_stage != 0u) {
+            console_puts(" enum-stage=");
+            console_put_dec64(ctrl->enum_stage);
+            console_puts(" cc=");
+            console_put_dec64(ctrl->enum_completion_code);
+        }
+        if (ctrl->last_completion_code != 0u) {
+            console_puts(" last-cc=");
+            console_put_dec64(ctrl->last_completion_code);
+        }
+        console_puts("\n");
+    }
+}
+
 static void cmd_usb(const char *args, const boot_info_t *info) {
     char *mutable_args = (char *)args;
     char *command = 0;
@@ -5067,6 +5179,45 @@ static void cmd_usb(const char *args, const boot_info_t *info) {
     split_first_arg(mutable_args, &command, &index_text);
     if (*command != '\0') {
         split_first_arg(index_text, &index_text, &extra);
+        if (streq(command, "health")) {
+            if (*index_text != '\0' || *extra != '\0') {
+                console_puts("usage: usb health\n");
+                return;
+            }
+            cmd_usb_health();
+            return;
+        }
+        if (streq(command, "safe")) {
+            if (streq(index_text, "on") && *extra == '\0') {
+                int old_usb_safe = shell_boot_usb_safe_mode;
+                shell_boot_usb_safe_mode = 1;
+                if (shell_boot_mode_save_flags() != 0) {
+                    shell_boot_usb_safe_mode = old_usb_safe;
+                    console_puts("usb safe failed: could not save bootmode.cfg\n");
+                    return;
+                }
+                console_puts("usb safe: on for next boot\n");
+                return;
+            }
+            if (streq(index_text, "off") && *extra == '\0') {
+                int old_usb_safe = shell_boot_usb_safe_mode;
+                shell_boot_usb_safe_mode = 0;
+                if (shell_boot_mode_save_flags() != 0) {
+                    shell_boot_usb_safe_mode = old_usb_safe;
+                    console_puts("usb safe failed: could not save bootmode.cfg\n");
+                    return;
+                }
+                console_puts("usb safe: off for next boot\n");
+                return;
+            }
+            if ((streq(index_text, "status") || *index_text == '\0') && *extra == '\0') {
+                console_puts("usb safe: ");
+                console_puts(shell_boot_usb_safe_mode ? "on\n" : "off\n");
+                return;
+            }
+            console_puts("usage: usb safe [on|off|status]\n");
+            return;
+        }
         if ((!streq(command, "init") &&
              !streq(command, "handoff") &&
              !streq(command, "halt") &&
@@ -5084,7 +5235,7 @@ static void cmd_usb(const char *args, const boot_info_t *info) {
             *index_text == '\0' ||
             *extra != '\0' ||
             parse_u64_arg(index_text, &index) != 0) {
-            console_puts("usage: usb [scan|init|handoff|halt|reset|rings|bm|nobm|poke|pokenodma|run|status|start|enum] index\n");
+            console_puts("usage: usb health | usb safe [on|off|status] | usb [scan|init|handoff|halt|reset|rings|bm|nobm|poke|pokenodma|run|status|start|enum] index\n");
             return;
         }
 

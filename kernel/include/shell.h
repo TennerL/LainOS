@@ -11,6 +11,7 @@ void shell_run_autoexec(const char *name, const boot_info_t *info);
 void shell_boot_mode_load(void);
 int shell_boot_safe_mode_enabled(void);
 int shell_boot_debug_mode_enabled(void);
+int shell_boot_usb_safe_mode_enabled(void);
 void shell_print_prompt(void);
 void shell_run_command(char *line, const boot_info_t *info);
 void shell_registry_load(void);

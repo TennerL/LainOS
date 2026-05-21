@@ -374,8 +374,15 @@ void kernel_main(boot_info_t *info) {
     mouse_init();
     boot_stage("storage");
     storage_init();
-    boot_stage("usb");
-    usb_init();
+    shell_init();
+    shell_mount_first_lainfs('S');
+    shell_boot_mode_load();
+    if (shell_boot_usb_safe_mode_enabled()) {
+        boot_stage("usb skipped by safe mode");
+    } else {
+        boot_stage("usb");
+        usb_init();
+    }
     boot_stage("network");
     net_init();
 
@@ -390,13 +397,12 @@ void kernel_main(boot_info_t *info) {
     console_kprintf2("CPU cores online/detected: %u/%u\n",
                      cpu_online_core_count(),
                      cpu_core_count());
-    console_puts("GDT, IDT, timer, PS/2 keyboard/mouse, storage, USB scan, and network scan loaded.\n");
+    console_puts(shell_boot_usb_safe_mode_enabled()
+                     ? "GDT, IDT, timer, PS/2 keyboard/mouse, storage, USB skipped, and network scan loaded.\n"
+                     : "GDT, IDT, timer, PS/2 keyboard/mouse, storage, USB scan, and network scan loaded.\n");
     console_puts("\nHave fun hacking on it.\n");
 
-    shell_init();
     registry_init();
-    shell_mount_first_lainfs('S');
-    shell_boot_mode_load();
     shell_registry_load();
     registry_set_save_hook(shell_registry_save);
     shell_registry_save();
