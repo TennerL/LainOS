@@ -6,7 +6,7 @@
 #include "tls_roots.h"
 
 #define TLS_IOBUF_SIZE BR_SSL_BUFSIZE_BIDI
-#define TLS_TCP_RX_SIZE 32768u
+#define TLS_TCP_RX_SIZE 65535u
 #define TLS_TIMEOUT_TICKS 7500ull
 
 typedef struct {
@@ -164,7 +164,7 @@ static int tls_build_http_request(const char *path,
     APPEND_TEXT(path);
     APPEND_TEXT(" HTTP/1.0\r\nHost: ");
     APPEND_TEXT(host);
-    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: gzip, deflate\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_TEXT
 #undef APPEND_CH

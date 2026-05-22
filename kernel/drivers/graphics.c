@@ -325,6 +325,9 @@ void graphics_scroll_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t heigh
     uint32_t amount;
     uint32_t color;
 
+    if (!graphics_backbuffer_active()) {
+        return;
+    }
     if (fb == 0 || dy == 0 || !graphics_clip_rect(&x, &y, &width, &height, &abs_x, &abs_y)) {
         return;
     }
