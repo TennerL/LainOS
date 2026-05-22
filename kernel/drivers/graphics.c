@@ -69,8 +69,8 @@ typedef struct {
     uint32_t total_height;
     uint32_t step_start;
     uint32_t pitch;
-    uint32_t top_color;
-    uint32_t bottom_color;
+    uint32_t top_rgb_color;
+    uint32_t bottom_rgb_color;
 } graphics_gradient_job_t;
 
 typedef struct {
@@ -87,7 +87,7 @@ static uint32_t abs_i32(int32_t value) {
     return value < 0 ? (uint32_t)(-value) : (uint32_t)value;
 }
 
-static uint32_t graphics_mix_packed_color(uint32_t top, uint32_t bottom, uint32_t step, uint32_t steps) {
+static uint32_t graphics_mix_rgb_color(uint32_t top, uint32_t bottom, uint32_t step, uint32_t steps) {
     uint32_t tr = (top >> 16) & 0xffu;
     uint32_t tg = (top >> 8) & 0xffu;
     uint32_t tb = top & 0xffu;
@@ -121,7 +121,10 @@ static void graphics_gradient_job(void *arg) {
 
     for (uint32_t yy = 0; yy < job->height; ++yy) {
         uint32_t absolute_step = job->step_start + yy;
-        uint32_t color = graphics_mix_packed_color(job->top_color, job->bottom_color, absolute_step, steps);
+        uint32_t color = graphics_pack_color(graphics_mix_rgb_color(job->top_rgb_color,
+                                                                    job->bottom_rgb_color,
+                                                                    absolute_step,
+                                                                    steps));
         uint32_t *row = job->fb + (uint64_t)(job->y + yy) * job->pitch + job->x;
         for (uint32_t xx = 0; xx < job->width; ++xx) {
             row[xx] = color;
@@ -425,7 +428,12 @@ uint32_t graphics_pack_color(uint32_t rgb_color) {
     uint32_t g = (rgb_color >> 8) & 0xFFu;
     uint32_t b = rgb_color & 0xFFu;
 
-    if (graphics_fb_format == GRAPHICS_FORMAT_BGR) {
+    /*
+     * GOP pixel formats describe byte order in memory. On little-endian
+     * x86, a 32-bit framebuffer write needs the byte order reversed inside
+     * the word for PixelRedGreenBlueReserved.
+     */
+    if (graphics_fb_format == GRAPHICS_FORMAT_RGB) {
         return (b << 16) | (g << 8) | r;
     }
 
@@ -472,7 +480,7 @@ uint32_t graphics_get_pixel(uint32_t x, uint32_t y) {
     }
 
     packed = fb[(uint64_t)y * graphics_fb_pitch + x];
-    if (graphics_fb_format == GRAPHICS_FORMAT_BGR) {
+    if (graphics_fb_format == GRAPHICS_FORMAT_RGB) {
         b = (packed >> 16) & 0xFFu;
         g = (packed >> 8) & 0xFFu;
         r = packed & 0xFFu;
@@ -550,8 +558,6 @@ void graphics_fill_vertical_gradient(uint32_t x,
     uint32_t *fb = graphics_target_base();
     uint32_t abs_x = 0;
     uint32_t abs_y = 0;
-    uint32_t top_color;
-    uint32_t bottom_color;
     uint64_t pixels;
     unsigned int workers;
     graphics_gradient_job_t jobs[GRAPHICS_SMP_MAX_JOBS];
@@ -561,8 +567,6 @@ void graphics_fill_vertical_gradient(uint32_t x,
         return;
     }
 
-    top_color = graphics_pack_color(top_rgb_color);
-    bottom_color = graphics_pack_color(bottom_rgb_color);
     pixels = (uint64_t)width * height;
     workers = graphics_smp_worker_count(height);
 
@@ -582,8 +586,8 @@ void graphics_fill_vertical_gradient(uint32_t x,
             jobs[i].total_height = height;
             jobs[i].step_start = row;
             jobs[i].pitch = graphics_fb_pitch;
-            jobs[i].top_color = top_color;
-            jobs[i].bottom_color = bottom_color;
+            jobs[i].top_rgb_color = top_rgb_color;
+            jobs[i].bottom_rgb_color = bottom_rgb_color;
             ids[i] = smp_submit_work(graphics_gradient_job, &jobs[i]);
             if (ids[i] == 0u) {
                 graphics_gradient_job(&jobs[i]);
@@ -606,8 +610,8 @@ void graphics_fill_vertical_gradient(uint32_t x,
             .total_height = height,
             .step_start = 0,
             .pitch = graphics_fb_pitch,
-            .top_color = top_color,
-            .bottom_color = bottom_color,
+            .top_rgb_color = top_rgb_color,
+            .bottom_rgb_color = bottom_rgb_color,
         };
         graphics_gradient_job(&job);
     }

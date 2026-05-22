@@ -120,6 +120,34 @@ int strncmp(const char *a, const char *b, size_t n) {
     return 0;
 }
 
+int strcasecmp(const char *a, const char *b) {
+    while (*a != '\0' && *b != '\0') {
+        int ca = tolower((uint8_t)*a);
+        int cb = tolower((uint8_t)*b);
+
+        if (ca != cb) {
+            return ca - cb;
+        }
+        ++a;
+        ++b;
+    }
+    return tolower((uint8_t)*a) - tolower((uint8_t)*b);
+}
+
+int strncasecmp(const char *a, const char *b, size_t n) {
+    size_t i;
+
+    for (i = 0; i < n; ++i) {
+        int ca = tolower((uint8_t)a[i]);
+        int cb = tolower((uint8_t)b[i]);
+
+        if (ca != cb || ca == 0 || cb == 0) {
+            return ca - cb;
+        }
+    }
+    return 0;
+}
+
 char *strchr(const char *s, int ch) {
     char target = (char)ch;
 
@@ -157,6 +185,51 @@ char *strstr(const char *haystack, const char *needle) {
         }
         ++haystack;
     }
+    return 0;
+}
+
+int tolower(int ch) {
+    if (ch >= 'A' && ch <= 'Z') {
+        return ch + ('a' - 'A');
+    }
+    return ch;
+}
+
+int toupper(int ch) {
+    if (ch >= 'a' && ch <= 'z') {
+        return ch - ('a' - 'A');
+    }
+    return ch;
+}
+
+void *bsearch(const void *key,
+              const void *base,
+              size_t nmemb,
+              size_t size,
+              int (*compar)(const void *, const void *)) {
+    const uint8_t *items = (const uint8_t *)base;
+    size_t low = 0;
+    size_t high = nmemb;
+
+    if (key == 0 || base == 0 || compar == 0 || size == 0) {
+        return 0;
+    }
+
+    while (low < high) {
+        size_t mid = low + ((high - low) / 2u);
+        const void *item = items + mid * size;
+        int cmp = compar(key, item);
+
+        if (cmp == 0) {
+            return (void *)item;
+        }
+        if (cmp < 0) {
+            high = mid;
+        } else {
+            low = mid + 1u;
+        }
+    }
+
     return 0;
 }
 

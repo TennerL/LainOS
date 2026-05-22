@@ -47,9 +47,18 @@ PROJECT_CFLAGS := -Iboot/shared -Ibuild
 KERNEL_INC := -Ikernel/include
 BEARSSL_INC := -Ithird_party/bearssl/inc -Ithird_party/bearssl/src
 STB_INC := -Ithird_party/stb
+NETSURF_INC := \
+	-Ithird_party/netsurf/src/libwapcaplet/include \
+	-Ithird_party/netsurf/src/libparserutils/include \
+	-Ithird_party/netsurf/src/libhubbub/include \
+	-Ithird_party/netsurf/src/libcss/include \
+	-Ithird_party/netsurf/src/libdom/include
+NETSURF_COMMON_CFLAGS = $(KERNEL_CFLAGS) -DNDEBUG -DWITHOUT_ICONV_FILTER -Wno-unused-parameter -Wno-unused-function
+NETSURF_PARSERUTILS_CFLAGS = $(NETSURF_COMMON_CFLAGS) -Ithird_party/netsurf/src/libparserutils/src
+NETSURF_LIBCSS_CFLAGS = $(NETSURF_COMMON_CFLAGS) -D_GNU_SOURCE -D_ALIGNED= -Ithird_party/netsurf/src/libcss/src
 NASMFLAGS := -Iboot/shared/ -Ikernel/include/
 CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER -DBOOT_RES_WIDTH=$(BOOT_RES_WIDTH) -DBOOT_RES_HEIGHT=$(BOOT_RES_HEIGHT)
-KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) $(STB_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
+KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) $(STB_INC) $(NETSURF_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
 HOST_CFLAGS := -Iboot/shared $(KERNEL_INC) -Ikernel -std=c11 -Wall -Wextra -Wno-unused-function
 LDFLAGS_EFI := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_LIBDIR) $(EFI_CRT0)
 LDLIBS_EFI := -lefi -lgnuefi
@@ -63,6 +72,7 @@ KERNEL_C_SOURCES := \
 	kernel/core/cpu.c \
 	kernel/core/dma.c \
 	kernel/core/kmem.c \
+	kernel/core/webcompat.c \
 	kernel/core/registry.c \
 	kernel/core/libc.c \
 	kernel/core/power.c \
@@ -94,10 +104,33 @@ KERNEL_ASM_SOURCES := \
 	kernel/arch/x86_64/interrupts.asm
 BEARSSL_C_SOURCES_ALL := $(shell find third_party/bearssl/src -type f -name '*.c' | sort)
 BEARSSL_C_SOURCES := $(filter-out %/rand/sysrng.c %x86ni%.c %pwr8%.c %sse2%.c %pclmul%.c,$(BEARSSL_C_SOURCES_ALL))
+NETSURF_PARSERUTILS_C_SOURCES := $(shell find third_party/netsurf/src/libparserutils/src -type f -name '*.c' | sort)
+NETSURF_LIBCSS_PARSE_PROPERTY_SOURCES := $(filter-out %/css_property_parser_gen.c,$(shell find third_party/netsurf/src/libcss/src/parse/properties -maxdepth 1 -type f -name '*.c' | sort))
+NETSURF_LIBCSS_C_SOURCES := \
+	third_party/netsurf/src/libcss/src/stylesheet.c \
+	third_party/netsurf/src/libcss/src/charset/detect.c \
+	third_party/netsurf/src/libcss/src/lex/lex.c \
+	third_party/netsurf/src/libcss/src/parse/parse.c \
+	third_party/netsurf/src/libcss/src/parse/language.c \
+	third_party/netsurf/src/libcss/src/parse/important.c \
+	third_party/netsurf/src/libcss/src/parse/propstrings.c \
+	third_party/netsurf/src/libcss/src/parse/font_face.c \
+	third_party/netsurf/src/libcss/src/parse/mq.c \
+	$(NETSURF_LIBCSS_PARSE_PROPERTY_SOURCES) \
+	third_party/netsurf/src/libcss/src/select/hash.c \
+	third_party/netsurf/src/libcss/src/select/font_face.c \
+	third_party/netsurf/src/libcss/src/select/unit.c \
+	third_party/netsurf/src/libcss/src/utils/errors.c \
+	third_party/netsurf/src/libcss/src/utils/utils.c
+NETSURF_C_SOURCES := \
+	$(NETSURF_PARSERUTILS_C_SOURCES) \
+	third_party/netsurf/src/libwapcaplet/src/libwapcaplet.c \
+	$(NETSURF_LIBCSS_C_SOURCES)
 KERNEL_C_OBJECTS := $(patsubst kernel/%.c,build/kernel/%.o,$(KERNEL_C_SOURCES))
 BEARSSL_C_OBJECTS := $(patsubst third_party/bearssl/src/%.c,build/third_party/bearssl/%.o,$(BEARSSL_C_SOURCES))
+NETSURF_C_OBJECTS := $(patsubst third_party/netsurf/src/%.c,build/third_party/netsurf/%.o,$(NETSURF_C_SOURCES))
 KERNEL_ASM_OBJECTS := $(patsubst kernel/%.asm,build/kernel/%.o,$(KERNEL_ASM_SOURCES))
-KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) $(BEARSSL_C_OBJECTS) build/kernel/z/zlink_probe.o
+KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) $(BEARSSL_C_OBJECTS) $(NETSURF_C_OBJECTS) build/kernel/z/zlink_probe.o
 
 all: build/$(BOOTLOADER) build/$(KERNEL_BIN) build/$(KERNEL_ELF) image build/$(ESP_IMG) build/$(BOOTDISK_IMG) build/$(BOOTDISK_GPT_IMG) build/$(DATA_IMG) build/$(ISO_IMG)
 
@@ -157,6 +190,18 @@ build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED
 build/third_party/bearssl/%.o: third_party/bearssl/src/%.c | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(KERNEL_CFLAGS) -Wno-unused-parameter -Wno-unused-function -c $< -o $@
+
+build/third_party/netsurf/libparserutils/%.o: third_party/netsurf/src/libparserutils/%.c | build
+	$(MKDIR_P) $(@D)
+	$(CC) $(NETSURF_PARSERUTILS_CFLAGS) -c $< -o $@
+
+build/third_party/netsurf/libcss/%.o: third_party/netsurf/src/libcss/%.c | build
+	$(MKDIR_P) $(@D)
+	$(CC) $(NETSURF_LIBCSS_CFLAGS) -c $< -o $@
+
+build/third_party/netsurf/libwapcaplet/%.o: third_party/netsurf/src/libwapcaplet/%.c | build
+	$(MKDIR_P) $(@D)
+	$(CC) $(NETSURF_COMMON_CFLAGS) -c $< -o $@
 
 build/kernel/%.o: kernel/%.asm | build
 	$(MKDIR_P) $(@D)

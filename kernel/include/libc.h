@@ -15,10 +15,21 @@ char *strncpy(char *dst, const char *src, size_t n);
 char *strcat(char *dst, const char *src);
 int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, size_t n);
+int strcasecmp(const char *a, const char *b);
+int strncasecmp(const char *a, const char *b, size_t n);
 char *strchr(const char *s, int ch);
 char *strrchr(const char *s, int ch);
 char *strstr(const char *haystack, const char *needle);
 char *strdup(const char *s);
+
+int tolower(int ch);
+int toupper(int ch);
+
+void *bsearch(const void *key,
+              const void *base,
+              size_t nmemb,
+              size_t size,
+              int (*compar)(const void *, const void *));
 
 void *malloc(size_t size);
 void *calloc(size_t count, size_t size);

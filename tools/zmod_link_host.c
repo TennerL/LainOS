@@ -36,7 +36,10 @@ static const char *const host_kernel_exports[] = {
     "kfree",
     "kmalloc_size",
     "malloc",
+    "calloc",
+    "realloc",
     "free",
+    "errno_location",
     "kernel_task_submit_named",
     "kernel_task_async_supported",
     "kernel_task_done",
@@ -44,14 +47,31 @@ static const char *const host_kernel_exports[] = {
     "kernel_task_wait",
     "memcpy",
     "memset",
+    "memmove",
+    "memcmp",
     "strlen",
+    "strcpy",
+    "strncpy",
+    "strcat",
     "strcmp",
+    "strncmp",
+    "strcasecmp",
+    "strncasecmp",
+    "strchr",
+    "strrchr",
+    "strstr",
+    "strdup",
+    "tolower",
+    "toupper",
+    "bsearch",
     "gfx_width",
     "gfx_height",
     "gfx_viewport_active",
     "gfx_fill_rect",
     "gfx_draw_rect",
     "draw_text_at_pixel",
+    "put_char_at_screen",
+    "put_dec_at_screen",
     "os_read_file",
     "os_load_file_shared",
     "os_file_buffer",
@@ -66,6 +86,12 @@ static const char *const host_kernel_exports[] = {
     "web_style_prepare_document",
     "web_style_for_tag",
     "web_style_for_cached_rules",
+    "webcompat_lwc_smoke",
+    "webcompat_lwc_last_status",
+    "webcompat_pu_smoke",
+    "webcompat_pu_status",
+    "webcompat_css_smoke",
+    "webcompat_css_status",
 };
 
 static int host_streq(const char *a, const char *b) {
@@ -95,7 +121,13 @@ int kernel_export_value(const char *name, uint64_t *out) {
         host_streq(name, "image_decode_to_screen_tiled") ||
         host_streq(name, "web_style_prepare_document") ||
         host_streq(name, "web_style_for_tag") ||
-        host_streq(name, "web_style_for_cached_rules")) {
+        host_streq(name, "web_style_for_cached_rules") ||
+        host_streq(name, "webcompat_lwc_smoke") ||
+        host_streq(name, "webcompat_lwc_last_status") ||
+        host_streq(name, "webcompat_pu_smoke") ||
+        host_streq(name, "webcompat_pu_status") ||
+        host_streq(name, "webcompat_css_smoke") ||
+        host_streq(name, "webcompat_css_status")) {
         if (out) {
             *out = 0x1000f0000ull;
         }

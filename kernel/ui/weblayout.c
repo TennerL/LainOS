@@ -6,6 +6,7 @@ enum {
     WEB_PROP_DISPLAY = 0,
     WEB_PROP_VISIBILITY,
     WEB_PROP_TEXT_ALIGN,
+    WEB_PROP_COLOR,
     WEB_PROP_POSITION,
     WEB_PROP_LEFT,
     WEB_PROP_RIGHT,
@@ -421,6 +422,167 @@ static void web_set_text_align(web_style_state_t *state, uint32_t align, uint32_
     state->style.text_align = align;
 }
 
+static int web_hex_value(uint8_t ch) {
+    if (ch >= '0' && ch <= '9') {
+        return (int)(ch - '0');
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return (int)(ch - 'A' + 10);
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return (int)(ch - 'a' + 10);
+    }
+    return -1;
+}
+
+static int web_parse_hex_color(const uint8_t *text, uint32_t start, uint32_t end, uint32_t *out_color) {
+    if (start >= end || text[start] != '#') {
+        return 0;
+    }
+    if (start + 3u >= end) {
+        return 0;
+    }
+    int r1 = web_hex_value(text[start + 1u]);
+    int g1 = web_hex_value(text[start + 2u]);
+    int b1 = web_hex_value(text[start + 3u]);
+    if (r1 < 0 || g1 < 0 || b1 < 0) {
+        return 0;
+    }
+    if (start + 6u < end) {
+        int r2 = web_hex_value(text[start + 2u]);
+        int g2 = web_hex_value(text[start + 4u]);
+        int b2 = web_hex_value(text[start + 6u]);
+        int g1_full = web_hex_value(text[start + 3u]);
+        int b1_full = web_hex_value(text[start + 5u]);
+        if (r2 >= 0 && g1_full >= 0 && g2 >= 0 && b1_full >= 0 && b2 >= 0) {
+            *out_color = (uint32_t)(((r1 * 16 + r2) << 16) |
+                                    ((g1_full * 16 + g2) << 8) |
+                                    (b1_full * 16 + b2));
+            return 1;
+        }
+    }
+    *out_color = (uint32_t)(((r1 * 17) << 16) | ((g1 * 17) << 8) | (b1 * 17));
+    return 1;
+}
+
+static void web_skip_color_separators(const uint8_t *text, uint32_t *pos, uint32_t end) {
+    while (*pos < end && (web_is_space(text[*pos]) || text[*pos] == ',')) {
+        ++*pos;
+    }
+}
+
+static int web_parse_color_component(const uint8_t *text, uint32_t *pos, uint32_t end, uint32_t *out_value) {
+    web_skip_color_separators(text, pos, end);
+    if (*pos >= end || !web_is_digit(text[*pos])) {
+        return 0;
+    }
+    uint32_t value = 0;
+    while (*pos < end && web_is_digit(text[*pos])) {
+        if (value < 100000u) {
+            value = value * 10u + (uint32_t)(text[*pos] - '0');
+        }
+        ++*pos;
+    }
+    if (*pos < end && text[*pos] == '%') {
+        value = (value * 255u) / 100u;
+        ++*pos;
+    }
+    if (value > 255u) {
+        value = 255u;
+    }
+    *out_value = value;
+    return 1;
+}
+
+static int web_parse_rgb_color(const uint8_t *text, uint32_t start, uint32_t end, uint32_t *out_color) {
+    if (!web_range_starts_cstr_ci(text, start, end, "rgb(") &&
+        !web_range_starts_cstr_ci(text, start, end, "rgba(")) {
+        return 0;
+    }
+    uint32_t pos = start;
+    while (pos < end && text[pos] != '(') {
+        ++pos;
+    }
+    if (pos >= end || text[pos] != '(') {
+        return 0;
+    }
+    ++pos;
+    uint32_t r = 0;
+    uint32_t g = 0;
+    uint32_t b = 0;
+    if (!web_parse_color_component(text, &pos, end, &r) ||
+        !web_parse_color_component(text, &pos, end, &g) ||
+        !web_parse_color_component(text, &pos, end, &b)) {
+        return 0;
+    }
+    *out_color = (r << 16) | (g << 8) | b;
+    return 1;
+}
+
+static int web_named_color(const uint8_t *text,
+                           uint32_t start,
+                           uint32_t end,
+                           const char *name,
+                           uint32_t color,
+                           uint32_t *out_color) {
+    if (web_range_equal_cstr_ci(text, start, end, name)) {
+        *out_color = color;
+        return 1;
+    }
+    return 0;
+}
+
+static int web_parse_named_color(const uint8_t *text, uint32_t start, uint32_t end, uint32_t *out_color) {
+    return web_named_color(text, start, end, "black", 0x000000u, out_color) ||
+           web_named_color(text, start, end, "white", 0xffffffu, out_color) ||
+           web_named_color(text, start, end, "red", 0xff0000u, out_color) ||
+           web_named_color(text, start, end, "green", 0x008000u, out_color) ||
+           web_named_color(text, start, end, "blue", 0x0000ffu, out_color) ||
+           web_named_color(text, start, end, "gray", 0x808080u, out_color) ||
+           web_named_color(text, start, end, "grey", 0x808080u, out_color) ||
+           web_named_color(text, start, end, "silver", 0xc0c0c0u, out_color) ||
+           web_named_color(text, start, end, "maroon", 0x800000u, out_color) ||
+           web_named_color(text, start, end, "purple", 0x800080u, out_color) ||
+           web_named_color(text, start, end, "fuchsia", 0xff00ffu, out_color) ||
+           web_named_color(text, start, end, "lime", 0x00ff00u, out_color) ||
+           web_named_color(text, start, end, "olive", 0x808000u, out_color) ||
+           web_named_color(text, start, end, "yellow", 0xffff00u, out_color) ||
+           web_named_color(text, start, end, "navy", 0x000080u, out_color) ||
+           web_named_color(text, start, end, "teal", 0x008080u, out_color) ||
+           web_named_color(text, start, end, "aqua", 0x00ffffu, out_color) ||
+           web_named_color(text, start, end, "orange", 0xffa500u, out_color);
+}
+
+static int web_parse_color_value(const uint8_t *text, uint32_t start, uint32_t end, uint32_t *out_color) {
+    start = web_trim_start(text, start, end);
+    end = web_trim_end(text, start, end);
+    if (start >= end) {
+        return 0;
+    }
+    uint32_t token_end = start;
+    while (token_end < end && !web_is_space(text[token_end]) && text[token_end] != '!') {
+        ++token_end;
+    }
+    if (text[start] == '#') {
+        return web_parse_hex_color(text, start, end, out_color);
+    }
+    if (web_parse_rgb_color(text, start, end, out_color)) {
+        return 1;
+    }
+    return web_parse_named_color(text, start, token_end, out_color);
+}
+
+static void web_set_color(web_style_state_t *state,
+                          uint32_t color,
+                          uint32_t specificity,
+                          int important) {
+    if (!web_cascade_allows(state, WEB_PROP_COLOR, specificity, important)) {
+        return;
+    }
+    state->style.flags |= WEB_STYLE_FLAG_HAS_COLOR;
+    state->style.color = color;
+}
+
 static void web_set_position(web_style_state_t *state, const uint8_t *value, uint32_t start, uint32_t end, uint32_t specificity, int important) {
     if (!web_cascade_allows(state, WEB_PROP_POSITION, specificity, important)) {
         return;
@@ -706,6 +868,11 @@ static void web_apply_declarations(const uint8_t *css,
             } else if (web_range_contains_cstr_ci(css, value_start, value_end, "left") ||
                        web_range_contains_cstr_ci(css, value_start, value_end, "start")) {
                 web_set_text_align(state, WEB_STYLE_ALIGN_LEFT, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "color")) {
+            uint32_t color = 0;
+            if (web_parse_color_value(css, value_start, value_end, &color)) {
+                web_set_color(state, color, specificity, important);
             }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "position")) {
             web_set_position(state, css, value_start, value_end, specificity, important);
@@ -1503,6 +1670,7 @@ static void web_state_init(web_style_state_t *state) {
     state->style.bottom = 0;
     state->style.width = 0;
     state->style.height = 0;
+    state->style.color = 0;
     for (uint32_t i = 0; i < WEB_PROP_COUNT; ++i) {
         state->score[i] = 0;
     }

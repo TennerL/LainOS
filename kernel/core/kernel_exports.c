@@ -6,6 +6,7 @@
 #include "libc.h"
 #include "registry.h"
 #include "shell.h"
+#include "webcompat.h"
 #include "weblayout.h"
 
 static int kernel_export_streq(const char *a, const char *b) {
@@ -49,10 +50,15 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("strcat", strcat),
     KERNEL_EXPORT("strcmp", strcmp),
     KERNEL_EXPORT("strncmp", strncmp),
+    KERNEL_EXPORT("strcasecmp", strcasecmp),
+    KERNEL_EXPORT("strncasecmp", strncasecmp),
     KERNEL_EXPORT("strchr", strchr),
     KERNEL_EXPORT("strrchr", strrchr),
     KERNEL_EXPORT("strstr", strstr),
     KERNEL_EXPORT("strdup", strdup),
+    KERNEL_EXPORT("tolower", tolower),
+    KERNEL_EXPORT("toupper", toupper),
+    KERNEL_EXPORT("bsearch", bsearch),
     KERNEL_EXPORT("__errno_location", __errno_location),
     KERNEL_EXPORT("errno_location", errno_location),
     KERNEL_EXPORT("page_alloc", page_alloc),
@@ -108,6 +114,12 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("web_style_prepare_document", web_style_prepare_document),
     KERNEL_EXPORT("web_style_for_tag", web_style_for_tag),
     KERNEL_EXPORT("web_style_for_cached_rules", web_style_for_cached_rules),
+    KERNEL_EXPORT("webcompat_lwc_smoke", webcompat_lwc_smoke),
+    KERNEL_EXPORT("webcompat_lwc_last_status", webcompat_lwc_last_status),
+    KERNEL_EXPORT("webcompat_pu_smoke", webcompat_pu_smoke),
+    KERNEL_EXPORT("webcompat_pu_status", webcompat_pu_status),
+    KERNEL_EXPORT("webcompat_css_smoke", webcompat_css_smoke),
+    KERNEL_EXPORT("webcompat_css_status", webcompat_css_status),
     KERNEL_EXPORT("jpg_probe", jpg_probe),
     KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
     KERNEL_EXPORT("jpg_decode_to_screen", jpg_decode_to_screen),
