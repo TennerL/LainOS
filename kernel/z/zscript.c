@@ -10,10 +10,10 @@
 #define Z_STRING_POOL_SIZE 65536u
 #define Z_MAX_ARRAY_DIMS 3u
 #define Z_MAX_STRUCTS 32u
-#define Z_MAX_STRUCT_FIELDS 16u
+#define Z_MAX_STRUCT_FIELDS 32u
 #define Z_MAX_GLOBALS 384u
 #define Z_MAX_LOOP_DEPTH 16u
-#define Z_MAX_CONSTANTS 64u
+#define Z_MAX_CONSTANTS 128u
 #define Z_MAX_TYPEDEFS 32u
 #define Z_MAX_FUNCTION_SIGNATURES 512u
 
@@ -181,6 +181,7 @@ typedef struct {
     uint32_t out_capacity;
     uint32_t out_size;
     uint32_t error_line;
+    uint32_t error_code;
     uint32_t label_counter;
     char label_prefix[Z_MAX_LABEL_PREFIX];
     int object_mode;
@@ -218,6 +219,8 @@ typedef struct {
 static const char *const z_arg_registers[Z_MAX_PARAMS] = {
     "rdi", "rsi", "rdx", "rcx", "r8", "r9",
 };
+
+static uint32_t zscript_last_error_code;
 
 static int z_char_is_space(char ch) {
     return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
@@ -507,15 +510,25 @@ static uint32_t z_pointer_step_size_bytes(const z_compiler_t *c, z_type_t pointe
     return z_array_element_size_bytes(c, z_type_pointee(pointer_type));
 }
 
-static void z_set_error(z_compiler_t *c, uint32_t line) {
+static void z_set_error_code(z_compiler_t *c, uint32_t line, uint32_t code) {
     if (c->error_line == 0) {
         c->error_line = line;
     }
+    if (c->error_code == ZSCRIPT_ERROR_NONE) {
+        c->error_code = code;
+    }
+    if (zscript_last_error_code == ZSCRIPT_ERROR_NONE) {
+        zscript_last_error_code = code;
+    }
+}
+
+static void z_set_error(z_compiler_t *c, uint32_t line) {
+    z_set_error_code(c, line, ZSCRIPT_ERROR_SYNTAX);
 }
 
 static int z_emit_char(z_compiler_t *c, char ch) {
     if (c->out_size >= c->out_capacity) {
-        z_set_error(c, c->current.line ? c->current.line : c->line);
+        z_set_error_code(c, c->current.line ? c->current.line : c->line, ZSCRIPT_ERROR_OUTPUT_FULL);
         return -1;
     }
 
@@ -6614,7 +6627,9 @@ static int zscript_compile_source_internal(const char *source,
     char entry_label[Z_MAX_LABEL_TEXT];
     uint32_t i;
 
+    zscript_last_error_code = ZSCRIPT_ERROR_NONE;
     if (source == 0 || out == 0 || out_size == 0 || out_capacity == 0) {
+        zscript_last_error_code = ZSCRIPT_ERROR_SYNTAX;
         return -1;
     }
 
@@ -6630,6 +6645,7 @@ static int zscript_compile_source_internal(const char *source,
     c.out_capacity = out_capacity;
     c.out_size = 0;
     c.error_line = 0;
+    c.error_code = ZSCRIPT_ERROR_NONE;
     c.label_counter = 0;
     c.label_prefix[0] = '\0';
     c.object_mode = !emit_start_stub;
@@ -6865,6 +6881,9 @@ static int zscript_compile_source_internal(const char *source,
     }
 
     if (c.out_size >= c.out_capacity) {
+        z_set_error_code(&c,
+                         c.error_line ? c.error_line : c.line,
+                         ZSCRIPT_ERROR_OUTPUT_FULL);
         if (error_line) {
             *error_line = c.error_line ? c.error_line : c.line;
         }
@@ -6876,6 +6895,7 @@ static int zscript_compile_source_internal(const char *source,
     if (error_line) {
         *error_line = 0;
     }
+    zscript_last_error_code = ZSCRIPT_ERROR_NONE;
     return 0;
 }
 
@@ -6916,4 +6936,8 @@ int zscript_compile_source_object(const char *source,
                                            error_line,
                                            entry_label,
                                            entry_label_capacity);
+}
+
+int zscript_last_error(void) {
+    return (int)zscript_last_error_code;
 }

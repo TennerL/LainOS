@@ -102,6 +102,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("gfx_smp_pixels", graphics_smp_pixels),
     KERNEL_EXPORT("gfx_get_pixel", graphics_get_pixel),
     KERNEL_EXPORT("gfx_fill_rect", graphics_fill_rect),
+    KERNEL_EXPORT("gfx_scroll_rect", graphics_scroll_rect),
     KERNEL_EXPORT("gfx_draw_rect", graphics_draw_rect),
     KERNEL_EXPORT("gfx_draw_line", graphics_draw_line),
     KERNEL_EXPORT("gfx_clear", graphics_clear),

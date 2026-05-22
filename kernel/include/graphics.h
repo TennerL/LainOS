@@ -22,6 +22,7 @@ void graphics_backbuffer_flush(void);
 void graphics_backbuffer_flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 int graphics_capture_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t *out, uint32_t out_pixels);
 int graphics_draw_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t height, const uint32_t *pixels, uint32_t pixel_count);
+void graphics_scroll_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, int32_t dy, uint32_t fill_rgb_color);
 uint32_t graphics_smp_last_workers(void);
 uint64_t graphics_smp_jobs(void);
 uint64_t graphics_smp_ops(void);

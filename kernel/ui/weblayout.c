@@ -1,6 +1,16 @@
 #include "weblayout.h"
 
+#include <stdbool.h>
 #include <stddef.h>
+
+#include "libc.h"
+#include "libcss/computed.h"
+#include "libcss/fpmath.h"
+#include "libcss/properties.h"
+#include "libcss/select.h"
+#include "libcss/stylesheet.h"
+#include "libcss/unit.h"
+#include "libwapcaplet/libwapcaplet.h"
 
 enum {
     WEB_PROP_DISPLAY = 0,
@@ -16,6 +26,20 @@ enum {
     WEB_PROP_HEIGHT,
     WEB_PROP_MARGIN_AUTO_X,
     WEB_PROP_CENTER_X,
+    WEB_PROP_BACKGROUND_COLOR,
+    WEB_PROP_MARGIN_LEFT,
+    WEB_PROP_MARGIN_RIGHT,
+    WEB_PROP_MARGIN_TOP,
+    WEB_PROP_MARGIN_BOTTOM,
+    WEB_PROP_PADDING_LEFT,
+    WEB_PROP_PADDING_RIGHT,
+    WEB_PROP_PADDING_TOP,
+    WEB_PROP_PADDING_BOTTOM,
+    WEB_PROP_BORDER_LEFT,
+    WEB_PROP_BORDER_RIGHT,
+    WEB_PROP_BORDER_TOP,
+    WEB_PROP_BORDER_BOTTOM,
+    WEB_PROP_BORDER_COLOR,
     WEB_PROP_COUNT
 };
 
@@ -26,6 +50,9 @@ typedef struct {
 } web_style_state_t;
 
 #define WEB_STYLE_MAX_CACHED_RULES 1024u
+#define WEB_CSS_MAX_NODES 2048u
+#define WEB_CSS_MAX_STACK 96u
+#define WEB_CSS_MAX_CLASSES 8u
 
 typedef struct {
     uint32_t selector_start;
@@ -40,6 +67,27 @@ static uint32_t web_cached_viewport_height;
 static uint32_t web_cached_rule_count;
 static uint32_t web_cached_rule_saturated;
 static web_cached_rule_t web_cached_rules[WEB_STYLE_MAX_CACHED_RULES];
+
+typedef struct {
+    uint32_t tag_pos;
+    int32_t parent;
+    int32_t prev_sibling;
+    uint32_t child_count;
+    lwc_string *name;
+    lwc_string *id;
+    lwc_string *classes[WEB_CSS_MAX_CLASSES];
+    lwc_string *class_refs[WEB_CSS_MAX_CLASSES];
+    uint32_t class_count;
+} web_css_node_t;
+
+static css_stylesheet *web_css_sheet;
+static css_stylesheet *web_css_ua_sheet;
+static css_select_ctx *web_css_select_ctx;
+static uint32_t web_css_ready;
+static uint32_t web_css_rule_blocks;
+static uint32_t web_css_node_count;
+static uint32_t web_css_node_saturated;
+static web_css_node_t web_css_nodes[WEB_CSS_MAX_NODES];
 
 static uint8_t web_lower(uint8_t ch) {
     if (ch >= 'A' && ch <= 'Z') {
@@ -371,6 +419,679 @@ static int web_attr_value_exact_range_ci(const uint8_t *html,
     end = web_trim_end(html, start, end);
     return web_range_equal_ci(html, start, end, value, value_start, value_end);
 }
+
+static css_select_handler web_css_select_handler;
+
+static int web_css_qname_is_universal(const css_qname *qname) {
+    return qname != NULL &&
+           qname->name != NULL &&
+           lwc_string_length(qname->name) == 1u &&
+           lwc_string_data(qname->name)[0] == '*';
+}
+
+static int web_css_lwc_equal_ci(lwc_string *a, lwc_string *b) {
+    bool match = false;
+    if (a == NULL || b == NULL) {
+        return 0;
+    }
+    if (lwc_string_caseless_isequal(a, b, &match) != lwc_error_ok) {
+        return 0;
+    }
+    return match ? 1 : 0;
+}
+
+static web_css_node_t *web_css_node(void *node) {
+    return (web_css_node_t *)node;
+}
+
+static css_error web_css_resolve_url(void *pw,
+                                     const char *base,
+                                     lwc_string *rel,
+                                     lwc_string **abs) {
+    (void)pw;
+    (void)base;
+    if (rel == NULL || abs == NULL) {
+        return CSS_BADPARM;
+    }
+    *abs = lwc_string_ref(rel);
+    return CSS_OK;
+}
+
+static css_error web_css_node_name(void *pw, void *node, css_qname *qname) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (n == NULL || qname == NULL || n->name == NULL) {
+        return CSS_BADPARM;
+    }
+    qname->ns = NULL;
+    qname->name = lwc_string_ref(n->name);
+    return CSS_OK;
+}
+
+static css_error web_css_node_classes(void *pw,
+                                      void *node,
+                                      lwc_string ***classes,
+                                      uint32_t *n_classes) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (classes == NULL || n_classes == NULL) {
+        return CSS_BADPARM;
+    }
+    *classes = NULL;
+    *n_classes = 0;
+    if (n == NULL || n->class_count == 0) {
+        return CSS_OK;
+    }
+    for (uint32_t i = 0; i < n->class_count; ++i) {
+        n->class_refs[i] = lwc_string_ref(n->classes[i]);
+    }
+    *classes = n->class_refs;
+    *n_classes = n->class_count;
+    return CSS_OK;
+}
+
+static css_error web_css_node_id(void *pw, void *node, lwc_string **id) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (id == NULL) {
+        return CSS_BADPARM;
+    }
+    *id = NULL;
+    if (n != NULL && n->id != NULL) {
+        *id = lwc_string_ref(n->id);
+    }
+    return CSS_OK;
+}
+
+static int web_css_node_has_qname(web_css_node_t *node, const css_qname *qname) {
+    if (node == NULL || qname == NULL) {
+        return 0;
+    }
+    if (web_css_qname_is_universal(qname)) {
+        return 1;
+    }
+    return web_css_lwc_equal_ci(node->name, qname->name);
+}
+
+static css_error web_css_named_ancestor_node(void *pw,
+                                             void *node,
+                                             const css_qname *qname,
+                                             void **ancestor) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (ancestor == NULL) {
+        return CSS_BADPARM;
+    }
+    *ancestor = NULL;
+    while (n != NULL && n->parent >= 0) {
+        n = &web_css_nodes[(uint32_t)n->parent];
+        if (web_css_node_has_qname(n, qname)) {
+            *ancestor = n;
+            return CSS_OK;
+        }
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_named_parent_node(void *pw,
+                                           void *node,
+                                           const css_qname *qname,
+                                           void **parent) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (parent == NULL) {
+        return CSS_BADPARM;
+    }
+    *parent = NULL;
+    if (n != NULL && n->parent >= 0) {
+        web_css_node_t *p = &web_css_nodes[(uint32_t)n->parent];
+        if (web_css_node_has_qname(p, qname)) {
+            *parent = p;
+        }
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_named_sibling_node(void *pw,
+                                            void *node,
+                                            const css_qname *qname,
+                                            void **sibling) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (sibling == NULL) {
+        return CSS_BADPARM;
+    }
+    *sibling = NULL;
+    if (n != NULL && n->prev_sibling >= 0) {
+        web_css_node_t *s = &web_css_nodes[(uint32_t)n->prev_sibling];
+        if (web_css_node_has_qname(s, qname)) {
+            *sibling = s;
+        }
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_named_generic_sibling_node(void *pw,
+                                                    void *node,
+                                                    const css_qname *qname,
+                                                    void **sibling) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (sibling == NULL) {
+        return CSS_BADPARM;
+    }
+    *sibling = NULL;
+    while (n != NULL && n->prev_sibling >= 0) {
+        n = &web_css_nodes[(uint32_t)n->prev_sibling];
+        if (web_css_node_has_qname(n, qname)) {
+            *sibling = n;
+            return CSS_OK;
+        }
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_parent_node(void *pw, void *node, void **parent) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (parent == NULL) {
+        return CSS_BADPARM;
+    }
+    *parent = NULL;
+    if (n != NULL && n->parent >= 0) {
+        *parent = &web_css_nodes[(uint32_t)n->parent];
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_sibling_node(void *pw, void *node, void **sibling) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (sibling == NULL) {
+        return CSS_BADPARM;
+    }
+    *sibling = NULL;
+    if (n != NULL && n->prev_sibling >= 0) {
+        *sibling = &web_css_nodes[(uint32_t)n->prev_sibling];
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_name(void *pw,
+                                       void *node,
+                                       const css_qname *qname,
+                                       bool *match) {
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = web_css_node_has_qname(web_css_node(node), qname) != 0;
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_class(void *pw,
+                                        void *node,
+                                        lwc_string *name,
+                                        bool *match) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    if (n == NULL || name == NULL) {
+        return CSS_OK;
+    }
+    for (uint32_t i = 0; i < n->class_count; ++i) {
+        if (web_css_lwc_equal_ci(n->classes[i], name)) {
+            *match = true;
+            return CSS_OK;
+        }
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_id(void *pw,
+                                     void *node,
+                                     lwc_string *name,
+                                     bool *match) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = n != NULL && web_css_lwc_equal_ci(n->id, name) != 0;
+    return CSS_OK;
+}
+
+static int web_css_attr_value_range(web_css_node_t *node,
+                                    const css_qname *qname,
+                                    uint32_t *start,
+                                    uint32_t *end) {
+    if (node == NULL || qname == NULL || qname->name == NULL) {
+        return 0;
+    }
+    return web_attr_value_range_name(web_cached_html,
+                                     node->tag_pos,
+                                     (const uint8_t *)lwc_string_data(qname->name),
+                                     0,
+                                     (uint32_t)lwc_string_length(qname->name),
+                                     start,
+                                     end);
+}
+
+static css_error web_css_node_has_attribute(void *pw,
+                                            void *node,
+                                            const css_qname *qname,
+                                            bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = web_css_attr_value_range(web_css_node(node), qname, &start, &end) != 0;
+    return CSS_OK;
+}
+
+static int web_css_lwc_value_equal_ci(const uint8_t *html,
+                                      uint32_t start,
+                                      uint32_t end,
+                                      lwc_string *value) {
+    if (value == NULL) {
+        return 0;
+    }
+    return web_range_equal_ci(html,
+                              start,
+                              end,
+                              (const uint8_t *)lwc_string_data(value),
+                              0,
+                              (uint32_t)lwc_string_length(value));
+}
+
+static css_error web_css_node_has_attribute_equal(void *pw,
+                                                  void *node,
+                                                  const css_qname *qname,
+                                                  lwc_string *value,
+                                                  bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    if (web_css_attr_value_range(web_css_node(node), qname, &start, &end)) {
+        start = web_trim_start(web_cached_html, start, end);
+        end = web_trim_end(web_cached_html, start, end);
+        *match = web_css_lwc_value_equal_ci(web_cached_html, start, end, value) != 0;
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_attribute_dashmatch(void *pw,
+                                                      void *node,
+                                                      const css_qname *qname,
+                                                      lwc_string *value,
+                                                      bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    uint32_t len;
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    if (value == NULL || !web_css_attr_value_range(web_css_node(node), qname, &start, &end)) {
+        return CSS_OK;
+    }
+    start = web_trim_start(web_cached_html, start, end);
+    end = web_trim_end(web_cached_html, start, end);
+    len = (uint32_t)lwc_string_length(value);
+    if (web_css_lwc_value_equal_ci(web_cached_html, start, end, value) ||
+        (end > start + len &&
+         web_cached_html[start + len] == '-' &&
+         web_range_equal_ci(web_cached_html,
+                            start,
+                            start + len,
+                            (const uint8_t *)lwc_string_data(value),
+                            0,
+                            len))) {
+        *match = true;
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_attribute_includes(void *pw,
+                                                     void *node,
+                                                     const css_qname *qname,
+                                                     lwc_string *value,
+                                                     bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    if (value == NULL || !web_css_attr_value_range(web_css_node(node), qname, &start, &end)) {
+        return CSS_OK;
+    }
+    uint32_t pos = start;
+    while (pos < end) {
+        while (pos < end && web_is_space(web_cached_html[pos])) {
+            ++pos;
+        }
+        uint32_t part_start = pos;
+        while (pos < end && !web_is_space(web_cached_html[pos])) {
+            ++pos;
+        }
+        if (part_start < pos && web_css_lwc_value_equal_ci(web_cached_html, part_start, pos, value)) {
+            *match = true;
+            return CSS_OK;
+        }
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_attribute_prefix(void *pw,
+                                                   void *node,
+                                                   const css_qname *qname,
+                                                   lwc_string *value,
+                                                   bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    uint32_t len;
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    if (value == NULL || !web_css_attr_value_range(web_css_node(node), qname, &start, &end)) {
+        return CSS_OK;
+    }
+    len = (uint32_t)lwc_string_length(value);
+    if (end - start >= len &&
+        web_range_equal_ci(web_cached_html, start, start + len, (const uint8_t *)lwc_string_data(value), 0, len)) {
+        *match = true;
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_attribute_suffix(void *pw,
+                                                   void *node,
+                                                   const css_qname *qname,
+                                                   lwc_string *value,
+                                                   bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    uint32_t len;
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    if (value == NULL || !web_css_attr_value_range(web_css_node(node), qname, &start, &end)) {
+        return CSS_OK;
+    }
+    len = (uint32_t)lwc_string_length(value);
+    if (end - start >= len &&
+        web_range_equal_ci(web_cached_html, end - len, end, (const uint8_t *)lwc_string_data(value), 0, len)) {
+        *match = true;
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_has_attribute_substring(void *pw,
+                                                      void *node,
+                                                      const css_qname *qname,
+                                                      lwc_string *value,
+                                                      bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    uint32_t len;
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    if (value == NULL || !web_css_attr_value_range(web_css_node(node), qname, &start, &end)) {
+        return CSS_OK;
+    }
+    len = (uint32_t)lwc_string_length(value);
+    if (len != 0 &&
+        web_range_contains_range_ci(web_cached_html,
+                                    start,
+                                    end,
+                                    (const uint8_t *)lwc_string_data(value),
+                                    0,
+                                    len)) {
+        *match = true;
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_node_is_root(void *pw, void *node, bool *match) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = n != NULL && n->parent < 0;
+    return CSS_OK;
+}
+
+static css_error web_css_node_count_siblings(void *pw,
+                                             void *node,
+                                             bool same_name,
+                                             bool after,
+                                             int32_t *count) {
+    web_css_node_t *n = web_css_node(node);
+    int32_t out = 0;
+    (void)pw;
+    if (count == NULL) {
+        return CSS_BADPARM;
+    }
+    if (n == NULL || after) {
+        *count = 0;
+        return CSS_OK;
+    }
+    while (n->prev_sibling >= 0) {
+        n = &web_css_nodes[(uint32_t)n->prev_sibling];
+        if (!same_name || web_css_lwc_equal_ci(n->name, web_css_node(node)->name)) {
+            ++out;
+        }
+    }
+    *count = out;
+    return CSS_OK;
+}
+
+static css_error web_css_node_is_empty(void *pw, void *node, bool *match) {
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = n != NULL && n->child_count == 0;
+    return CSS_OK;
+}
+
+static css_error web_css_node_is_link(void *pw, void *node, bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = n != NULL &&
+             web_attr_value_range_cstr(web_cached_html, n->tag_pos, "href", &start, &end) != 0;
+    return CSS_OK;
+}
+
+static css_error web_css_node_false(void *pw, void *node, bool *match) {
+    (void)pw;
+    (void)node;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    return CSS_OK;
+}
+
+static css_error web_css_node_is_enabled(void *pw, void *node, bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = n == NULL ||
+             web_attr_value_range_cstr(web_cached_html, n->tag_pos, "disabled", &start, &end) == 0;
+    return CSS_OK;
+}
+
+static css_error web_css_node_is_disabled(void *pw, void *node, bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = n != NULL &&
+             web_attr_value_range_cstr(web_cached_html, n->tag_pos, "disabled", &start, &end) != 0;
+    return CSS_OK;
+}
+
+static css_error web_css_node_is_checked(void *pw, void *node, bool *match) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    web_css_node_t *n = web_css_node(node);
+    (void)pw;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = n != NULL &&
+             web_attr_value_range_cstr(web_cached_html, n->tag_pos, "checked", &start, &end) != 0;
+    return CSS_OK;
+}
+
+static css_error web_css_node_is_lang(void *pw, void *node, lwc_string *lang, bool *match) {
+    (void)pw;
+    (void)node;
+    (void)lang;
+    if (match == NULL) {
+        return CSS_BADPARM;
+    }
+    *match = false;
+    return CSS_OK;
+}
+
+static css_error web_css_node_presentational_hint(void *pw,
+                                                  void *node,
+                                                  uint32_t *nhints,
+                                                  css_hint **hints) {
+    (void)pw;
+    (void)node;
+    if (nhints == NULL || hints == NULL) {
+        return CSS_BADPARM;
+    }
+    *nhints = 0;
+    *hints = NULL;
+    return CSS_OK;
+}
+
+static css_error web_css_ua_default_for_property(void *pw, uint32_t property, css_hint *hint) {
+    (void)pw;
+    if (hint == NULL) {
+        return CSS_BADPARM;
+    }
+    if (property == CSS_PROP_COLOR) {
+        hint->data.color = 0xff000000u;
+        hint->status = CSS_COLOR_COLOR;
+        return CSS_OK;
+    }
+    if (property == CSS_PROP_FONT_FAMILY) {
+        hint->data.strings = NULL;
+        hint->status = CSS_FONT_FAMILY_SANS_SERIF;
+        return CSS_OK;
+    }
+    if (property == CSS_PROP_QUOTES) {
+        hint->data.strings = NULL;
+        hint->status = CSS_QUOTES_NONE;
+        return CSS_OK;
+    }
+    if (property == CSS_PROP_VOICE_FAMILY) {
+        hint->data.strings = NULL;
+        hint->status = 0;
+        return CSS_OK;
+    }
+    return CSS_INVALID;
+}
+
+static css_error web_css_set_node_data(void *pw, void *node, void *libcss_node_data) {
+    if (libcss_node_data != NULL) {
+        css_libcss_node_data_handler(&web_css_select_handler,
+                                     CSS_NODE_DELETED,
+                                     pw,
+                                     node,
+                                     NULL,
+                                     libcss_node_data);
+    }
+    return CSS_OK;
+}
+
+static css_error web_css_get_node_data(void *pw, void *node, void **libcss_node_data) {
+    (void)pw;
+    (void)node;
+    if (libcss_node_data == NULL) {
+        return CSS_BADPARM;
+    }
+    *libcss_node_data = NULL;
+    return CSS_OK;
+}
+
+static css_select_handler web_css_select_handler = {
+    CSS_SELECT_HANDLER_VERSION_1,
+    web_css_node_name,
+    web_css_node_classes,
+    web_css_node_id,
+    web_css_named_ancestor_node,
+    web_css_named_parent_node,
+    web_css_named_sibling_node,
+    web_css_named_generic_sibling_node,
+    web_css_parent_node,
+    web_css_sibling_node,
+    web_css_node_has_name,
+    web_css_node_has_class,
+    web_css_node_has_id,
+    web_css_node_has_attribute,
+    web_css_node_has_attribute_equal,
+    web_css_node_has_attribute_dashmatch,
+    web_css_node_has_attribute_includes,
+    web_css_node_has_attribute_prefix,
+    web_css_node_has_attribute_suffix,
+    web_css_node_has_attribute_substring,
+    web_css_node_is_root,
+    web_css_node_count_siblings,
+    web_css_node_is_empty,
+    web_css_node_is_link,
+    web_css_node_false,
+    web_css_node_false,
+    web_css_node_false,
+    web_css_node_false,
+    web_css_node_is_enabled,
+    web_css_node_is_disabled,
+    web_css_node_is_checked,
+    web_css_node_false,
+    web_css_node_is_lang,
+    web_css_node_presentational_hint,
+    web_css_ua_default_for_property,
+    web_css_set_node_data,
+    web_css_get_node_data,
+};
 
 static uint32_t web_cascade_score(uint32_t specificity, int important, uint32_t order) {
     if (specificity > 65535u) {
@@ -784,6 +1505,92 @@ static int web_parse_length_px(const uint8_t *text,
     return 1;
 }
 
+static int web_parse_box_lengths(const uint8_t *text,
+                                 uint32_t start,
+                                 uint32_t end,
+                                 uint32_t base,
+                                 uint32_t viewport_width,
+                                 uint32_t viewport_height,
+                                 uint32_t *top,
+                                 uint32_t *right,
+                                 uint32_t *bottom,
+                                 uint32_t *left) {
+    uint32_t values[4] = {0, 0, 0, 0};
+    uint32_t count = 0;
+    uint32_t pos = start;
+    while (count < 4) {
+        pos = web_trim_start(text, pos, end);
+        if (pos >= end || text[pos] == '!') {
+            break;
+        }
+        uint32_t token_start = pos;
+        while (pos < end && !web_is_space(text[pos]) && text[pos] != '!') {
+            ++pos;
+        }
+        if (!web_parse_length_px(text, token_start, pos, base, viewport_width, viewport_height, &values[count])) {
+            return 0;
+        }
+        ++count;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    if (count == 1) {
+        *top = values[0];
+        *right = values[0];
+        *bottom = values[0];
+        *left = values[0];
+    } else if (count == 2) {
+        *top = values[0];
+        *right = values[1];
+        *bottom = values[0];
+        *left = values[1];
+    } else if (count == 3) {
+        *top = values[0];
+        *right = values[1];
+        *bottom = values[2];
+        *left = values[1];
+    } else {
+        *top = values[0];
+        *right = values[1];
+        *bottom = values[2];
+        *left = values[3];
+    }
+    return 1;
+}
+
+static int web_parse_border_width_value(const uint8_t *text,
+                                        uint32_t start,
+                                        uint32_t end,
+                                        uint32_t base,
+                                        uint32_t viewport_width,
+                                        uint32_t viewport_height,
+                                        uint32_t *out_px) {
+    if (web_parse_length_px(text, start, end, base, viewport_width, viewport_height, out_px)) {
+        return 1;
+    }
+    if (web_range_contains_cstr_ci(text, start, end, "thin")) {
+        *out_px = 1;
+        return 1;
+    }
+    if (web_range_contains_cstr_ci(text, start, end, "medium")) {
+        *out_px = 2;
+        return 1;
+    }
+    if (web_range_contains_cstr_ci(text, start, end, "thick")) {
+        *out_px = 4;
+        return 1;
+    }
+    if (web_range_contains_cstr_ci(text, start, end, "solid") ||
+        web_range_contains_cstr_ci(text, start, end, "dotted") ||
+        web_range_contains_cstr_ci(text, start, end, "dashed") ||
+        web_range_contains_cstr_ci(text, start, end, "double")) {
+        *out_px = 1;
+        return 1;
+    }
+    return 0;
+}
+
 static uint32_t web_css_skip_comment(const uint8_t *css, uint32_t pos, uint32_t end) {
     if (pos + 1u < end && css[pos] == '/' && css[pos + 1u] == '*') {
         pos += 2;
@@ -926,6 +1733,23 @@ static void web_apply_declarations(const uint8_t *css,
                 web_set_length_property(state, WEB_PROP_TOP, WEB_STYLE_FLAG_HAS_TOP, &state->style.top, px, specificity, important);
                 web_set_length_property(state, WEB_PROP_BOTTOM, WEB_STYLE_FLAG_HAS_BOTTOM, &state->style.bottom, px, specificity, important);
             }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "margin")) {
+            uint32_t top = 0;
+            uint32_t right = 0;
+            uint32_t bottom = 0;
+            uint32_t left = 0;
+            web_set_flag_property(state,
+                                  WEB_PROP_MARGIN_AUTO_X,
+                                  WEB_STYLE_FLAG_MARGIN_AUTO_X,
+                                  web_range_contains_cstr_ci(css, value_start, value_end, "auto"),
+                                  specificity,
+                                  important);
+            if (web_parse_box_lengths(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &top, &right, &bottom, &left)) {
+                web_set_length_property(state, WEB_PROP_MARGIN_TOP, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_top, top, specificity, important);
+                web_set_length_property(state, WEB_PROP_MARGIN_RIGHT, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_right, right, specificity, important);
+                web_set_length_property(state, WEB_PROP_MARGIN_BOTTOM, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_bottom, bottom, specificity, important);
+                web_set_length_property(state, WEB_PROP_MARGIN_LEFT, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_left, left, specificity, important);
+            }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "margin") ||
                    web_range_equal_cstr_ci(css, prop_start, prop_end, "margin-left") ||
                    web_range_equal_cstr_ci(css, prop_start, prop_end, "margin-right")) {
@@ -935,6 +1759,135 @@ static void web_apply_declarations(const uint8_t *css,
                                   web_range_contains_cstr_ci(css, value_start, value_end, "auto"),
                                   specificity,
                                   important);
+            if (web_range_equal_cstr_ci(css, prop_start, prop_end, "margin-left")) {
+                uint32_t px = 0;
+                if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                    web_set_length_property(state, WEB_PROP_MARGIN_LEFT, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_left, px, specificity, important);
+                } else {
+                    web_clear_length_property(state, WEB_PROP_MARGIN_LEFT, WEB_STYLE_FLAG_HAS_MARGIN, specificity, important);
+                }
+            } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "margin-right")) {
+                uint32_t px = 0;
+                if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                    web_set_length_property(state, WEB_PROP_MARGIN_RIGHT, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_right, px, specificity, important);
+                } else {
+                    web_clear_length_property(state, WEB_PROP_MARGIN_RIGHT, WEB_STYLE_FLAG_HAS_MARGIN, specificity, important);
+                }
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "margin-top")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_MARGIN_TOP, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_top, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_MARGIN_TOP, WEB_STYLE_FLAG_HAS_MARGIN, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "margin-bottom")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_MARGIN_BOTTOM, WEB_STYLE_FLAG_HAS_MARGIN, &state->style.margin_bottom, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_MARGIN_BOTTOM, WEB_STYLE_FLAG_HAS_MARGIN, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "padding")) {
+            uint32_t top = 0;
+            uint32_t right = 0;
+            uint32_t bottom = 0;
+            uint32_t left = 0;
+            if (web_parse_box_lengths(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &top, &right, &bottom, &left)) {
+                web_set_length_property(state, WEB_PROP_PADDING_TOP, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_top, top, specificity, important);
+                web_set_length_property(state, WEB_PROP_PADDING_RIGHT, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_right, right, specificity, important);
+                web_set_length_property(state, WEB_PROP_PADDING_BOTTOM, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_bottom, bottom, specificity, important);
+                web_set_length_property(state, WEB_PROP_PADDING_LEFT, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_left, left, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "padding-left")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_PADDING_LEFT, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_left, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_PADDING_LEFT, WEB_STYLE_FLAG_HAS_PADDING, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "padding-right")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_PADDING_RIGHT, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_right, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_PADDING_RIGHT, WEB_STYLE_FLAG_HAS_PADDING, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "padding-top")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_PADDING_TOP, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_top, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_PADDING_TOP, WEB_STYLE_FLAG_HAS_PADDING, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "padding-bottom")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_PADDING_BOTTOM, WEB_STYLE_FLAG_HAS_PADDING, &state->style.padding_bottom, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_PADDING_BOTTOM, WEB_STYLE_FLAG_HAS_PADDING, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-color")) {
+            uint32_t color = 0;
+            if (web_parse_color_value(css, value_start, value_end, &color) &&
+                web_cascade_allows(state, WEB_PROP_BORDER_COLOR, specificity, important)) {
+                state->style.flags |= WEB_STYLE_FLAG_HAS_BORDER_COLOR;
+                state->style.border_color = color;
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border") ||
+                   web_range_equal_cstr_ci(css, prop_start, prop_end, "border-width")) {
+            uint32_t px = 0;
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "none") ||
+                web_range_contains_cstr_ci(css, value_start, value_end, "hidden")) {
+                web_clear_length_property(state, WEB_PROP_BORDER_TOP, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+                web_clear_length_property(state, WEB_PROP_BORDER_RIGHT, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+                web_clear_length_property(state, WEB_PROP_BORDER_BOTTOM, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+                web_clear_length_property(state, WEB_PROP_BORDER_LEFT, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+            } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-width")) {
+                uint32_t top = 0;
+                uint32_t right = 0;
+                uint32_t bottom = 0;
+                uint32_t left = 0;
+                if (web_parse_box_lengths(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &top, &right, &bottom, &left)) {
+                    web_set_length_property(state, WEB_PROP_BORDER_TOP, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_top, top, specificity, important);
+                    web_set_length_property(state, WEB_PROP_BORDER_RIGHT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_right, right, specificity, important);
+                    web_set_length_property(state, WEB_PROP_BORDER_BOTTOM, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_bottom, bottom, specificity, important);
+                    web_set_length_property(state, WEB_PROP_BORDER_LEFT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_left, left, specificity, important);
+                }
+            } else if (web_parse_border_width_value(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_BORDER_TOP, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_top, px, specificity, important);
+                web_set_length_property(state, WEB_PROP_BORDER_RIGHT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_right, px, specificity, important);
+                web_set_length_property(state, WEB_PROP_BORDER_BOTTOM, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_bottom, px, specificity, important);
+                web_set_length_property(state, WEB_PROP_BORDER_LEFT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_left, px, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-left-width")) {
+            uint32_t px = 0;
+            if (web_parse_border_width_value(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_BORDER_LEFT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_left, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_BORDER_LEFT, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-right-width")) {
+            uint32_t px = 0;
+            if (web_parse_border_width_value(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_BORDER_RIGHT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_right, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_BORDER_RIGHT, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-top-width")) {
+            uint32_t px = 0;
+            if (web_parse_border_width_value(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_BORDER_TOP, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_top, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_BORDER_TOP, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-bottom-width")) {
+            uint32_t px = 0;
+            if (web_parse_border_width_value(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_BORDER_BOTTOM, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_bottom, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_BORDER_BOTTOM, WEB_STYLE_FLAG_HAS_BORDER, specificity, important);
+            }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "justify-content")) {
             if (web_range_contains_cstr_ci(css, value_start, value_end, "center")) {
                 web_set_flag_property(state, WEB_PROP_CENTER_X, WEB_STYLE_FLAG_CENTER_X, 1, specificity, important);
@@ -1497,6 +2450,326 @@ static uint32_t web_find_style_close(const uint8_t *html, uint32_t pos) {
     return pos;
 }
 
+static uint32_t web_find_named_close(const uint8_t *html, uint32_t pos, const char *name) {
+    while (html[pos] != 0) {
+        if (html[pos] == '<' && web_is_closing_tag(html, pos) && web_tag_name_is(html, pos, name)) {
+            return pos;
+        }
+        ++pos;
+    }
+    return pos;
+}
+
+static int web_tag_self_closes(const uint8_t *html, uint32_t pos) {
+    uint32_t last = 0;
+    while (html[pos] != 0 && html[pos] != '>') {
+        if (!web_is_space(html[pos])) {
+            last = html[pos];
+        }
+        ++pos;
+    }
+    return last == '/';
+}
+
+static int web_css_void_tag(const uint8_t *html, uint32_t pos) {
+    return web_tag_self_closes(html, pos) ||
+           web_tag_name_is(html, pos, "area") ||
+           web_tag_name_is(html, pos, "base") ||
+           web_tag_name_is(html, pos, "br") ||
+           web_tag_name_is(html, pos, "col") ||
+           web_tag_name_is(html, pos, "embed") ||
+           web_tag_name_is(html, pos, "hr") ||
+           web_tag_name_is(html, pos, "img") ||
+           web_tag_name_is(html, pos, "input") ||
+           web_tag_name_is(html, pos, "link") ||
+           web_tag_name_is(html, pos, "meta") ||
+           web_tag_name_is(html, pos, "param") ||
+           web_tag_name_is(html, pos, "source") ||
+           web_tag_name_is(html, pos, "track") ||
+           web_tag_name_is(html, pos, "wbr");
+}
+
+static void web_css_release_nodes(void) {
+    for (uint32_t i = 0; i < web_css_node_count; ++i) {
+        if (web_css_nodes[i].name != NULL) {
+            lwc_string_unref(web_css_nodes[i].name);
+            web_css_nodes[i].name = NULL;
+        }
+        if (web_css_nodes[i].id != NULL) {
+            lwc_string_unref(web_css_nodes[i].id);
+            web_css_nodes[i].id = NULL;
+        }
+        for (uint32_t c = 0; c < web_css_nodes[i].class_count; ++c) {
+            if (web_css_nodes[i].classes[c] != NULL) {
+                lwc_string_unref(web_css_nodes[i].classes[c]);
+                web_css_nodes[i].classes[c] = NULL;
+            }
+            web_css_nodes[i].class_refs[c] = NULL;
+        }
+        web_css_nodes[i].class_count = 0;
+    }
+    web_css_node_count = 0;
+    web_css_node_saturated = 0;
+}
+
+static void web_css_reset(void) {
+    if (web_css_select_ctx != NULL) {
+        css_select_ctx_destroy(web_css_select_ctx);
+        web_css_select_ctx = NULL;
+    }
+    if (web_css_sheet != NULL) {
+        css_stylesheet_destroy(web_css_sheet);
+        web_css_sheet = NULL;
+    }
+    if (web_css_ua_sheet != NULL) {
+        css_stylesheet_destroy(web_css_ua_sheet);
+        web_css_ua_sheet = NULL;
+    }
+    web_css_release_nodes();
+    web_css_ready = 0;
+    web_css_rule_blocks = 0;
+}
+
+static int web_css_create_sheet(css_stylesheet **sheet, const char *url) {
+    css_stylesheet_params params;
+
+    if (sheet == NULL) {
+        return -1;
+    }
+    *sheet = NULL;
+    memset(&params, 0, sizeof(params));
+    params.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+    params.level = CSS_LEVEL_21;
+    params.charset = "UTF-8";
+    params.url = url;
+    params.title = "zbrowser";
+    params.allow_quirks = true;
+    params.inline_style = false;
+    params.resolve = web_css_resolve_url;
+
+    return css_stylesheet_create(&params, sheet) == CSS_OK && *sheet != NULL ? 0 : -1;
+}
+
+static int web_css_append_sheet_data(css_stylesheet *sheet, const uint8_t *data, uint32_t len) {
+    css_error error;
+
+    if (sheet == NULL || data == NULL) {
+        return -1;
+    }
+    if (len != 0) {
+        error = css_stylesheet_append_data(sheet, data, len);
+        if (error != CSS_OK && error != CSS_NEEDDATA) {
+            return -1;
+        }
+    }
+    return css_stylesheet_data_done(sheet) == CSS_OK ? 0 : -1;
+}
+
+static void web_css_intern_id(const uint8_t *html, web_css_node_t *node) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (web_attr_value_range_cstr(html, node->tag_pos, "id", &start, &end) && end > start) {
+        lwc_intern_string((const char *)(html + start), end - start, &node->id);
+    }
+}
+
+static void web_css_intern_classes(const uint8_t *html, web_css_node_t *node) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (!web_attr_value_range_cstr(html, node->tag_pos, "class", &start, &end)) {
+        return;
+    }
+    uint32_t pos = start;
+    while (pos < end && node->class_count < WEB_CSS_MAX_CLASSES) {
+        while (pos < end && web_is_space(html[pos])) {
+            ++pos;
+        }
+        uint32_t part_start = pos;
+        while (pos < end && !web_is_space(html[pos])) {
+            ++pos;
+        }
+        if (part_start < pos) {
+            lwc_string *klass = NULL;
+            if (lwc_intern_string((const char *)(html + part_start), pos - part_start, &klass) == lwc_error_ok &&
+                klass != NULL) {
+                node->classes[node->class_count] = klass;
+                ++node->class_count;
+            }
+        }
+    }
+}
+
+static int32_t web_css_add_node(const uint8_t *html,
+                                uint32_t tag_pos,
+                                int32_t parent,
+                                int32_t prev_sibling) {
+    uint32_t name_start = 0;
+    uint32_t name_end = 0;
+    if (web_css_node_count >= WEB_CSS_MAX_NODES) {
+        web_css_node_saturated = 1;
+        return -1;
+    }
+    if (!web_tag_name_range(html, tag_pos, &name_start, &name_end)) {
+        return -1;
+    }
+    web_css_node_t *node = &web_css_nodes[web_css_node_count];
+    memset(node, 0, sizeof(*node));
+    node->tag_pos = tag_pos;
+    node->parent = parent;
+    node->prev_sibling = prev_sibling;
+    if (lwc_intern_string((const char *)(html + name_start), name_end - name_start, &node->name) != lwc_error_ok ||
+        node->name == NULL) {
+        return -1;
+    }
+    web_css_intern_id(html, node);
+    web_css_intern_classes(html, node);
+    if (parent >= 0) {
+        ++web_css_nodes[(uint32_t)parent].child_count;
+    }
+    ++web_css_node_count;
+    return (int32_t)(web_css_node_count - 1u);
+}
+
+static void web_css_build_nodes(const uint8_t *html) {
+    int32_t stack[WEB_CSS_MAX_STACK];
+    int32_t last_child[WEB_CSS_MAX_STACK];
+    uint32_t depth = 0;
+    uint32_t pos = 0;
+
+    for (uint32_t i = 0; i < WEB_CSS_MAX_STACK; ++i) {
+        stack[i] = -1;
+        last_child[i] = -1;
+    }
+
+    while (html[pos] != 0) {
+        if (html[pos] != '<') {
+            ++pos;
+            continue;
+        }
+        if (html[pos + 1u] != 0 &&
+            html[pos + 2u] != 0 &&
+            html[pos + 3u] != 0 &&
+            html[pos + 1u] == '!' &&
+            html[pos + 2u] == '-' &&
+            html[pos + 3u] == '-') {
+            pos += 4u;
+            while (html[pos] != 0) {
+                if (html[pos] == '-' && html[pos + 1u] == '-' && html[pos + 2u] == '>') {
+                    pos += 3u;
+                    break;
+                }
+                ++pos;
+            }
+            continue;
+        }
+        if (web_is_closing_tag(html, pos)) {
+            if (depth > 0) {
+                --depth;
+            }
+            pos = web_skip_tag(html, pos);
+            continue;
+        }
+        uint32_t name_start = 0;
+        uint32_t name_end = 0;
+        if (web_tag_name_range(html, pos, &name_start, &name_end)) {
+            int32_t parent = depth > 0 ? stack[depth - 1u] : -1;
+            int32_t index = web_css_add_node(html, pos, parent, last_child[depth]);
+            int raw_text = web_tag_name_is(html, pos, "style") || web_tag_name_is(html, pos, "script");
+            if (index >= 0) {
+                last_child[depth] = index;
+                if (depth + 1u < WEB_CSS_MAX_STACK) {
+                    last_child[depth + 1u] = -1;
+                }
+                if (!raw_text && !web_css_void_tag(html, pos) && depth + 1u < WEB_CSS_MAX_STACK) {
+                    stack[depth] = index;
+                    ++depth;
+                }
+            }
+            if (raw_text) {
+                uint32_t after_tag = web_skip_tag(html, pos);
+                pos = web_find_named_close(html,
+                                           after_tag,
+                                           web_tag_name_is(html, pos, "style") ? "style" : "script");
+                continue;
+            }
+        }
+        pos = web_skip_tag(html, pos);
+    }
+}
+
+static web_css_node_t *web_css_find_node(uint32_t tag_pos) {
+    for (uint32_t i = 0; i < web_css_node_count; ++i) {
+        if (web_css_nodes[i].tag_pos == tag_pos) {
+            return &web_css_nodes[i];
+        }
+    }
+    return NULL;
+}
+
+static int web_css_prepare_document(const uint8_t *html) {
+    css_error error;
+    uint32_t pos = 0;
+    static const uint8_t ua_css[] =
+        "a:link,a:visited{color:#3366cc}";
+
+    web_css_reset();
+    web_css_build_nodes(html);
+
+    if (web_css_create_sheet(&web_css_ua_sheet, "zbrowser:ua") != 0 ||
+        web_css_append_sheet_data(web_css_ua_sheet, ua_css, sizeof(ua_css) - 1u) != 0) {
+        web_css_reset();
+        return -1;
+    }
+    if (css_select_ctx_create(&web_css_select_ctx) != CSS_OK || web_css_select_ctx == NULL) {
+        web_css_reset();
+        return -1;
+    }
+    if (css_select_ctx_append_sheet(web_css_select_ctx, web_css_ua_sheet, CSS_ORIGIN_UA, "screen") != CSS_OK) {
+        web_css_reset();
+        return -1;
+    }
+
+    if (web_css_create_sheet(&web_css_sheet, "zbrowser:document") != 0) {
+        web_css_reset();
+        return -1;
+    }
+
+    while (html[pos] != 0) {
+        if (html[pos] == '<' && !web_is_closing_tag(html, pos) && web_tag_name_is(html, pos, "style")) {
+            uint32_t style_start = web_skip_tag(html, pos);
+            uint32_t style_end = web_find_style_close(html, style_start);
+            if (style_end > style_start) {
+                error = css_stylesheet_append_data(web_css_sheet, html + style_start, style_end - style_start);
+                if (error != CSS_OK && error != CSS_NEEDDATA) {
+                    web_css_reset();
+                    return -1;
+                }
+                ++web_css_rule_blocks;
+            }
+            pos = style_end;
+        } else {
+            ++pos;
+        }
+    }
+
+    if (web_css_rule_blocks == 0) {
+        css_stylesheet_destroy(web_css_sheet);
+        web_css_sheet = NULL;
+        web_css_ready = 1;
+        return 0;
+    }
+    if (css_stylesheet_data_done(web_css_sheet) != CSS_OK) {
+        web_css_reset();
+        return -1;
+    }
+    if (css_select_ctx_append_sheet(web_css_select_ctx, web_css_sheet, CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+        web_css_reset();
+        return -1;
+    }
+    web_css_ready = 1;
+    return (int)web_css_rule_blocks;
+}
+
 static void web_prepared_cache_reset(const uint8_t *html, uint32_t viewport_width, uint32_t viewport_height) {
     web_cached_html = html;
     web_cached_viewport_width = viewport_width;
@@ -1625,9 +2898,11 @@ static void web_apply_prepared_rules(const uint8_t *html,
 int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uint32_t viewport_height) {
     if (html == NULL) {
         web_prepared_cache_reset(NULL, 0, 0);
+        web_css_reset();
         return -1;
     }
     web_prepared_cache_reset(html, viewport_width, viewport_height);
+    web_css_prepare_document(html);
     uint32_t pos = 0;
     while (html[pos] != 0) {
         if (html[pos] == '<' && !web_is_closing_tag(html, pos) && web_tag_name_is(html, pos, "style")) {
@@ -1671,10 +2946,423 @@ static void web_state_init(web_style_state_t *state) {
     state->style.width = 0;
     state->style.height = 0;
     state->style.color = 0;
+    state->style.background_color = 0;
+    state->style.margin_left = 0;
+    state->style.margin_right = 0;
+    state->style.margin_top = 0;
+    state->style.margin_bottom = 0;
+    state->style.padding_left = 0;
+    state->style.padding_right = 0;
+    state->style.padding_top = 0;
+    state->style.padding_bottom = 0;
+    state->style.border_left = 0;
+    state->style.border_right = 0;
+    state->style.border_top = 0;
+    state->style.border_bottom = 0;
+    state->style.border_color = 0;
     for (uint32_t i = 0; i < WEB_PROP_COUNT; ++i) {
         state->score[i] = 0;
     }
     state->order = 1;
+}
+
+static uint32_t web_css_color_to_rgb(css_color color) {
+    return color & 0x00ffffffu;
+}
+
+static int web_css_color_is_visible(css_color color) {
+    return (color & 0xff000000u) != 0;
+}
+
+static uint32_t web_css_length_to_px(const css_computed_style *computed,
+                                     const css_unit_ctx *unit_ctx,
+                                     css_fixed length,
+                                     css_unit unit,
+                                     uint32_t percent_base) {
+    css_fixed px;
+    if (unit == CSS_UNIT_PCT) {
+        int64_t value = ((int64_t)percent_base * (int64_t)length) / (100ll << CSS_RADIX_POINT);
+        if (value < 0) {
+            return 0;
+        }
+        if (value > 1000000) {
+            return 1000000;
+        }
+        return (uint32_t)value;
+    }
+    px = css_unit_len2device_px(computed, unit_ctx, length, unit);
+    if (px < 0) {
+        return 0;
+    }
+    return (uint32_t)FIXTOINT(px);
+}
+
+static void web_css_set_score(web_style_state_t *state, uint32_t property) {
+    state->score[property] = web_cascade_score(100, 0, state->order);
+}
+
+static int web_css_border_style_visible(uint8_t type) {
+    return type != CSS_BORDER_STYLE_INHERIT &&
+           type != CSS_BORDER_STYLE_NONE &&
+           type != CSS_BORDER_STYLE_HIDDEN;
+}
+
+static uint32_t web_css_border_width_to_px(const css_computed_style *computed,
+                                           const css_unit_ctx *unit_ctx,
+                                           uint8_t type,
+                                           css_fixed length,
+                                           css_unit unit,
+                                           uint32_t percent_base) {
+    if (type == CSS_BORDER_WIDTH_THIN) {
+        return 1;
+    }
+    if (type == CSS_BORDER_WIDTH_MEDIUM) {
+        return 2;
+    }
+    if (type == CSS_BORDER_WIDTH_THICK) {
+        return 4;
+    }
+    if (type == CSS_BORDER_WIDTH_WIDTH) {
+        return web_css_length_to_px(computed, unit_ctx, length, unit, percent_base);
+    }
+    return 0;
+}
+
+static void web_css_set_computed_length(web_style_state_t *state,
+                                        uint32_t property,
+                                        uint32_t flag,
+                                        uint32_t *field,
+                                        uint32_t value) {
+    state->style.flags |= flag;
+    *field = value;
+    web_css_set_score(state, property);
+}
+
+static void web_css_apply_computed_border_side(web_style_state_t *state,
+                                               uint32_t property,
+                                               uint32_t flag,
+                                               uint32_t *field,
+                                               uint8_t border_style,
+                                               uint8_t border_width_type,
+                                               css_fixed length,
+                                               css_unit unit,
+                                               const css_computed_style *computed,
+                                               const css_unit_ctx *unit_ctx,
+                                               uint32_t percent_base) {
+    if (web_css_border_style_visible(border_style)) {
+        uint32_t px = web_css_border_width_to_px(computed, unit_ctx, border_width_type, length, unit, percent_base);
+        if (px != 0) {
+            web_css_set_computed_length(state, property, flag, field, px);
+        }
+    }
+}
+
+static void web_css_apply_computed_border_color(web_style_state_t *state,
+                                                uint8_t border_color_type,
+                                                css_color border_color,
+                                                uint32_t current_color,
+                                                int have_current_color) {
+    if (border_color_type == CSS_BORDER_COLOR_COLOR && web_css_color_is_visible(border_color)) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_BORDER_COLOR;
+        state->style.border_color = web_css_color_to_rgb(border_color);
+        web_css_set_score(state, WEB_PROP_BORDER_COLOR);
+    } else if (border_color_type == CSS_BORDER_COLOR_CURRENT_COLOR && have_current_color) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_BORDER_COLOR;
+        state->style.border_color = current_color;
+        web_css_set_score(state, WEB_PROP_BORDER_COLOR);
+    }
+}
+
+static void web_css_apply_computed_style(web_style_state_t *state,
+                                         const css_computed_style *computed,
+                                         const css_unit_ctx *unit_ctx,
+                                         uint32_t viewport_width,
+                                         uint32_t viewport_height) {
+    css_color color = 0;
+    css_color border_color = 0;
+    css_fixed length = 0;
+    css_unit unit = CSS_UNIT_PX;
+    int px = 0;
+    uint32_t current_color = 0x000000u;
+    int have_current_color = 1;
+    int margin_left_auto = 0;
+    int margin_right_auto = 0;
+    uint8_t type;
+
+    type = css_computed_display(computed, false);
+    if (type == CSS_DISPLAY_NONE) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_NONE;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
+    } else if (type == CSS_DISPLAY_FLEX || type == CSS_DISPLAY_INLINE_FLEX) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_FLEX;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
+    }
+
+    type = css_computed_visibility(computed);
+    if (type == CSS_VISIBILITY_HIDDEN || type == CSS_VISIBILITY_COLLAPSE) {
+        state->style.flags |= WEB_STYLE_FLAG_VISIBILITY_HIDDEN;
+        web_css_set_score(state, WEB_PROP_VISIBILITY);
+    }
+
+    type = css_computed_text_align(computed);
+    if (type == CSS_TEXT_ALIGN_CENTER || type == CSS_TEXT_ALIGN_LIBCSS_CENTER) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_TEXT_ALIGN;
+        state->style.text_align = WEB_STYLE_ALIGN_CENTER;
+        web_css_set_score(state, WEB_PROP_TEXT_ALIGN);
+    } else if (type == CSS_TEXT_ALIGN_RIGHT || type == CSS_TEXT_ALIGN_LIBCSS_RIGHT) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_TEXT_ALIGN;
+        state->style.text_align = WEB_STYLE_ALIGN_RIGHT;
+        web_css_set_score(state, WEB_PROP_TEXT_ALIGN);
+    } else if (type == CSS_TEXT_ALIGN_LEFT || type == CSS_TEXT_ALIGN_LIBCSS_LEFT) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_TEXT_ALIGN;
+        state->style.text_align = WEB_STYLE_ALIGN_LEFT;
+        web_css_set_score(state, WEB_PROP_TEXT_ALIGN);
+    }
+
+    if (css_computed_color(computed, &color) == CSS_COLOR_COLOR && web_css_color_is_visible(color)) {
+        current_color = web_css_color_to_rgb(color);
+        state->style.flags |= WEB_STYLE_FLAG_HAS_COLOR;
+        state->style.color = current_color;
+        web_css_set_score(state, WEB_PROP_COLOR);
+    }
+
+    type = css_computed_background_color(computed, &color);
+    if ((type == CSS_BACKGROUND_COLOR_COLOR || type == CSS_BACKGROUND_COLOR_CURRENT_COLOR) &&
+        web_css_color_is_visible(color)) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_BG_COLOR;
+        state->style.background_color = web_css_color_to_rgb(color);
+        web_css_set_score(state, WEB_PROP_BACKGROUND_COLOR);
+    }
+
+    type = css_computed_position(computed);
+    if (type == CSS_POSITION_ABSOLUTE || type == CSS_POSITION_FIXED) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_POSITION;
+        state->style.position = type == CSS_POSITION_FIXED ? WEB_STYLE_POS_FIXED : WEB_STYLE_POS_ABSOLUTE;
+        web_css_set_score(state, WEB_PROP_POSITION);
+    }
+
+    if (css_computed_left(computed, &length, &unit) == CSS_LEFT_SET) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_LEFT;
+        state->style.left = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width);
+        web_css_set_score(state, WEB_PROP_LEFT);
+    }
+    if (css_computed_right(computed, &length, &unit) == CSS_RIGHT_SET) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_RIGHT;
+        state->style.right = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width);
+        web_css_set_score(state, WEB_PROP_RIGHT);
+    }
+    if (css_computed_top(computed, &length, &unit) == CSS_TOP_SET) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_TOP;
+        state->style.top = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_height);
+        web_css_set_score(state, WEB_PROP_TOP);
+    }
+    if (css_computed_bottom(computed, &length, &unit) == CSS_BOTTOM_SET) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_BOTTOM;
+        state->style.bottom = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_height);
+        web_css_set_score(state, WEB_PROP_BOTTOM);
+    }
+    if (css_computed_width_px(computed, unit_ctx, (int)viewport_width, &px) == CSS_WIDTH_SET && px >= 0) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_WIDTH;
+        state->style.width = (uint32_t)px;
+        web_css_set_score(state, WEB_PROP_WIDTH);
+    }
+    if (css_computed_height(computed, &length, &unit) == CSS_HEIGHT_SET) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_HEIGHT;
+        state->style.height = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_height);
+        web_css_set_score(state, WEB_PROP_HEIGHT);
+    }
+
+    type = css_computed_margin_left(computed, &length, &unit);
+    if (type == CSS_MARGIN_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MARGIN_LEFT,
+                                    WEB_STYLE_FLAG_HAS_MARGIN,
+                                    &state->style.margin_left,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    } else if (type == CSS_MARGIN_AUTO) {
+        margin_left_auto = 1;
+    }
+    type = css_computed_margin_right(computed, &length, &unit);
+    if (type == CSS_MARGIN_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MARGIN_RIGHT,
+                                    WEB_STYLE_FLAG_HAS_MARGIN,
+                                    &state->style.margin_right,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    } else if (type == CSS_MARGIN_AUTO) {
+        margin_right_auto = 1;
+    }
+    if (css_computed_margin_top(computed, &length, &unit) == CSS_MARGIN_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MARGIN_TOP,
+                                    WEB_STYLE_FLAG_HAS_MARGIN,
+                                    &state->style.margin_top,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+    if (css_computed_margin_bottom(computed, &length, &unit) == CSS_MARGIN_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MARGIN_BOTTOM,
+                                    WEB_STYLE_FLAG_HAS_MARGIN,
+                                    &state->style.margin_bottom,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+    if (margin_left_auto != 0 || margin_right_auto != 0) {
+        state->style.flags |= WEB_STYLE_FLAG_MARGIN_AUTO_X;
+        web_css_set_score(state, WEB_PROP_MARGIN_AUTO_X);
+        if (margin_left_auto != 0 && margin_right_auto != 0) {
+            state->style.flags |= WEB_STYLE_FLAG_CENTER_X;
+            web_css_set_score(state, WEB_PROP_CENTER_X);
+        }
+    }
+
+    if (css_computed_padding_left(computed, &length, &unit) == CSS_PADDING_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_PADDING_LEFT,
+                                    WEB_STYLE_FLAG_HAS_PADDING,
+                                    &state->style.padding_left,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+    if (css_computed_padding_right(computed, &length, &unit) == CSS_PADDING_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_PADDING_RIGHT,
+                                    WEB_STYLE_FLAG_HAS_PADDING,
+                                    &state->style.padding_right,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+    if (css_computed_padding_top(computed, &length, &unit) == CSS_PADDING_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_PADDING_TOP,
+                                    WEB_STYLE_FLAG_HAS_PADDING,
+                                    &state->style.padding_top,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+    if (css_computed_padding_bottom(computed, &length, &unit) == CSS_PADDING_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_PADDING_BOTTOM,
+                                    WEB_STYLE_FLAG_HAS_PADDING,
+                                    &state->style.padding_bottom,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+
+    type = css_computed_border_left_width(computed, &length, &unit);
+    web_css_apply_computed_border_side(state,
+                                       WEB_PROP_BORDER_LEFT,
+                                       WEB_STYLE_FLAG_HAS_BORDER,
+                                       &state->style.border_left,
+                                       css_computed_border_left_style(computed),
+                                       type,
+                                       length,
+                                       unit,
+                                       computed,
+                                       unit_ctx,
+                                       viewport_width);
+    type = css_computed_border_right_width(computed, &length, &unit);
+    web_css_apply_computed_border_side(state,
+                                       WEB_PROP_BORDER_RIGHT,
+                                       WEB_STYLE_FLAG_HAS_BORDER,
+                                       &state->style.border_right,
+                                       css_computed_border_right_style(computed),
+                                       type,
+                                       length,
+                                       unit,
+                                       computed,
+                                       unit_ctx,
+                                       viewport_width);
+    type = css_computed_border_top_width(computed, &length, &unit);
+    web_css_apply_computed_border_side(state,
+                                       WEB_PROP_BORDER_TOP,
+                                       WEB_STYLE_FLAG_HAS_BORDER,
+                                       &state->style.border_top,
+                                       css_computed_border_top_style(computed),
+                                       type,
+                                       length,
+                                       unit,
+                                       computed,
+                                       unit_ctx,
+                                       viewport_width);
+    type = css_computed_border_bottom_width(computed, &length, &unit);
+    web_css_apply_computed_border_side(state,
+                                       WEB_PROP_BORDER_BOTTOM,
+                                       WEB_STYLE_FLAG_HAS_BORDER,
+                                       &state->style.border_bottom,
+                                       css_computed_border_bottom_style(computed),
+                                       type,
+                                       length,
+                                       unit,
+                                       computed,
+                                       unit_ctx,
+                                       viewport_width);
+    if (state->style.border_top != 0) {
+        type = css_computed_border_top_color(computed, &border_color);
+        web_css_apply_computed_border_color(state, type, border_color, current_color, have_current_color);
+    } else if (state->style.border_right != 0) {
+        type = css_computed_border_right_color(computed, &border_color);
+        web_css_apply_computed_border_color(state, type, border_color, current_color, have_current_color);
+    } else if (state->style.border_bottom != 0) {
+        type = css_computed_border_bottom_color(computed, &border_color);
+        web_css_apply_computed_border_color(state, type, border_color, current_color, have_current_color);
+    } else if (state->style.border_left != 0) {
+        type = css_computed_border_left_color(computed, &border_color);
+        web_css_apply_computed_border_color(state, type, border_color, current_color, have_current_color);
+    }
+}
+
+static int web_css_style_for_tag(const uint8_t *html,
+                                 uint32_t tag_pos,
+                                 uint32_t viewport_width,
+                                 uint32_t viewport_height,
+                                 web_style_state_t *state) {
+    web_css_node_t *node;
+    css_select_results *results = NULL;
+    css_media media;
+    css_unit_ctx unit_ctx = {
+        .viewport_width = 0,
+        .viewport_height = 0,
+        .font_size_default = 0,
+        .font_size_minimum = 0,
+        .device_dpi = 0,
+        .root_style = NULL,
+        .pw = NULL,
+        .measure = NULL,
+    };
+    css_error error;
+
+    if (web_css_ready == 0 || web_css_select_ctx == NULL || web_cached_html != html) {
+        return -1;
+    }
+    node = web_css_find_node(tag_pos);
+    if (node == NULL) {
+        return -1;
+    }
+
+    media.type = CSS_MEDIA_SCREEN;
+    unit_ctx.viewport_width = INTTOFIX((int)viewport_width);
+    unit_ctx.viewport_height = INTTOFIX((int)viewport_height);
+    unit_ctx.font_size_default = INTTOFIX(16);
+    unit_ctx.font_size_minimum = INTTOFIX(6);
+    unit_ctx.device_dpi = INTTOFIX(96);
+
+    error = css_select_style(web_css_select_ctx,
+                             node,
+                             &unit_ctx,
+                             &media,
+                             NULL,
+                             &web_css_select_handler,
+                             NULL,
+                             &results);
+    if (error != CSS_OK || results == NULL || results->styles[CSS_PSEUDO_ELEMENT_NONE] == NULL) {
+        if (results != NULL) {
+            css_select_results_destroy(results);
+        }
+        return -1;
+    }
+    web_css_apply_computed_style(state,
+                                 results->styles[CSS_PSEUDO_ELEMENT_NONE],
+                                 &unit_ctx,
+                                 viewport_width,
+                                 viewport_height);
+    css_select_results_destroy(results);
+    return 0;
 }
 
 static void web_apply_presentational_attrs(const uint8_t *html,
@@ -1778,6 +3466,13 @@ int web_style_for_tag(const uint8_t *html,
     }
     web_style_state_t state;
     web_state_init(&state);
+    if (web_css_style_for_tag(html, tag_pos, viewport_width, viewport_height, &state) == 0) {
+        web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
+        web_apply_inline_style(html, tag_pos, &state, viewport_width, viewport_height);
+        web_apply_hidden_attrs(html, tag_pos, &state);
+        *out_style = state.style;
+        return 0;
+    }
     web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
     if (web_cached_html == html &&
         web_cached_viewport_width == viewport_width &&

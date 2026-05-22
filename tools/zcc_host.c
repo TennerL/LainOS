@@ -291,7 +291,11 @@ int main(int argc, char **argv) {
                                       &error_line,
                                       entry_label,
                                       sizeof(entry_label)) != 0) {
-        fprintf(stderr, "%s:%u: unsupported .Z syntax\n", argv[1], error_line);
+        if (zscript_last_error() == ZSCRIPT_ERROR_OUTPUT_FULL) {
+            fprintf(stderr, "%s:%u: generated asm exceeded host build buffer\n", argv[1], error_line);
+        } else {
+            fprintf(stderr, "%s:%u: unsupported .Z syntax\n", argv[1], error_line);
+        }
         free(source);
         free(asm_output);
         return 1;

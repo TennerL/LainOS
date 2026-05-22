@@ -50,6 +50,11 @@
 #define WEB_STYLE_FLAG_CENTER_X 2048
 #define WEB_STYLE_FLAG_DISPLAY_FLEX 4096
 #define WEB_STYLE_FLAG_HAS_COLOR 8192
+#define WEB_STYLE_FLAG_HAS_BG_COLOR 16384
+#define WEB_STYLE_FLAG_HAS_MARGIN 32768
+#define WEB_STYLE_FLAG_HAS_PADDING 65536
+#define WEB_STYLE_FLAG_HAS_BORDER 131072
+#define WEB_STYLE_FLAG_BORDER_COLOR 262144
 #define WEB_STYLE_ALIGN_LEFT 0
 #define WEB_STYLE_ALIGN_CENTER 1
 #define WEB_STYLE_ALIGN_RIGHT 2
@@ -64,6 +69,7 @@ extern uint32_t gfx_width(void);
 extern uint32_t gfx_height(void);
 extern uint32_t gfx_viewport_active(void);
 extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
+extern void gfx_scroll_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, int32_t dy, uint32_t fill_color);
 extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg);
 extern int os_read_file(const uint8_t *path, uint8_t *buffer, uint32_t capacity);
@@ -109,6 +115,20 @@ struct WebStyle {
     uint32_t width;
     uint32_t height;
     uint32_t color;
+    uint32_t background_color;
+    uint32_t margin_left;
+    uint32_t margin_right;
+    uint32_t margin_top;
+    uint32_t margin_bottom;
+    uint32_t padding_left;
+    uint32_t padding_right;
+    uint32_t padding_top;
+    uint32_t padding_bottom;
+    uint32_t border_left;
+    uint32_t border_right;
+    uint32_t border_top;
+    uint32_t border_bottom;
+    uint32_t border_color;
 };
 
 struct WebStyleRules {
@@ -149,6 +169,7 @@ global uint32_t zbrowser_line_no;
 global uint32_t zbrowser_scroll;
 global uint32_t zbrowser_editing;
 global uint32_t zbrowser_needs_redraw;
+global uint32_t zbrowser_doc_redraw_defer;
 global uint8_t zbrowser_attr[256];
 global uint8_t zbrowser_url_tmp[256];
 global uint8_t zbrowser_style_image_url[256];
@@ -274,6 +295,10 @@ global uint32_t zbrowser_http_content_length;
 global int zbrowser_http_error;
 global uint32_t zbrowser_tls_error;
 global uint8_t zbrowser_http_content_type[64];
+global uint64_t zbrowser_style_doc_addr;
+global int zbrowser_style_doc_size;
+global uint32_t zbrowser_style_doc_w;
+global uint32_t zbrowser_style_doc_h;
 global uint32_t zbrowser_web_style_cache_valid;
 global uint32_t zbrowser_web_style_cache_pos;
 global uint32_t zbrowser_web_style_flags;
@@ -286,6 +311,20 @@ global uint32_t zbrowser_web_style_bottom;
 global uint32_t zbrowser_web_style_width;
 global uint32_t zbrowser_web_style_height;
 global uint32_t zbrowser_web_style_color;
+global uint32_t zbrowser_web_style_bg_color;
+global uint32_t zbrowser_web_margin_l;
+global uint32_t zbrowser_web_margin_r;
+global uint32_t zbrowser_web_margin_t;
+global uint32_t zbrowser_web_margin_b;
+global uint32_t zbrowser_web_padding_l;
+global uint32_t zbrowser_web_padding_r;
+global uint32_t zbrowser_web_padding_t;
+global uint32_t zbrowser_web_padding_b;
+global uint32_t zbrowser_web_border_l;
+global uint32_t zbrowser_web_border_r;
+global uint32_t zbrowser_web_border_t;
+global uint32_t zbrowser_web_border_b;
+global uint32_t zbrowser_web_border_color;
 global uint32_t zbrowser_style_stack_fg[64];
 global uint32_t zbrowser_style_stack_bg[64];
 global uint32_t zbrowser_style_stack_align[64];
@@ -415,6 +454,51 @@ void clear_web_style_cache(void) {
     zbrowser_web_style_width = 0;
     zbrowser_web_style_height = 0;
     zbrowser_web_style_color = 0;
+    zbrowser_web_style_bg_color = 0;
+    zbrowser_web_margin_l = 0;
+    zbrowser_web_margin_r = 0;
+    zbrowser_web_margin_t = 0;
+    zbrowser_web_margin_b = 0;
+    zbrowser_web_padding_l = 0;
+    zbrowser_web_padding_r = 0;
+    zbrowser_web_padding_t = 0;
+    zbrowser_web_padding_b = 0;
+    zbrowser_web_border_l = 0;
+    zbrowser_web_border_r = 0;
+    zbrowser_web_border_t = 0;
+    zbrowser_web_border_b = 0;
+    zbrowser_web_border_color = 0;
+}
+
+void invalidate_prepared_web_styles(void) {
+    zbrowser_style_doc_addr = 0;
+    zbrowser_style_doc_size = 0;
+    zbrowser_style_doc_w = 0;
+    zbrowser_style_doc_h = 0;
+    clear_web_style_cache();
+}
+
+void prepare_web_styles_for_render(const uint8_t *html) {
+    uint64_t doc_addr;
+    uint32_t w;
+    uint32_t h;
+
+    doc_addr = (uint64_t)html;
+    w = gfx_width();
+    h = gfx_height();
+    if (zbrowser_style_doc_addr == doc_addr &&
+        zbrowser_style_doc_size == zbrowser_size &&
+        zbrowser_style_doc_w == w &&
+        zbrowser_style_doc_h == h) {
+        clear_web_style_cache();
+        return;
+    }
+    clear_web_style_cache();
+    web_style_prepare_document(html, w, h);
+    zbrowser_style_doc_addr = doc_addr;
+    zbrowser_style_doc_size = zbrowser_size;
+    zbrowser_style_doc_w = w;
+    zbrowser_style_doc_h = h;
 }
 
 void remember_web_style(uint32_t pos, struct WebStyle *style) {
@@ -429,12 +513,26 @@ void remember_web_style(uint32_t pos, struct WebStyle *style) {
     zbrowser_web_style_width = style->width;
     zbrowser_web_style_height = style->height;
     zbrowser_web_style_color = style->color;
+    zbrowser_web_style_bg_color = style->background_color;
+    zbrowser_web_margin_l = style->margin_left;
+    zbrowser_web_margin_r = style->margin_right;
+    zbrowser_web_margin_t = style->margin_top;
+    zbrowser_web_margin_b = style->margin_bottom;
+    zbrowser_web_padding_l = style->padding_left;
+    zbrowser_web_padding_r = style->padding_right;
+    zbrowser_web_padding_t = style->padding_top;
+    zbrowser_web_padding_b = style->padding_bottom;
+    zbrowser_web_border_l = style->border_left;
+    zbrowser_web_border_r = style->border_right;
+    zbrowser_web_border_t = style->border_top;
+    zbrowser_web_border_b = style->border_bottom;
+    zbrowser_web_border_color = style->border_color;
     zbrowser_web_style_cache_valid = 1;
 }
 
 int load_web_style(const uint8_t *html, uint32_t pos) {
-    struct WebStyle style;
     int result;
+    struct WebStyle style;
 
     if (zbrowser_web_style_cache_valid != 0 && zbrowser_web_style_cache_pos == pos) {
         return 1;
@@ -1292,6 +1390,10 @@ int style_has_text_color(const uint8_t *html, uint32_t pos) {
 uint32_t style_background_color(const uint8_t *html, uint32_t pos, uint32_t fallback) {
     uint32_t color;
 
+    if (load_web_style(html, pos) != 0 &&
+        web_style_has_flag(WEB_STYLE_FLAG_HAS_BG_COLOR) != 0) {
+        return zbrowser_web_style_bg_color;
+    }
     if (zb_attr_value(html, pos, "style", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 &&
         (css_color_after_property(zbrowser_attr, "background-color", &color) != 0 ||
          css_color_after_property(zbrowser_attr, "background", &color) != 0)) {
@@ -1457,6 +1559,114 @@ int style_length_px_prop(const uint8_t *html,
                          const uint8_t *property,
                          uint32_t base,
                          uint32_t *out_value) {
+    if (load_web_style(html, pos) != 0) {
+        if (text_equal(property, "width") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_WIDTH) != 0) {
+            *out_value = zbrowser_web_style_width;
+            return 1;
+        }
+        if (text_equal(property, "height") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_HEIGHT) != 0) {
+            *out_value = zbrowser_web_style_height;
+            return 1;
+        }
+        if (text_equal(property, "left") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_LEFT) != 0) {
+            *out_value = zbrowser_web_style_left;
+            return 1;
+        }
+        if (text_equal(property, "right") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_RIGHT) != 0) {
+            *out_value = zbrowser_web_style_right;
+            return 1;
+        }
+        if (text_equal(property, "top") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_TOP) != 0) {
+            *out_value = zbrowser_web_style_top;
+            return 1;
+        }
+        if (text_equal(property, "bottom") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_BOTTOM) != 0) {
+            *out_value = zbrowser_web_style_bottom;
+            return 1;
+        }
+        if ((text_equal(property, "margin-left") != 0 ||
+             text_equal(property, "margin") != 0) &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_MARGIN) != 0 &&
+            zbrowser_web_margin_l != 0) {
+            *out_value = zbrowser_web_margin_l;
+            return 1;
+        }
+        if (text_equal(property, "margin-right") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_MARGIN) != 0 &&
+            zbrowser_web_margin_r != 0) {
+            *out_value = zbrowser_web_margin_r;
+            return 1;
+        }
+        if (text_equal(property, "margin-top") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_MARGIN) != 0 &&
+            zbrowser_web_margin_t != 0) {
+            *out_value = zbrowser_web_margin_t;
+            return 1;
+        }
+        if (text_equal(property, "margin-bottom") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_MARGIN) != 0 &&
+            zbrowser_web_margin_b != 0) {
+            *out_value = zbrowser_web_margin_b;
+            return 1;
+        }
+        if ((text_equal(property, "padding-left") != 0 ||
+             text_equal(property, "padding") != 0) &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_PADDING) != 0 &&
+            zbrowser_web_padding_l != 0) {
+            *out_value = zbrowser_web_padding_l;
+            return 1;
+        }
+        if (text_equal(property, "padding-right") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_PADDING) != 0 &&
+            zbrowser_web_padding_r != 0) {
+            *out_value = zbrowser_web_padding_r;
+            return 1;
+        }
+        if (text_equal(property, "padding-top") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_PADDING) != 0 &&
+            zbrowser_web_padding_t != 0) {
+            *out_value = zbrowser_web_padding_t;
+            return 1;
+        }
+        if (text_equal(property, "padding-bottom") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_PADDING) != 0 &&
+            zbrowser_web_padding_b != 0) {
+            *out_value = zbrowser_web_padding_b;
+            return 1;
+        }
+        if ((text_equal(property, "border-left-width") != 0 ||
+             text_equal(property, "border-width") != 0 ||
+             text_equal(property, "border") != 0) &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 &&
+            zbrowser_web_border_l != 0) {
+            *out_value = zbrowser_web_border_l;
+            return 1;
+        }
+        if (text_equal(property, "border-right-width") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 &&
+            zbrowser_web_border_r != 0) {
+            *out_value = zbrowser_web_border_r;
+            return 1;
+        }
+        if (text_equal(property, "border-top-width") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 &&
+            zbrowser_web_border_t != 0) {
+            *out_value = zbrowser_web_border_t;
+            return 1;
+        }
+        if (text_equal(property, "border-bottom-width") != 0 &&
+            web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 &&
+            zbrowser_web_border_b != 0) {
+            *out_value = zbrowser_web_border_b;
+            return 1;
+        }
+    }
     if (style_property_value(html, pos, property, zbrowser_css_property, ZBROWSER_ATTR_CAPACITY) != 0 &&
         css_length_px_parse(zbrowser_css_property, base, out_value) != 0) {
         return 1;
@@ -3039,6 +3249,14 @@ uint32_t table_cell_padding_cols_for_tag(const uint8_t *html,
 int table_style_has_visible_border(const uint8_t *html, uint32_t pos) {
     uint32_t px;
 
+    if (load_web_style(html, pos) != 0) {
+        if ((web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_l != 0) ||
+            (web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_r != 0) ||
+            (web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_t != 0) ||
+            (web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_b != 0)) {
+            return 1;
+        }
+    }
     if (zb_attr_value(html, pos, "border", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
         if (zbrowser_attr[0] == 0) {
             return 1;
@@ -3061,6 +3279,10 @@ uint32_t table_border_color_for_tag(const uint8_t *html,
                                     uint32_t fallback) {
     uint32_t color;
 
+    if (load_web_style(html, pos) != 0 &&
+        web_style_has_flag(WEB_STYLE_FLAG_BORDER_COLOR) != 0) {
+        return zbrowser_web_border_color;
+    }
     if (style_property_value(html, pos, "border-color", zbrowser_css_property, ZBROWSER_ATTR_CAPACITY) != 0 &&
         css_color_value(zbrowser_css_property, &color) != 0) {
         return color;
@@ -3671,13 +3893,28 @@ void draw_image_placeholder(const uint8_t *src, const uint8_t *label) {
 }
 
 void draw_style_block_start(const uint8_t *html, uint32_t pos) {
+    uint32_t border;
+    uint32_t border_visible;
     uint32_t bg;
     uint32_t h;
     uint32_t y;
     uint32_t w;
 
     bg = style_background_color(html, pos, 0xffffff);
-    if (bg == 0xffffff) {
+    border = 0xa2a9b1;
+    border_visible = 0;
+    if (load_web_style(html, pos) != 0) {
+        if ((web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_l != 0) ||
+            (web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_r != 0) ||
+            (web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_t != 0) ||
+            (web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 && zbrowser_web_border_b != 0)) {
+            border_visible = 1;
+            if (web_style_has_flag(WEB_STYLE_FLAG_BORDER_COLOR) != 0) {
+                border = zbrowser_web_border_color;
+            }
+        }
+    }
+    if (bg == 0xffffff && border_visible == 0) {
         return;
     }
     flush_line();
@@ -3686,8 +3923,12 @@ void draw_style_block_start(const uint8_t *html, uint32_t pos) {
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
         if (y + 18 < h - 18) {
-            gfx_fill_rect(article_x() + 4, y, article_w() - 8, 18, bg);
-            gfx_draw_rect(article_x() + 4, y, article_w() - 8, 18, 0xa2a9b1);
+            if (bg != 0xffffff) {
+                gfx_fill_rect(article_x() + 4, y, article_w() - 8, 18, bg);
+            }
+            if (border_visible != 0) {
+                gfx_draw_rect(article_x() + 4, y, article_w() - 8, 18, border);
+            }
         }
     }
     zbrowser_line_no = zbrowser_line_no + 1;
@@ -4139,8 +4380,7 @@ void render_html(const uint8_t *html) {
 
     zbrowser_layout_region = ZBROWSER_REGION_ARTICLE;
     zbrowser_y = 52;
-    clear_web_style_cache();
-    web_style_prepare_document(html, gfx_width(), gfx_height());
+    prepare_web_styles_for_render(html);
     prepare_page_style(html);
     draw_shell();
     zbrowser_deferred_image_url[0] = 0;
@@ -5194,6 +5434,7 @@ void zbrowser_poll_css_task(void) {
                 zbrowser_doc_truncated = 1;
             }
             build_css_rule_cache(buffer);
+            invalidate_prepared_web_styles();
             copy_text(zbrowser_status, 96, "css applied");
         }
         zbrowser_css_fetch_size = 0;
@@ -5220,6 +5461,7 @@ void load_document(void) {
     struct NetHttpInfo http_info;
 
     buffer = document_buffer();
+    invalidate_prepared_web_styles();
     zbrowser_has_document = 0;
     zbrowser_size = 0;
     zbrowser_doc_truncated = 0;
@@ -5398,6 +5640,8 @@ void start_load_document_task(void) {
 void zbrowser_reload(void) {
     zbrowser_wait_css_task();
     zbrowser_wait_image_task();
+    invalidate_prepared_web_styles();
+    zbrowser_doc_redraw_defer = 0;
     zbrowser_loaded = 0;
     zbrowser_render_after_load = 0;
     zbrowser_focused_input = 9999;
@@ -5405,9 +5649,66 @@ void zbrowser_reload(void) {
     zbrowser_needs_redraw = 1;
 }
 
+void defer_doc_redraw_editing(void) {
+    if (zbrowser_editing != 0 && zbrowser_needs_redraw != 0) {
+        zbrowser_needs_redraw = 0;
+        zbrowser_doc_redraw_defer = 1;
+        zbrowser_chrome_dirty = 1;
+    }
+}
+
+void finish_url_editing(void) {
+    zbrowser_editing = 0;
+    zbrowser_chrome_dirty = 1;
+    if (zbrowser_doc_redraw_defer != 0) {
+        zbrowser_doc_redraw_defer = 0;
+        zbrowser_needs_redraw = 1;
+    }
+}
+
+int zbrowser_scroll_content_preview(int delta_lines) {
+    uint32_t h;
+    uint32_t w;
+    uint32_t content_y;
+    uint32_t content_h;
+    uint32_t fill;
+    int32_t pixel_delta;
+
+    if (delta_lines == 0 ||
+        gfx_viewport_active() == 0 ||
+        zbrowser_loaded == 0 ||
+        zbrowser_load_in_progress != 0 ||
+        zbrowser_has_document == 0) {
+        return 0;
+    }
+
+    w = gfx_width();
+    h = gfx_height();
+    content_y = 52;
+    if (w == 0 || h <= content_y + 28) {
+        return 0;
+    }
+    content_h = h - content_y - 20;
+    if (content_h < 24) {
+        return 0;
+    }
+
+    fill = zbrowser_page_bg_color;
+    if (fill == 0) {
+        fill = 0xffffff;
+    }
+    pixel_delta = (int32_t)(0 - delta_lines * 12);
+    gfx_scroll_rect(0, content_y, w, content_h, pixel_delta, fill);
+    return 1;
+}
+
 void zbrowser_scroll_by(int delta) {
+    uint32_t amount;
+    uint32_t old_scroll;
+    int actual_delta;
+
+    old_scroll = zbrowser_scroll;
     if (delta < 0) {
-        uint32_t amount;
         amount = (uint32_t)(0 - delta);
         if (amount > zbrowser_scroll) {
             zbrowser_scroll = 0;
@@ -5417,8 +5718,21 @@ void zbrowser_scroll_by(int delta) {
     } else {
         zbrowser_scroll = zbrowser_scroll + (uint32_t)delta;
     }
-    zbrowser_scroll_cooldown = 2;
-    zbrowser_needs_redraw = 1;
+    if (zbrowser_scroll == old_scroll) {
+        return;
+    }
+    if (zbrowser_scroll > old_scroll) {
+        actual_delta = (int)(zbrowser_scroll - old_scroll);
+    } else {
+        actual_delta = 0 - (int)(old_scroll - zbrowser_scroll);
+    }
+    if (zbrowser_scroll_content_preview(actual_delta) != 0) {
+        zbrowser_scroll_cooldown = 2;
+        zbrowser_needs_redraw = 0;
+    } else {
+        zbrowser_scroll_cooldown = 0;
+        zbrowser_needs_redraw = 1;
+    }
 }
 
 export void zmodule_redraw(void) {
@@ -5455,6 +5769,9 @@ export void zmodule_redraw(void) {
 }
 
 export void zmodule_tick(void) {
+    uint32_t scroll_settling;
+
+    scroll_settling = 0;
     zbrowser_poll_load_task();
     zbrowser_poll_css_task();
     zbrowser_poll_image_task();
@@ -5462,11 +5779,17 @@ export void zmodule_tick(void) {
         zbrowser_scroll_cooldown = zbrowser_scroll_cooldown - 1;
         if (zbrowser_scroll_cooldown == 0) {
             zbrowser_needs_redraw = 1;
+        } else {
+            scroll_settling = 1;
         }
     }
+    defer_doc_redraw_editing();
     if (zbrowser_chrome_dirty != 0 && gfx_viewport_active() != 0) {
         zbrowser_chrome_dirty = 0;
         draw_chrome_only();
+        return;
+    }
+    if (scroll_settling != 0 && zbrowser_needs_redraw != 0) {
         return;
     }
     if (zbrowser_needs_redraw != 0 && gfx_viewport_active() != 0) {
@@ -5491,6 +5814,7 @@ void activate_link_at_line(uint32_t line) {
         if (zbrowser_input_lines[i] == line) {
             zbrowser_focused_input = i;
             zbrowser_editing = 0;
+            zbrowser_doc_redraw_defer = 0;
             zbrowser_needs_redraw = 1;
             return;
         }
@@ -5510,6 +5834,7 @@ int activate_link_at_point(uint32_t x, uint32_t y) {
             y < zbrowser_input_y[i] + zbrowser_input_h[i]) {
             zbrowser_focused_input = i;
             zbrowser_editing = 0;
+            zbrowser_doc_redraw_defer = 0;
             zbrowser_needs_redraw = 1;
             return 1;
         }
@@ -5555,8 +5880,7 @@ export void zmodule_key(uint32_t key_type, uint32_t ch) {
             return;
         }
         if (key_type == KEY_ESC) {
-            zbrowser_editing = 0;
-            zbrowser_chrome_dirty = 1;
+            finish_url_editing();
             return;
         }
         if (key_type == KEY_BACKSPACE) {
@@ -5616,6 +5940,7 @@ export void zmodule_key(uint32_t key_type, uint32_t ch) {
     if (key_type == KEY_TAB && zbrowser_input_count != 0) {
         zbrowser_focused_input = 0;
         zbrowser_editing = 0;
+        zbrowser_doc_redraw_defer = 0;
         zbrowser_needs_redraw = 1;
         return;
     }
@@ -5660,6 +5985,11 @@ export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t whee
     }
 
     if (buttons != 0) {
+        if (zbrowser_scroll_cooldown != 0) {
+            zbrowser_scroll_cooldown = 0;
+            zbrowser_needs_redraw = 0;
+            zmodule_redraw();
+        }
         if (y < 42) {
             zbrowser_editing = 1;
             zbrowser_chrome_dirty = 1;
@@ -5725,6 +6055,7 @@ zbrowser_doc_truncated = 0;
 zbrowser_scroll = 0;
 zbrowser_editing = 0;
 zbrowser_needs_redraw = 0;
+zbrowser_doc_redraw_defer = 0;
 zbrowser_chrome_dirty = 0;
 zbrowser_load_task_id = 0;
 zbrowser_load_in_progress = 0;
@@ -5790,6 +6121,7 @@ zbrowser_link_count = 0;
 zbrowser_active_link = 9999;
 zbrowser_images_loaded = 0;
 zbrowser_clear_http_diag();
+invalidate_prepared_web_styles();
 copy_text(zbrowser_url, ZBROWSER_URL_CAPACITY, "");
 copy_text(zbrowser_status, 96, "ready");
 if (zbrowser_doc_buffer_addr == 0 || zbrowser_css_buffer_addr == 0 ||

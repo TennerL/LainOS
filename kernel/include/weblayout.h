@@ -17,6 +17,11 @@
 #define WEB_STYLE_FLAG_CENTER_X          (1u << 11)
 #define WEB_STYLE_FLAG_DISPLAY_FLEX      (1u << 12)
 #define WEB_STYLE_FLAG_HAS_COLOR         (1u << 13)
+#define WEB_STYLE_FLAG_HAS_BG_COLOR      (1u << 14)
+#define WEB_STYLE_FLAG_HAS_MARGIN        (1u << 15)
+#define WEB_STYLE_FLAG_HAS_PADDING       (1u << 16)
+#define WEB_STYLE_FLAG_HAS_BORDER        (1u << 17)
+#define WEB_STYLE_FLAG_HAS_BORDER_COLOR  (1u << 18)
 
 #define WEB_STYLE_ALIGN_LEFT   0u
 #define WEB_STYLE_ALIGN_CENTER 1u
@@ -37,6 +42,20 @@ typedef struct {
     uint32_t width;
     uint32_t height;
     uint32_t color;
+    uint32_t background_color;
+    uint32_t margin_left;
+    uint32_t margin_right;
+    uint32_t margin_top;
+    uint32_t margin_bottom;
+    uint32_t padding_left;
+    uint32_t padding_right;
+    uint32_t padding_top;
+    uint32_t padding_bottom;
+    uint32_t border_left;
+    uint32_t border_right;
+    uint32_t border_top;
+    uint32_t border_bottom;
+    uint32_t border_color;
 } web_style_t;
 
 typedef struct {

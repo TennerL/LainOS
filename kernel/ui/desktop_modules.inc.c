@@ -74,7 +74,9 @@ static int desktop_module_app_send_key(desktop_module_window_t *slot, const key_
     rc = shell_module_key((uint32_t)module_index, (uint32_t)key->type, (uint32_t)(uint8_t)key->ch);
     graphics_viewport_pop();
     if (rc == 0) {
-        desktop_damage_full();
+        if (key->type != KEY_UP && key->type != KEY_DOWN) {
+            desktop_damage_full();
+        }
         return 1;
     }
     return 0;
@@ -110,7 +112,9 @@ static int desktop_module_app_send_mouse(desktop_module_window_t *slot,
     rc = shell_module_mouse((uint32_t)module_index, x, y, buttons, wheel);
     graphics_viewport_pop();
     if (rc == 0) {
-        desktop_damage_full();
+        if (wheel == 0) {
+            desktop_damage_full();
+        }
         return 1;
     }
     return 0;

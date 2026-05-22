@@ -54,6 +54,12 @@ int graphics_draw_rect_packed(unsigned int x,
                               unsigned int height,
                               const unsigned int *pixels,
                               unsigned int pixel_count);
+void graphics_scroll_rect(unsigned int x,
+                          unsigned int y,
+                          unsigned int width,
+                          unsigned int height,
+                          int dy,
+                          unsigned int fill_rgb_color);
 unsigned int graphics_viewport_active(void);
 unsigned int graphics_viewport_x(void);
 unsigned int graphics_viewport_y(void);

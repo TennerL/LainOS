@@ -22,11 +22,11 @@
 #define SCRIPT_BUFFER_SIZE 65536u
 #define SCRIPT_LINE_SIZE 128u
 #define SCRIPT_MAX_DEPTH 4
-#define EXEC_BUFFER_SIZE (1024u * 1024u)
+#define EXEC_BUFFER_SIZE (2u * 1024u * 1024u)
 #define EXEC_API_MAGIC 0x4C41494E45584543ull
-#define ASM_SOURCE_SIZE (1024u * 1024u)
-#define Z_INCLUDE_BUFFER_SIZE (256u * 1024u)
-#define ZMODULE_IMAGE_SIZE (512u * 1024u)
+#define ASM_SOURCE_SIZE (2u * 1024u * 1024u)
+#define Z_INCLUDE_BUFFER_SIZE (512u * 1024u)
+#define ZMODULE_IMAGE_SIZE (1024u * 1024u)
 #define SHELL_PATH_SIZE 128u
 #define SHELL_MAX_SESSIONS 2u
 #define Z_INCLUDE_MAX_DEPTH 4u
@@ -6031,6 +6031,25 @@ static int compile_z_source_file(const char *name,
     return 0;
 }
 
+static void print_zscript_compile_failure(const char *command, const char *source_name, uint32_t error_line) {
+    console_puts(command);
+    console_puts(" failed: ");
+    if (source_name != 0 && source_name[0] != '\0') {
+        console_puts(source_name);
+        console_puts(" ");
+    }
+    if (zscript_last_error() == ZSCRIPT_ERROR_OUTPUT_FULL) {
+        console_puts("generated asm exceeded Z build buffer");
+    } else {
+        console_puts("unsupported .Z syntax");
+    }
+    if (error_line != 0) {
+        console_puts(" on line ");
+        console_put_dec64(error_line);
+    }
+    console_puts("\n");
+}
+
 static void cmd_zc(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -6072,12 +6091,7 @@ static void cmd_zc(const char *args, const boot_info_t *info) {
         return;
     }
     if (status == -20) {
-        console_puts("zc failed: unsupported .Z syntax");
-        if (compile_error_line != 0) {
-            console_puts(" on line ");
-            console_put_dec64(compile_error_line);
-        }
-        console_puts("\n");
+        print_zscript_compile_failure("zc", 0, compile_error_line);
         return;
     }
     if (status == -30) {
@@ -6218,12 +6232,7 @@ static void cmd_zco(const char *args, const boot_info_t *info) {
                                       &compile_error_line,
                                       entry_label,
                                       sizeof(entry_label)) != 0) {
-        console_puts("zco failed: unsupported .Z syntax");
-        if (compile_error_line != 0) {
-            console_puts(" on line ");
-            console_put_dec64(compile_error_line);
-        }
-        console_puts("\n");
+        print_zscript_compile_failure("zco", 0, compile_error_line);
         return;
     }
     zscript_output[asm_size] = '\0';
@@ -6678,14 +6687,7 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
                                           &compile_error_line,
                                           entry_label,
                                           sizeof(entry_label)) != 0) {
-            console_puts("zbuild failed: ");
-            console_puts(source_name);
-            console_puts(" unsupported .Z syntax");
-            if (compile_error_line != 0) {
-                console_puts(" on line ");
-                console_put_dec64(compile_error_line);
-            }
-            console_puts("\n");
+            print_zscript_compile_failure("zbuild", source_name, compile_error_line);
             return;
         }
         zscript_output[asm_size] = '\0';
@@ -8469,12 +8471,7 @@ static void cmd_zrun(const char *args, const boot_info_t *info) {
         return;
     }
     if (status == -20) {
-        console_puts("zrun failed: unsupported .Z syntax");
-        if (compile_error_line != 0) {
-            console_puts(" on line ");
-            console_put_dec64(compile_error_line);
-        }
-        console_puts("\n");
+        print_zscript_compile_failure("zrun", 0, compile_error_line);
         return;
     }
     if (status == -30) {
@@ -8566,12 +8563,7 @@ static void cmd_zasm(const char *args, const boot_info_t *info) {
         return;
     }
     if (status == -20) {
-        console_puts("zasm failed: unsupported .Z syntax");
-        if (compile_error_line != 0) {
-            console_puts(" on line ");
-            console_put_dec64(compile_error_line);
-        }
-        console_puts("\n");
+        print_zscript_compile_failure("zasm", 0, compile_error_line);
         return;
     }
     if (status == -30) {

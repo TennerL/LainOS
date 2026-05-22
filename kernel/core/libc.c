@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "bearssl.h"
+#include "kernel.h"
 #include "kmem.h"
 #include "libc.h"
 
@@ -202,6 +203,13 @@ int toupper(int ch) {
     return ch;
 }
 
+int abs(int value) {
+    if (value == (-2147483647 - 1)) {
+        return value;
+    }
+    return value < 0 ? -value : value;
+}
+
 void *bsearch(const void *key,
               const void *base,
               size_t nmemb,
@@ -325,6 +333,19 @@ int *__errno_location(void) {
 
 int *errno_location(void) {
     return &libc_errno;
+}
+
+void __assert_fail(const char *assertion,
+                   const char *file,
+                   unsigned int line,
+                   const char *function) {
+    (void)assertion;
+    (void)file;
+    (void)line;
+    (void)function;
+    console_panic("assert failed");
+    for (;;) {
+    }
 }
 
 br_prng_seeder br_prng_seeder_system(const char **name) {

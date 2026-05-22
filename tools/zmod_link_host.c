@@ -68,6 +68,7 @@ static const char *const host_kernel_exports[] = {
     "gfx_height",
     "gfx_viewport_active",
     "gfx_fill_rect",
+    "gfx_scroll_rect",
     "gfx_draw_rect",
     "draw_text_at_pixel",
     "put_char_at_screen",
@@ -405,7 +406,11 @@ static int compile_object(const char *source_path,
                                       &error_line,
                                       entry_label,
                                       sizeof(entry_label)) != 0) {
-        fprintf(stderr, "%s:%u: unsupported .Z syntax\n", source_path, error_line);
+        if (zscript_last_error() == ZSCRIPT_ERROR_OUTPUT_FULL) {
+            fprintf(stderr, "%s:%u: generated asm exceeded host build buffer\n", source_path, error_line);
+        } else {
+            fprintf(stderr, "%s:%u: unsupported .Z syntax\n", source_path, error_line);
+        }
         goto out;
     }
 

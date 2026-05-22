@@ -3583,7 +3583,9 @@ void desktop_run(const boot_info_t *info) {
             if (module_focused != 0 && module_focused->open) {
                 cursor_restore();
                 if (desktop_module_app_send_key(module_focused, &key)) {
-                    desktop_redraw_all();
+                    if (key.type != KEY_UP && key.type != KEY_DOWN) {
+                        desktop_redraw_all();
+                    }
                     cursor_draw_at(x, y);
                     continue;
                 }
@@ -3624,18 +3626,19 @@ void desktop_run(const boot_info_t *info) {
                 continue;
             }
             wheel_module = desktop_top_module_app_window_at(x, y);
-            if (wheel_module != 0 &&
-                desktop_module_app_send_mouse(wheel_module, x, y, (uint32_t)buttons, wheel_delta)) {
+            if (wheel_module != 0) {
                 cursor_restore();
-                desktop_focus_module_app(wheel_module);
-                editor_focused = 0;
-                desktop_terminal_blur();
-                desktop_redraw_all();
+                if (desktop_module_app_send_mouse(wheel_module, x, y, (uint32_t)buttons, wheel_delta)) {
+                    desktop_focus_module_app(wheel_module);
+                    editor_focused = 0;
+                    desktop_terminal_blur();
+                    cursor_draw_at(x, y);
+                    last_x = x;
+                    last_y = y;
+                    last_buttons = buttons;
+                    continue;
+                }
                 cursor_draw_at(x, y);
-                last_x = x;
-                last_y = y;
-                last_buttons = buttons;
-                continue;
             }
         }
         if (left_pressed && (wm_action != DESKTOP_WM_IDLE || editor_scroll_drag)) {

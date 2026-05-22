@@ -24,6 +24,7 @@ char *strdup(const char *s);
 
 int tolower(int ch);
 int toupper(int ch);
+int abs(int value);
 
 void *bsearch(const void *key,
               const void *base,

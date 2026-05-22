@@ -1,6 +1,7 @@
 #include "graphics.h"
 #include "kernel.h"
 #include "kmem.h"
+#include "libc.h"
 
 static uint64_t graphics_fb_base;
 static uint32_t graphics_fb_width;
@@ -301,6 +302,59 @@ int graphics_draw_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t h
     }
 
     return 0;
+}
+
+static void graphics_fill_abs_rect(uint32_t *fb,
+                                   uint32_t x,
+                                   uint32_t y,
+                                   uint32_t width,
+                                   uint32_t height,
+                                   uint32_t color) {
+    for (uint32_t row = 0; row < height; ++row) {
+        uint32_t *dst = fb + (uint64_t)(y + row) * graphics_fb_pitch + x;
+        for (uint32_t col = 0; col < width; ++col) {
+            dst[col] = color;
+        }
+    }
+}
+
+void graphics_scroll_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, int32_t dy, uint32_t fill_rgb_color) {
+    uint32_t *fb = graphics_target_base();
+    uint32_t abs_x;
+    uint32_t abs_y;
+    uint32_t amount;
+    uint32_t color;
+
+    if (fb == 0 || dy == 0 || !graphics_clip_rect(&x, &y, &width, &height, &abs_x, &abs_y)) {
+        return;
+    }
+
+    amount = abs_i32(dy);
+    color = graphics_pack_color(fill_rgb_color);
+    if (amount >= height) {
+        graphics_fill_abs_rect(fb, abs_x, abs_y, width, height, color);
+        return;
+    }
+
+    if (dy > 0) {
+        for (uint32_t row = height - amount; row > 0u; --row) {
+            uint32_t src_y = abs_y + row - 1u;
+            uint32_t dst_y = src_y + amount;
+            uint32_t *src = fb + (uint64_t)src_y * graphics_fb_pitch + abs_x;
+            uint32_t *dst = fb + (uint64_t)dst_y * graphics_fb_pitch + abs_x;
+            memmove(dst, src, width * sizeof(uint32_t));
+        }
+        graphics_fill_abs_rect(fb, abs_x, abs_y, width, amount, color);
+    } else {
+        for (uint32_t row = 0; row < height - amount; ++row) {
+            uint32_t src_y = abs_y + row + amount;
+            uint32_t dst_y = abs_y + row;
+            uint32_t *src = fb + (uint64_t)src_y * graphics_fb_pitch + abs_x;
+            uint32_t *dst = fb + (uint64_t)dst_y * graphics_fb_pitch + abs_x;
+            memmove(dst, src, width * sizeof(uint32_t));
+        }
+        graphics_fill_abs_rect(fb, abs_x, abs_y + height - amount, width, amount, color);
+    }
 }
 
 void graphics_backbuffer_flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {

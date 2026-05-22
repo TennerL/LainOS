@@ -106,6 +106,8 @@ BEARSSL_C_SOURCES_ALL := $(shell find third_party/bearssl/src -type f -name '*.c
 BEARSSL_C_SOURCES := $(filter-out %/rand/sysrng.c %x86ni%.c %pwr8%.c %sse2%.c %pclmul%.c,$(BEARSSL_C_SOURCES_ALL))
 NETSURF_PARSERUTILS_C_SOURCES := $(shell find third_party/netsurf/src/libparserutils/src -type f -name '*.c' | sort)
 NETSURF_LIBCSS_PARSE_PROPERTY_SOURCES := $(filter-out %/css_property_parser_gen.c,$(shell find third_party/netsurf/src/libcss/src/parse/properties -maxdepth 1 -type f -name '*.c' | sort))
+NETSURF_LIBCSS_SELECT_SOURCES := $(shell find third_party/netsurf/src/libcss/src/select -maxdepth 1 -type f -name '*.c' | sort)
+NETSURF_LIBCSS_SELECT_PROPERTY_SOURCES := $(shell find third_party/netsurf/src/libcss/src/select/properties -maxdepth 1 -type f -name '*.c' | sort)
 NETSURF_LIBCSS_C_SOURCES := \
 	third_party/netsurf/src/libcss/src/stylesheet.c \
 	third_party/netsurf/src/libcss/src/charset/detect.c \
@@ -117,9 +119,8 @@ NETSURF_LIBCSS_C_SOURCES := \
 	third_party/netsurf/src/libcss/src/parse/font_face.c \
 	third_party/netsurf/src/libcss/src/parse/mq.c \
 	$(NETSURF_LIBCSS_PARSE_PROPERTY_SOURCES) \
-	third_party/netsurf/src/libcss/src/select/hash.c \
-	third_party/netsurf/src/libcss/src/select/font_face.c \
-	third_party/netsurf/src/libcss/src/select/unit.c \
+	$(NETSURF_LIBCSS_SELECT_SOURCES) \
+	$(NETSURF_LIBCSS_SELECT_PROPERTY_SOURCES) \
 	third_party/netsurf/src/libcss/src/utils/errors.c \
 	third_party/netsurf/src/libcss/src/utils/utils.c
 NETSURF_C_SOURCES := \
