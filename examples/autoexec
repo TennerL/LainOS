@@ -16,6 +16,7 @@ cp R:/examples/zbrowser_module.Z zbrowser_module.Z
 cp R:/examples/zbrowser_html.Z zbrowser_html.Z
 cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
 cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
+cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
 
 cp R:/examples/personalize_module.Z personalize_module.Z
 cp R:/examples/personalize_module.zbuild personalize_module.zbuild
@@ -33,12 +34,13 @@ zinstall image_viewer
 
 bgcolor 0x0035063E
 
+net reset
 // net ip 192.168.2.84 255.255.255.0 192.168.2.1
-// net ip 192.168.178.96 255.255.255.0 192.168.178.1
-// net dns 1.1.1.1
-// net dhcp
-// net reset
+net ip 192.168.178.96 255.255.255.0 192.168.178.1
+net dns 1.1.1.1
+net dhcp
 
 keymap de
 clear
 info
+desktop

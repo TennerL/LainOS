@@ -2,7 +2,7 @@
 #include "kernel.h"
 
 #define CPU_MAX_CORES 32u
-#define CPU_AP_STACK_SIZE (6u * 1024u)
+#define CPU_AP_STACK_SIZE (64u * 1024u)
 #define CPU_AP_TRAMPOLINE_BASE 0x8000ull
 #define CPU_AP_TRAMPOLINE_VECTOR 0x08u
 #define CPU_SMP_IPI_VECTOR 0xF1u
@@ -189,6 +189,9 @@ typedef struct {
     volatile unsigned int state;
     unsigned int id;
     unsigned int smp_id;
+    uint64_t submitted_ticks;
+    uint64_t started_ticks;
+    uint64_t finished_ticks;
     kernel_task_fn_t fn;
     void *arg;
     char name[KERNEL_TASK_NAME_SIZE];
@@ -197,6 +200,16 @@ typedef struct {
 static cpu_core_state_t cpu_cores[CPU_MAX_CORES];
 static smp_work_slot_t smp_work_slots[CPU_SMP_WORK_SLOTS];
 static kernel_task_slot_t kernel_task_slots[CPU_TASK_SLOTS];
+
+typedef struct {
+    uint64_t vector;
+    uint64_t error_code;
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
+} cpu_exception_frame_t;
 
 static void cpu_relax(void) {
     __asm__ __volatile__("pause");
@@ -222,6 +235,96 @@ static uint64_t cpu_read_cr3(void) {
 
     __asm__ __volatile__("mov %%cr3, %0" : "=r"(value));
     return value;
+}
+
+static uint64_t cpu_read_cr2(void) {
+    uint64_t value;
+
+    __asm__ __volatile__("mov %%cr2, %0" : "=r"(value));
+    return value;
+}
+
+static const char *cpu_exception_name(uint64_t vector) {
+    static const char *const names[32] = {
+        "divide error",
+        "debug",
+        "non-maskable interrupt",
+        "breakpoint",
+        "overflow",
+        "bound range exceeded",
+        "invalid opcode",
+        "device not available",
+        "double fault",
+        "coprocessor segment overrun",
+        "invalid tss",
+        "segment not present",
+        "stack fault",
+        "general protection fault",
+        "page fault",
+        "reserved",
+        "x87 floating point",
+        "alignment check",
+        "machine check",
+        "simd floating point",
+        "virtualization",
+        "control protection",
+        "reserved",
+        "reserved",
+        "reserved",
+        "reserved",
+        "reserved",
+        "reserved",
+        "hypervisor injection",
+        "vmm communication",
+        "security exception",
+        "reserved",
+    };
+
+    if (vector < 32u) {
+        return names[vector];
+    }
+    return "unknown exception";
+}
+
+void cpu_exception_handler(void *frame_ptr) {
+    cpu_exception_frame_t *frame = (cpu_exception_frame_t *)frame_ptr;
+
+    fill_screen_color(0x8b0000u);
+    console_set_cursor(0, 0);
+    console_cursor_enable(0);
+    console_puts("KERNEL PANIC: CPU exception\n");
+    if (frame != 0) {
+        console_puts("vector=");
+        console_put_dec64(frame->vector);
+        console_puts(" ");
+        console_puts(cpu_exception_name(frame->vector));
+        console_puts(" error=0x");
+        console_put_hex64(frame->error_code);
+        console_puts("\nrip=0x");
+        console_put_hex64(frame->rip);
+        console_puts(" cs=0x");
+        console_put_hex64(frame->cs);
+        console_puts(" rflags=0x");
+        console_put_hex64(frame->rflags);
+        console_puts("\nrsp=0x");
+        console_put_hex64(frame->rsp);
+        console_puts(" ss=0x");
+        console_put_hex64(frame->ss);
+        if (frame->vector == 14u) {
+            console_puts("\ncr2=0x");
+            console_put_hex64(cpu_read_cr2());
+        }
+        console_puts("\ncr3=0x");
+        console_put_hex64(cpu_read_cr3());
+        console_puts(" cpu=");
+        console_put_dec64(cpu_current_index());
+        console_puts(" ticks=");
+        console_put_dec64(timer_ticks());
+        console_puts("\n");
+    }
+    for (;;) {
+        __asm__ __volatile__("cli; hlt");
+    }
 }
 
 static volatile uint32_t *lapic_reg(uint32_t reg) {
@@ -1106,6 +1209,9 @@ static void kernel_task_worker(void *arg) {
     task_lock();
     if (slot->state == CPU_TASK_QUEUED || slot->state == CPU_TASK_RUNNING) {
         slot->state = CPU_TASK_RUNNING;
+        if (slot->started_ticks == 0u) {
+            slot->started_ticks = timer_ticks();
+        }
         fn = slot->fn;
         fn_arg = slot->arg;
     }
@@ -1117,6 +1223,7 @@ static void kernel_task_worker(void *arg) {
 
     task_lock();
     if (slot->state == CPU_TASK_RUNNING) {
+        slot->finished_ticks = timer_ticks();
         __sync_synchronize();
         slot->state = CPU_TASK_DONE;
     }
@@ -1159,6 +1266,9 @@ void kernel_task_release(unsigned int id) {
             kernel_task_slots[i].arg = 0;
             kernel_task_slots[i].id = 0u;
             kernel_task_slots[i].smp_id = 0u;
+            kernel_task_slots[i].submitted_ticks = 0u;
+            kernel_task_slots[i].started_ticks = 0u;
+            kernel_task_slots[i].finished_ticks = 0u;
             kernel_task_slots[i].name[0] = '\0';
             __sync_synchronize();
             kernel_task_slots[i].state = CPU_TASK_FREE;
@@ -1188,6 +1298,9 @@ unsigned int kernel_task_submit_named(kernel_task_fn_t fn, void *arg, const char
             kernel_task_slots[i].fn = fn;
             kernel_task_slots[i].arg = arg;
             kernel_task_slots[i].smp_id = 0u;
+            kernel_task_slots[i].submitted_ticks = timer_ticks();
+            kernel_task_slots[i].started_ticks = 0u;
+            kernel_task_slots[i].finished_ticks = 0u;
             cpu_copy_task_name(kernel_task_slots[i].name,
                                sizeof(kernel_task_slots[i].name),
                                name && name[0] ? name : "task");
@@ -1222,6 +1335,10 @@ unsigned int kernel_task_submit_named(kernel_task_fn_t fn, void *arg, const char
 
 unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg) {
     return kernel_task_submit_named(fn, arg, "task");
+}
+
+int kernel_task_async_supported(void) {
+    return online_core_count > 1u;
 }
 
 unsigned int kernel_task_poll(void) {
@@ -1317,6 +1434,9 @@ unsigned int kernel_task_snapshot(kernel_task_info_t *out, unsigned int max_coun
         out[count].id = kernel_task_slots[i].id;
         out[count].state = kernel_task_slots[i].state;
         out[count].smp_id = kernel_task_slots[i].smp_id;
+        out[count].submitted_ticks = kernel_task_slots[i].submitted_ticks;
+        out[count].started_ticks = kernel_task_slots[i].started_ticks;
+        out[count].finished_ticks = kernel_task_slots[i].finished_ticks;
         cpu_copy_task_name(out[count].name, sizeof(out[count].name), kernel_task_slots[i].name);
         ++count;
     }

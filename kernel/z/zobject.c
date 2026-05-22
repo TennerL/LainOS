@@ -17,9 +17,9 @@
 #define ZOBJECT_HEADER_SIZE (16u + ZOBJECT_ENTRY_SIZE)
 #define ZOBJECT_V4_HEADER_SIZE 32u
 #define ZOBJECT_V5_HEADER_SIZE 36u
-#define ZOBJECT_LINK_ASM_SIZE 131072u
-#define ZOBJECT_MAX_SYMBOLS 256u
-#define ZOBJECT_MAX_RELOCATIONS 2048u
+#define ZOBJECT_LINK_ASM_SIZE (2u * 1024u * 1024u)
+#define ZOBJECT_MAX_SYMBOLS 512u
+#define ZOBJECT_MAX_RELOCATIONS 4096u
 #define ZOBJECT_MAX_OBJECTS 32u
 #define ZOBJECT_MAX_SECTIONS 3u
 
@@ -75,6 +75,18 @@ typedef struct {
     const unsigned char *relocations;
     const unsigned char *sections;
 } zo_object_info_t;
+
+static zo_symbol_t zo_from_asm_symbols[ZOBJECT_MAX_SYMBOLS];
+static assembler_symbol_t zo_from_asm_external_symbols[ZOBJECT_MAX_SYMBOLS];
+static assembler_symbol_t zo_from_asm_measure_symbols[ZOBJECT_MAX_SYMBOLS];
+static const char *zo_from_asm_export_names[ZOBJECT_MAX_SYMBOLS + 1u];
+static uint64_t zo_from_asm_export_values[ZOBJECT_MAX_SYMBOLS + 1u];
+static assembler_relocation_t zo_from_asm_relocations[ZOBJECT_MAX_RELOCATIONS];
+
+static const char *zo_link_export_names[ZOBJECT_MAX_RESOLVED_SYMBOLS];
+static uint64_t zo_link_export_values[ZOBJECT_MAX_RESOLVED_SYMBOLS];
+static zobject_resolved_symbol_t zo_link_local_exports[ZOBJECT_MAX_RESOLVED_SYMBOLS];
+static assembler_symbol_t zo_link_assembler_external_symbols[ZOBJECT_MAX_RESOLVED_SYMBOLS];
 
 static void zo_write_u32(unsigned char *p, uint32_t value) {
     p[0] = (unsigned char)(value & 0xFFu);
@@ -646,7 +658,7 @@ int zobject_from_asm(const char *asm_source,
                      uint32_t out_capacity,
                      uint32_t *out_size) {
     uint32_t i;
-    zo_symbol_t symbols[ZOBJECT_MAX_SYMBOLS];
+    zo_symbol_t *symbols = zo_from_asm_symbols;
     uint32_t symbol_count = 0;
     uint32_t symbol_bytes = 0;
     uint32_t reloc_bytes = 0;
@@ -655,14 +667,14 @@ int zobject_from_asm(const char *asm_source,
     uint32_t data_source_offset = 0;
     uint32_t text_size = 0;
     uint32_t data_size = 0;
-    assembler_symbol_t external_symbols[ZOBJECT_MAX_SYMBOLS];
+    assembler_symbol_t *external_symbols = zo_from_asm_external_symbols;
     uint32_t external_symbol_count = 0;
-    assembler_symbol_t measure_symbols[ZOBJECT_MAX_SYMBOLS];
+    assembler_symbol_t *measure_symbols = zo_from_asm_measure_symbols;
     uint32_t measure_symbol_count = 0;
-    const char *export_names[ZOBJECT_MAX_SYMBOLS + 1u];
-    uint64_t export_values[ZOBJECT_MAX_SYMBOLS + 1u];
+    const char **export_names = zo_from_asm_export_names;
+    uint64_t *export_values = zo_from_asm_export_values;
     uint32_t export_name_count = 0;
-    assembler_relocation_t relocations[ZOBJECT_MAX_RELOCATIONS];
+    assembler_relocation_t *relocations = zo_from_asm_relocations;
     uint32_t relocation_count = 0;
     uint32_t asm_error_line = 0;
     uint32_t image_size = 0;
@@ -1024,11 +1036,11 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
     uint32_t link_size = 0;
     uint32_t i;
     zo_object_info_t infos[ZOBJECT_MAX_OBJECTS];
-    const char *export_names[ZOBJECT_MAX_RESOLVED_SYMBOLS];
-    uint64_t export_values[ZOBJECT_MAX_RESOLVED_SYMBOLS];
+    const char **export_names = zo_link_export_names;
+    uint64_t *export_values = zo_link_export_values;
     uint32_t local_export_count = 0;
-    zobject_resolved_symbol_t local_exports[ZOBJECT_MAX_RESOLVED_SYMBOLS];
-    assembler_symbol_t assembler_external_symbols[ZOBJECT_MAX_RESOLVED_SYMBOLS];
+    zobject_resolved_symbol_t *local_exports = zo_link_local_exports;
+    assembler_symbol_t *assembler_external_symbols = zo_link_assembler_external_symbols;
     uint32_t image_offsets[ZOBJECT_MAX_OBJECTS];
     zo_section_t object_sections[ZOBJECT_MAX_OBJECTS][ZOBJECT_MAX_SECTIONS];
     uint32_t section_offsets[ZOBJECT_MAX_OBJECTS][ZOBJECT_MAX_SECTIONS];

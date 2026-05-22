@@ -285,7 +285,12 @@ int net_tls_http_get(uint32_t index,
             size_t len = 0;
             unsigned char *buf = br_ssl_engine_sendrec_buf(&cc->eng, &len);
             if (buf != 0 && len != 0) {
-                if (net_tcp_stream_send(buf, (uint32_t)len) != 0) {
+                int send_status = net_tcp_stream_send(buf, (uint32_t)len);
+                if (send_status != 0) {
+                    net_tls_debug_set(state,
+                                      (uint32_t)(0u - (uint32_t)send_status),
+                                      0,
+                                      body.out_size);
                     result = -4;
                     break;
                 }
@@ -369,6 +374,14 @@ int net_tls_http_get(uint32_t index,
                         body.header_truncated,
                         result,
                         info);
+    if (info && result == -4) {
+        info->tls_error = br_ssl_engine_last_error(&cc->eng);
+        if (info->tls_error == 0) {
+            net_debug_info_t debug;
+            net_debug_info(&debug);
+            info->tls_error = 1000u + debug.tcp_stream_last_error;
+        }
+    }
 
 cleanup:
     net_tcp_stream_close();

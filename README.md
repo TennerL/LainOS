@@ -506,7 +506,7 @@ zbuild filemgr_module
 zmod filemgr_module.zo
 
 zbuild zbrowser_module
-zmod zbrowser_html.zo zbrowser_module.zo
+zmod zbrowser_module
 
 zbuild libc_smoke_module
 zmod libc_smoke_module.zo
@@ -521,17 +521,15 @@ for files and empty directories. It can open JPEG and PNG files in the image
 viewer; decoding is provided by the kernel image service, so the viewer does
 not need a resident decoder module.
 
-The tiny Z browser module renders basic HTML from `index.html` or from an HTTP
-or HTTPS URL stored in `browser.url`. HTTPS uses the in-kernel TLS client with
-SNI, CMOS RTC time, and a small built-in CA anchor set for certificate
-validation. Use `net dhcp` first when QEMU or the LAN can provide an address;
-numeric IPv4 URLs and DNS names are both accepted.
+The tiny Z browser module renders basic HTML from local files such as
+`index.html`, plain HTTP URLs, HTTPS URLs, and Wikipedia article URLs via
+Wikipedia's smaller mobile HTML endpoint.
 For example:
 
 ```text
-write browser.url http://10.0.2.2:8000/index.html
+write index.html "<h1>Hello from Z Browser</h1><p>Local HTML is safe.</p>"
 zbuild zbrowser_module
-zmod zbrowser_html.zo zbrowser_module.zo
+zmod zbrowser_module
 desktop
 ```
 
@@ -572,7 +570,10 @@ library object used by `clib_port_smoke_module` to prove the multi-object
 module pattern for reusable C-library ports.
 `examples/zbrowser_html.Z` is the first browser library object; it owns HTML
 tag/entity scanning while `zbrowser_module.Z` owns browser UI, fetching, and
-rendering.
+rendering. `zmod zbrowser_module` reads the object-only zbuild manifest and
+loads both objects in order. The next browser milestone is a kernel-owned
+fetch/cache service with stronger cancellation, progress reporting, and cached
+image fetches.
 
 ## VirtualBox
 

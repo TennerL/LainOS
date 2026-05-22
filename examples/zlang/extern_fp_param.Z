@@ -1,0 +1,11 @@
+extern uint32_t kernel_task_submit_named(void (*fn)(uint8_t *arg), uint8_t *arg, const uint8_t *name);
+
+void worker(uint8_t *arg) {
+    if (arg != 0) {
+        arg[0] = arg[0];
+    }
+}
+
+uint32_t task_id;
+task_id = kernel_task_submit_named(worker, (uint8_t *)0, "fp");
+return 0;

@@ -1,21 +1,21 @@
 #include "zscript.h"
 
 #define Z_MAX_TOKEN_TEXT 32u
-#define Z_MAX_FUNCTIONS 128u
+#define Z_MAX_FUNCTIONS 512u
 #define Z_MAX_LABEL_TEXT 32u
 #define Z_MAX_LABEL_PREFIX 8u
 #define Z_MAX_LOCALS 64u
 #define Z_MAX_PARAMS 6u
-#define Z_MAX_STRINGS 256u
-#define Z_STRING_POOL_SIZE 8192u
+#define Z_MAX_STRINGS 1536u
+#define Z_STRING_POOL_SIZE 65536u
 #define Z_MAX_ARRAY_DIMS 3u
 #define Z_MAX_STRUCTS 32u
 #define Z_MAX_STRUCT_FIELDS 16u
-#define Z_MAX_GLOBALS 32u
+#define Z_MAX_GLOBALS 384u
 #define Z_MAX_LOOP_DEPTH 16u
 #define Z_MAX_CONSTANTS 64u
 #define Z_MAX_TYPEDEFS 32u
-#define Z_MAX_FUNCTION_SIGNATURES 128u
+#define Z_MAX_FUNCTION_SIGNATURES 512u
 
 typedef enum {
     Z_TOKEN_EOF = 0,
@@ -1309,6 +1309,7 @@ static int z_read_string(z_compiler_t *c, z_token_t *token) {
 
         if (ch == '"') {
             if (used >= Z_STRING_POOL_SIZE) {
+                z_set_error(c, token->line);
                 return -1;
             }
 
@@ -1321,6 +1322,7 @@ static int z_read_string(z_compiler_t *c, z_token_t *token) {
 
         if (ch == '\\') {
             if (c->pos >= c->size) {
+                z_set_error(c, token->line);
                 return -1;
             }
 
@@ -1334,6 +1336,7 @@ static int z_read_string(z_compiler_t *c, z_token_t *token) {
             } else if (ch == '0') {
                 ch = '\0';
             } else if (ch != '"' && ch != '\\') {
+                z_set_error(c, token->line);
                 return -1;
             }
         }
@@ -1343,12 +1346,14 @@ static int z_read_string(z_compiler_t *c, z_token_t *token) {
         }
 
         if (used + 1u >= Z_STRING_POOL_SIZE) {
+            z_set_error(c, token->line);
             return -1;
         }
 
         c->string_pool[used++] = ch;
     }
 
+    z_set_error(c, token->line);
     return -1;
 }
 
@@ -2082,37 +2087,45 @@ static int z_ident_type_kind(const char *name, z_type_kind_t *out_kind) {
     return -1;
 }
 
-static int z_current_is_type_name(const z_compiler_t *c) {
+static int z_current_is_type_name(z_compiler_t *c) {
     z_type_kind_t kind;
-    z_compiler_t probe;
 
     if (c->current.type != Z_TOKEN_IDENT) {
         return 0;
     }
 
     if (z_type_is_qualifier_name(c->current.text)) {
-        probe.source = c->source;
-        probe.size = c->size;
-        probe.pos = c->pos;
-        probe.line = c->line;
-        probe.current.type = c->current.type;
-        probe.current.number = c->current.number;
-        probe.current.line = c->current.line;
-        z_copy_text(probe.current.text, c->current.text);
-        probe.error_line = 0;
-        probe.string_pool_used = 0;
+        uint32_t saved_pos = c->pos;
+        uint32_t saved_line = c->line;
+        uint32_t saved_error_line = c->error_line;
+        z_token_t saved_current = c->current;
+        int result;
+
         do {
-            if (z_next_token(&probe) != 0 || probe.current.type != Z_TOKEN_IDENT) {
+            if (z_next_token(c) != 0 || c->current.type != Z_TOKEN_IDENT) {
+                c->pos = saved_pos;
+                c->line = saved_line;
+                c->error_line = saved_error_line;
+                c->current = saved_current;
                 return 0;
             }
-        } while (z_type_is_qualifier_name(probe.current.text));
+        } while (z_type_is_qualifier_name(c->current.text));
 
-        if (z_streq(probe.current.text, "struct")) {
+        if (z_streq(c->current.text, "struct")) {
+            c->pos = saved_pos;
+            c->line = saved_line;
+            c->error_line = saved_error_line;
+            c->current = saved_current;
             return 1;
         }
 
-        return z_ident_type_kind(probe.current.text, &kind) == 0 ||
-               z_find_typedef(c, probe.current.text) >= 0;
+        result = z_ident_type_kind(c->current.text, &kind) == 0 ||
+                 z_find_typedef(c, c->current.text) >= 0;
+        c->pos = saved_pos;
+        c->line = saved_line;
+        c->error_line = saved_error_line;
+        c->current = saved_current;
+        return result;
     }
 
     if (z_streq(c->current.text, "struct")) {
@@ -2190,15 +2203,28 @@ static int z_parse_function_pointer_parameter_tail(z_compiler_t *c,
     }
 
     if (c->current.type == Z_TOKEN_IDENT && z_streq(c->current.text, "void")) {
+        uint32_t saved_pos = c->pos;
+        uint32_t saved_line = c->line;
+        uint32_t saved_error_line = c->error_line;
+        z_token_t saved_current = c->current;
+
         if (z_next_token(c) != 0) {
             return -1;
         }
-
-        if (c->current.type != Z_TOKEN_RPAREN) {
-            z_set_error(c, c->current.line);
-            return -1;
+        if (c->current.type == Z_TOKEN_RPAREN) {
+            if (out_param_count) {
+                *out_param_count = 0;
+            }
+            return z_expect(c, Z_TOKEN_RPAREN);
         }
-    } else if (c->current.type != Z_TOKEN_RPAREN) {
+
+        c->pos = saved_pos;
+        c->line = saved_line;
+        c->error_line = saved_error_line;
+        c->current = saved_current;
+    }
+
+    if (c->current.type != Z_TOKEN_RPAREN) {
         for (;;) {
             char ignored_name[Z_MAX_TOKEN_TEXT];
 
@@ -2325,7 +2351,7 @@ static int z_parse_array_decl_suffixes(z_compiler_t *c,
             return -1;
         }
 
-        if (c->current.type != Z_TOKEN_NUMBER || c->current.number == 0 || c->current.number > 1024u) {
+        if (c->current.type != Z_TOKEN_NUMBER || c->current.number == 0 || c->current.number > 262144u) {
             z_set_error(c, c->current.line);
             return -1;
         }
@@ -2766,10 +2792,14 @@ static int z_parse_struct_body(z_compiler_t *c, int struct_index) {
     while (c->current.type != Z_TOKEN_RBRACE) {
         char field_name[Z_MAX_TOKEN_TEXT];
         z_type_t field_type;
+        uint32_t array_length = 0;
+        uint32_t dims[Z_MAX_ARRAY_DIMS];
+        uint32_t dim_count = 0;
         uint32_t field_index;
         uint32_t field_size = 0;
 
-        if (z_parse_typed_name(c, &field_type, field_name) != 0) {
+        if (z_parse_typed_name(c, &field_type, field_name) != 0 ||
+            z_parse_array_decl_suffixes(c, &array_length, dims, &dim_count) != 0) {
             z_set_error(c, c->current.line);
             return -1;
         }
@@ -2789,6 +2819,9 @@ static int z_parse_struct_body(z_compiler_t *c, int struct_index) {
         if (field_size == 0u) {
             z_set_error(c, c->current.line);
             return -1;
+        }
+        if (array_length != 0u) {
+            field_size *= array_length;
         }
 
         field_index = c->structs[struct_index].field_count++;
@@ -3681,8 +3714,12 @@ static int z_parse_primary(z_compiler_t *c, z_type_t *out_type) {
     if (c->current.type == Z_TOKEN_STRING) {
         int string_index = z_add_string(c, (uint32_t)c->current.number);
 
-        if (string_index < 0 ||
-            z_next_token(c) != 0) {
+        if (string_index < 0) {
+            z_set_error(c, c->current.line);
+            return -1;
+        }
+
+        if (z_next_token(c) != 0) {
             return -1;
         }
 
@@ -4478,7 +4515,6 @@ static int z_parse_condition_primary(z_compiler_t *c) {
             z_expect(c, Z_TOKEN_RPAREN) != 0) {
             return -1;
         }
-
         return 0;
     }
 
@@ -6574,7 +6610,7 @@ static int zscript_compile_source_internal(const char *source,
                                            uint32_t *error_line,
                                            char *entry_label_out,
                                            uint32_t entry_label_capacity) {
-    z_compiler_t c;
+    static z_compiler_t c;
     char entry_label[Z_MAX_LABEL_TEXT];
     uint32_t i;
 

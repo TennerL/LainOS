@@ -74,7 +74,9 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("smp_pending_work_count", smp_pending_work_count),
     KERNEL_EXPORT("kernel_task_submit", kernel_task_submit),
     KERNEL_EXPORT("kernel_task_submit_named", kernel_task_submit_named),
+    KERNEL_EXPORT("kernel_task_async_supported", kernel_task_async_supported),
     KERNEL_EXPORT("kernel_task_done", kernel_task_done),
+    KERNEL_EXPORT("kernel_task_release", kernel_task_release),
     KERNEL_EXPORT("kernel_task_wait", kernel_task_wait),
     KERNEL_EXPORT("kernel_task_poll", kernel_task_poll),
     KERNEL_EXPORT("kernel_task_pending_count", kernel_task_pending_count),
@@ -99,6 +101,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("image_probe", image_probe),
     KERNEL_EXPORT("image_decode_rgb24", image_decode_rgb24),
     KERNEL_EXPORT("image_decode_to_screen", image_decode_to_screen),
+    KERNEL_EXPORT("image_decode_to_screen_scaled", image_decode_to_screen_scaled),
     KERNEL_EXPORT("image_supported_formats", image_supported_formats),
     KERNEL_EXPORT("jpg_probe", jpg_probe),
     KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
@@ -189,6 +192,28 @@ int kernel_export_value(const char *name, uint64_t *out) {
             *out = exports[i].value;
             return 0;
         }
+    }
+
+    /*
+     * Keep critical graphics/image ABI symbols resolvable even if an older or
+     * partially generated export table is in play. Z modules depend on this
+     * path during both validation and relocation.
+     */
+    if (kernel_export_streq(name, "image_probe")) {
+        *out = (uint64_t)(uintptr_t)image_probe;
+        return 0;
+    }
+    if (kernel_export_streq(name, "image_decode_rgb24")) {
+        *out = (uint64_t)(uintptr_t)image_decode_rgb24;
+        return 0;
+    }
+    if (kernel_export_streq(name, "image_decode_to_screen")) {
+        *out = (uint64_t)(uintptr_t)image_decode_to_screen;
+        return 0;
+    }
+    if (kernel_export_streq(name, "image_decode_to_screen_scaled")) {
+        *out = (uint64_t)(uintptr_t)image_decode_to_screen_scaled;
+        return 0;
     }
 
     return -1;

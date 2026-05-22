@@ -3,13 +3,15 @@
 #include "kernel_exports.h"
 
 #define ASM_LINE_SIZE 128u
-#define ASM_MAX_LABELS 2048u
+#define ASM_MAX_LABELS 4096u
 #define ASM_LABEL_NAME_SIZE 40u
 
 typedef struct {
     char name[ASM_LABEL_NAME_SIZE];
     uint32_t offset;
 } asm_label_t;
+
+static asm_label_t asm_work_labels[ASM_MAX_LABELS];
 
 typedef struct {
     unsigned char *out;
@@ -1940,7 +1942,7 @@ int assembler_assemble_source_ex_relocs(const char *source,
         relocation_capacity,
         relocation_count,
     };
-    asm_label_t labels[ASM_MAX_LABELS];
+    asm_label_t *labels = asm_work_labels;
     uint32_t label_count = 0;
     uint32_t offset = 0;
     uint32_t pos = 0;
@@ -2025,7 +2027,7 @@ int assembler_measure_source_ex_symbols(const char *source,
         0,
         0,
     };
-    asm_label_t labels[ASM_MAX_LABELS];
+    asm_label_t *labels = asm_work_labels;
     uint32_t label_count = 0;
     uint32_t offset = 0;
     uint32_t pos = 0;

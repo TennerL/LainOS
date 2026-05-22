@@ -129,6 +129,7 @@ typedef struct {
     uint32_t header_size;
     uint32_t flags;
     int32_t error;
+    uint32_t tls_error;
     char content_type[NET_HTTP_CONTENT_TYPE_SIZE];
     char location[NET_HTTP_LOCATION_SIZE];
 } net_http_info_t;
@@ -153,6 +154,7 @@ void net_record_tx(uint32_t index);
 void net_record_tx_error(uint32_t index);
 int net_send_frame(uint32_t index, const void *data, uint32_t size);
 int net_poll_device(uint32_t index);
+unsigned int net_poll_all_devices(void);
 void net_receive_frame(uint32_t index, const void *data, uint32_t size);
 int net_parse_ipv4_addr(const char *text, uint32_t *out);
 void net_set_ipv4_config(uint32_t address, uint32_t netmask, uint32_t gateway);

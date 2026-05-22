@@ -419,6 +419,7 @@ void kernel_main(boot_info_t *info) {
         unsigned int session = console_active_pane();
 
         statusbar_update_if_due();
+        (void)net_poll_all_devices();
         shell_modules_tick();
         (void)kernel_task_poll();
         if (session >= SHELL_SESSION_COUNT) {

@@ -10,10 +10,14 @@
 #define NET_ARP_OP_REQUEST 1u
 #define NET_ARP_OP_REPLY 2u
 #define NET_TIMEOUT_TICKS 500ull
+#define NET_STREAM_SEND_TIMEOUT_TICKS 3000ull
+#define NET_STREAM_RETRANSMIT_TICKS 60ull
 #define NET_DEFAULT_IP ((10u << 24) | (0u << 16) | (2u << 8) | 15u)
 #define NET_DEFAULT_MASK ((255u << 24) | (255u << 16) | (255u << 8))
 #define NET_DEFAULT_GATEWAY ((10u << 24) | (0u << 16) | (2u << 8) | 2u)
 #define NET_DEFAULT_DNS ((10u << 24) | (0u << 16) | (2u << 8) | 3u)
+#define NET_FALLBACK_DNS_PRIMARY ((1u << 24) | (1u << 16) | (1u << 8) | 1u)
+#define NET_FALLBACK_DNS_SECONDARY ((8u << 24) | (8u << 16) | (8u << 8) | 8u)
 #define NET_DHCP_CLIENT_PORT 68u
 #define NET_DHCP_SERVER_PORT 67u
 #define NET_DNS_PORT 53u
@@ -175,9 +179,11 @@ static uint32_t local_netmask = NET_DEFAULT_MASK;
 static uint32_t local_gateway = NET_DEFAULT_GATEWAY;
 static uint32_t local_dns = NET_DEFAULT_DNS;
 static net_debug_info_t debug_info;
+static volatile unsigned int net_poll_lock;
 
 static void net_zero(void *ptr, uint32_t size);
 static int net_hostname_is_ipv4(const char *name, uint32_t *out);
+static void net_progress_device(uint32_t index);
 static uint32_t net_strlen(const char *s);
 
 static void copy_name(char *dst, const char *src) {
@@ -338,6 +344,17 @@ int net_poll_device(uint32_t index) {
     }
 
     return dev->poll(dev->ctx);
+}
+
+unsigned int net_poll_all_devices(void) {
+    unsigned int polled = 0;
+
+    for (uint32_t i = 0; i < device_count; ++i) {
+        if (net_poll_device(i) == 0) {
+            ++polled;
+        }
+    }
+    return polled;
 }
 
 static uint16_t net_bswap16(uint16_t value) {
@@ -669,7 +686,7 @@ static int net_arp_resolve(uint32_t index, uint32_t ip, uint8_t mac[6]) {
         }
 
         while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
-            (void)net_poll_device(index);
+            net_progress_device(index);
             if (arp_wait.found) {
                 net_copy(mac, arp_wait.mac, 6u);
                 arp_wait.active = 0;
@@ -940,7 +957,14 @@ static void net_http_copy_body_byte(net_tcp_get_t *ctx, char ch) {
 }
 
 static void net_service_background(void) {
-    statusbar_update_if_due();
+}
+
+static void net_progress_device(uint32_t index) {
+    if (__sync_lock_test_and_set(&net_poll_lock, 1u) == 0u) {
+        (void)net_poll_device(index);
+        __sync_lock_release(&net_poll_lock);
+    }
+    net_service_background();
 }
 
 static void net_dhcp_add_option(uint8_t *options, uint32_t *pos, uint8_t code, const void *data, uint8_t size) {
@@ -1506,8 +1530,7 @@ static int net_wait_for_tcp_connected(uint32_t index) {
     unsigned long long start = timer_ticks();
 
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
-        (void)net_poll_device(index);
-        net_service_background();
+        net_progress_device(index);
         if (tcp_get.connected) {
             return 0;
         }
@@ -1523,8 +1546,7 @@ static int net_wait_for_tcp_stream_connected(uint32_t index) {
     unsigned long long start = timer_ticks();
 
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
-        (void)net_poll_device(index);
-        net_service_background();
+        net_progress_device(index);
         if (tcp_stream.connected) {
             return 0;
         }
@@ -1541,8 +1563,7 @@ static int net_wait_for_tcp_done(uint32_t index) {
     uint32_t last_size = tcp_get.out_size;
 
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
-        (void)net_poll_device(index);
-        net_service_background();
+        net_progress_device(index);
         if (tcp_get.closed) {
             return 0;
         }
@@ -1615,6 +1636,7 @@ int net_tcp_stream_send(const void *data, uint32_t size) {
     const uint8_t *p = (const uint8_t *)data;
 
     if (!tcp_stream.active || !tcp_stream.connected || data == 0) {
+        debug_info.tcp_stream_last_error = 1u;
         return -1;
     }
 
@@ -1634,7 +1656,7 @@ int net_tcp_stream_send(const void *data, uint32_t size) {
         last_send = 0;
 
         while (tcp_stream.tx_acked < target_ack) {
-            if (last_send == 0 || timer_ticks() - last_send >= 60ull) {
+            if (last_send == 0 || timer_ticks() - last_send >= NET_STREAM_RETRANSMIT_TICKS) {
                 if (net_send_tcp(tcp_stream.device,
                                  tcp_stream.remote_mac,
                                  tcp_stream.remote_ip,
@@ -1645,6 +1667,7 @@ int net_tcp_stream_send(const void *data, uint32_t size) {
                                  0x18u,
                                  p,
                                  chunk) != 0) {
+                    debug_info.tcp_stream_last_error = 2u;
                     return -2;
                 }
                 if (tcp_stream.seq < target_ack) {
@@ -1656,15 +1679,17 @@ int net_tcp_stream_send(const void *data, uint32_t size) {
                 }
                 last_send = timer_ticks();
             }
-            (void)net_poll_device(tcp_stream.device);
-            net_service_background();
+            net_progress_device(tcp_stream.device);
             if (tcp_stream.reset) {
+                debug_info.tcp_stream_last_error = 3u;
                 return -3;
             }
-            if (timer_ticks() - start >= NET_TIMEOUT_TICKS) {
+            if (timer_ticks() - start >= NET_STREAM_SEND_TIMEOUT_TICKS) {
+                debug_info.tcp_stream_last_error = 4u;
                 return -4;
             }
         }
+        debug_info.tcp_stream_last_error = 0u;
         p += chunk;
         size -= chunk;
     }
@@ -1693,8 +1718,7 @@ int net_tcp_stream_recv(void *out, uint32_t capacity, uint32_t timeout_ticks) {
 
     start = timer_ticks();
     while (tcp_stream.rx_size == 0) {
-        (void)net_poll_device(tcp_stream.device);
-        net_service_background();
+        net_progress_device(tcp_stream.device);
         if (tcp_stream.reset) {
             return -2;
         }
@@ -1786,8 +1810,7 @@ static int net_wait_for_dhcp(uint32_t index) {
     unsigned long long start = timer_ticks();
 
     while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
-        (void)net_poll_device(index);
-        net_service_background();
+        net_progress_device(index);
         if (dhcp_wait.found) {
             return 0;
         }
@@ -1904,6 +1927,8 @@ int net_dns_resolve(uint32_t index, const char *name, uint32_t *out_ip) {
     uint32_t query_size = 0;
     uint8_t mac[6];
     uint32_t arp_ip;
+    uint32_t dns_servers[3];
+    uint32_t last_error;
     uint16_t local_port;
     uint16_t id;
     unsigned long long start;
@@ -1914,46 +1939,69 @@ int net_dns_resolve(uint32_t index, const char *name, uint32_t *out_ip) {
     if (net_hostname_is_ipv4(name, out_ip)) {
         return 0;
     }
-    if (local_dns == 0) {
-        return -2;
-    }
 
-    arp_ip = ((local_dns & local_netmask) == (local_ip & local_netmask)) ? local_dns : local_gateway;
-    if (arp_ip == 0 || net_arp_resolve(index, arp_ip, mac) != 0) {
-        return -3;
-    }
+    dns_servers[0] = local_dns;
+    dns_servers[1] = NET_FALLBACK_DNS_PRIMARY;
+    dns_servers[2] = NET_FALLBACK_DNS_SECONDARY;
+    last_error = local_dns == 0 ? 2u : 6u;
 
-    local_port = next_local_port++;
-    id = (uint16_t)(0xD000u ^ (uint16_t)timer_ticks() ^ local_port);
-    if (net_build_dns_query(name, id, query, sizeof(query), &query_size) != 0) {
-        return -4;
-    }
+    for (uint32_t attempt = 0; attempt < 3u; ++attempt) {
+        uint32_t server = dns_servers[attempt];
+        int duplicate = 0;
 
-    net_zero(&dns_wait, sizeof(dns_wait));
-    dns_wait.active = 1;
-    dns_wait.device = index;
-    dns_wait.id = id;
-    dns_wait.local_port = local_port;
-    ++debug_info.dns_tx;
-
-    if (net_send_udp(index, mac, local_dns, local_port, NET_DNS_PORT, query, query_size) != 0) {
-        dns_wait.active = 0;
-        return -5;
-    }
-
-    start = timer_ticks();
-    while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
-        (void)net_poll_device(index);
-        net_service_background();
-        if (dns_wait.found) {
-            *out_ip = dns_wait.ip;
-            dns_wait.active = 0;
-            return 0;
+        if (server == 0) {
+            continue;
         }
+        for (uint32_t prev = 0; prev < attempt; ++prev) {
+            if (dns_servers[prev] == server) {
+                duplicate = 1;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+
+        arp_ip = ((server & local_netmask) == (local_ip & local_netmask)) ? server : local_gateway;
+        if (arp_ip == 0 || net_arp_resolve(index, arp_ip, mac) != 0) {
+            last_error = 3u;
+            continue;
+        }
+
+        local_port = next_local_port++;
+        id = (uint16_t)(0xD000u ^ (uint16_t)timer_ticks() ^ local_port);
+        if (net_build_dns_query(name, id, query, sizeof(query), &query_size) != 0) {
+            return -4;
+        }
+
+        net_zero(&dns_wait, sizeof(dns_wait));
+        dns_wait.active = 1;
+        dns_wait.device = index;
+        dns_wait.id = id;
+        dns_wait.local_port = local_port;
+        ++debug_info.dns_tx;
+
+        if (net_send_udp(index, mac, server, local_port, NET_DNS_PORT, query, query_size) != 0) {
+            dns_wait.active = 0;
+            last_error = 5u;
+            continue;
+        }
+
+        start = timer_ticks();
+        while (timer_ticks() - start < NET_TIMEOUT_TICKS) {
+            net_progress_device(index);
+            if (dns_wait.found) {
+                *out_ip = dns_wait.ip;
+                local_dns = server;
+                dns_wait.active = 0;
+                return 0;
+            }
+        }
+
+        dns_wait.active = 0;
+        last_error = 6u;
     }
 
-    dns_wait.active = 0;
-    return -6;
+    return -(int)last_error;
 }
 
 int net_http_get(uint32_t index,

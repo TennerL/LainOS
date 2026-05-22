@@ -28,6 +28,12 @@ int image_decode_to_screen(const uint8_t *data,
                            uint32_t origin_x,
                            uint32_t origin_y,
                            image_info_t *out_image);
+int image_decode_to_screen_scaled(const uint8_t *data,
+                                  uint32_t size,
+                                  uint32_t origin_x,
+                                  uint32_t origin_y,
+                                  uint32_t max_width,
+                                  uint32_t max_height);
 const char *image_supported_formats(void);
 
 int jpg_probe(const uint8_t *data, uint32_t size, image_info_t *out_image);

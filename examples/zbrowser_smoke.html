@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Smoke</title>
+</head>
+<body>
+<h1 style="color:#f7d154">Z Browser Smoke</h1>
+<div class="infobox">
+<p>This page should show styled blocks, several images, table cells, links, and a visible input box.</p>
+</div>
+<form action="https://en.wikipedia.org/wiki/Special:Search">
+<input type="search" name="search" value="LainOS">
+<button type="submit">Search</button>
+<select name="scope"><option>Articles</option><option>Images</option></select>
+<textarea name="notes">Browser form text</textarea>
+</form>
+<table class="toc"><tr><th>Feature</th><th>Status</th></tr><tr><td>CSS</td><td>basic</td></tr></table>
+<hr>
+<div class="hatnote" style="text-align:center">Centered hatnote block rendered by v0.7.</div>
+<div class="ambox">Notice boxes should look different from normal body text.</div>
+<div class="vector-page-toolbar">This utility toolbar should be hidden.</div>
+<figure class="thumb">
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Wikipedia-logo.png/160px-Wikipedia-logo.png" alt="figure image">
+<figcaption class="thumbcaption">A centered image caption should look like a caption.</figcaption>
+</figure>
+<blockquote style="font-style:italic">This blockquote should render as a visual callout instead of normal paragraph text.</blockquote>
+<dl>
+<dt><strong>Definition title</strong></dt>
+<dd><em>Definition body</em> with smaller <small>secondary text</small>.</dd>
+</dl>
+<p>
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Milleniumstadiumchampionshipplayofffinal06.jpg/250px-Milleniumstadiumchampionshipplayofffinal06.jpg" alt="Wikipedia test image">
+</p>
+<div class="thumb">
+<img srcset="https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Wikipedia-logo.png/160px-Wikipedia-logo.png 1x, https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Wikipedia-logo.png/320px-Wikipedia-logo.png 2x" alt="srcset test image">
+</div>
+<p><mark>Highlighted text</mark> and <code>inline code</code> should get distinct colors.</p>
+<p><a href="https://en.wikipedia.org/wiki/Main_Page">Wikipedia main page</a></p>
+</body>
+</html>

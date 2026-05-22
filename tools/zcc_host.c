@@ -6,7 +6,7 @@
 #include "zscript.h"
 
 #define ZCC_HOST_MAX_INCLUDE_DEPTH 16u
-#define ZCC_HOST_MAX_SOURCE_SIZE (2u * 1024u * 1024u)
+#define ZCC_HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
 
 static int write_nasm_globals(FILE *out, const char *asm_output, uint32_t asm_size) {
     const char *cursor = asm_output;
@@ -255,7 +255,7 @@ int main(int argc, char **argv) {
     char *asm_output;
     uint32_t source_capacity = ZCC_HOST_MAX_SOURCE_SIZE;
     uint32_t source_size = 0;
-    uint32_t asm_capacity = 4u * 1024u * 1024u;
+    uint32_t asm_capacity = 8u * 1024u * 1024u;
     uint32_t asm_size = 0;
     uint32_t error_line = 0;
     char entry_label[64];

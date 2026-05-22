@@ -78,6 +78,8 @@ static void *image_stbi_realloc_sized(void *ptr, size_t old_size, size_t new_siz
 
 #define IMAGE_MAX_DIMENSION 4096u
 #define IMAGE_MAX_PIXELS (IMAGE_MAX_DIMENSION * IMAGE_MAX_DIMENSION)
+#define IMAGE_SCREEN_MAX_DECODE_PIXELS (2048u * 2048u)
+#define IMAGE_SCREEN_MAX_TARGET_PIXELS (1024u * 768u)
 
 static int image_fill_info(int width, int height, int components, image_info_t *out_image) {
     uint32_t w;
@@ -208,6 +210,111 @@ int image_decode_to_screen(const uint8_t *data,
         }
         if (out_image != 0) {
             *out_image = info;
+        }
+    }
+
+    STBI_FREE(decoded);
+    return rc;
+}
+
+int image_decode_to_screen_scaled(const uint8_t *data,
+                                  uint32_t size,
+                                  uint32_t origin_x,
+                                  uint32_t origin_y,
+                                  uint32_t max_width,
+                                  uint32_t max_height) {
+    image_info_t info;
+    stbi_uc *decoded;
+    uint32_t target_width;
+    uint32_t target_height;
+    uint32_t clip_width;
+    uint32_t clip_height;
+    uint32_t x;
+    uint32_t y;
+    uint32_t src_x;
+    uint32_t src_y;
+    uint32_t index;
+    uint32_t color;
+    int width = 0;
+    int height = 0;
+    int components = 0;
+    int rc;
+
+    if (max_width == 0u || max_height == 0u) {
+        return IMAGE_ERR_OUTPUT;
+    }
+    if (origin_x >= graphics_width() || origin_y >= graphics_height()) {
+        return IMAGE_ERR_OUTPUT;
+    }
+
+    rc = image_probe(data, size, &info);
+    if (rc != IMAGE_OK) {
+        return rc;
+    }
+    if (info.width > IMAGE_SCREEN_MAX_DECODE_PIXELS / info.height) {
+        return IMAGE_ERR_UNSUPPORTED;
+    }
+
+    target_width = info.width;
+    target_height = info.height;
+    if (target_width > max_width) {
+        target_height = (uint32_t)(((uint64_t)target_height * max_width) / target_width);
+        target_width = max_width;
+    }
+    if (target_height > max_height) {
+        target_width = (uint32_t)(((uint64_t)target_width * max_height) / target_height);
+        target_height = max_height;
+    }
+    if (target_width == 0u) {
+        target_width = 1u;
+    }
+    if (target_height == 0u) {
+        target_height = 1u;
+    }
+    if (target_width > IMAGE_SCREEN_MAX_TARGET_PIXELS / target_height) {
+        return IMAGE_ERR_OUTPUT;
+    }
+
+    clip_width = target_width;
+    clip_height = target_height;
+    if (clip_width > graphics_width() - origin_x) {
+        clip_width = graphics_width() - origin_x;
+    }
+    if (clip_height > graphics_height() - origin_y) {
+        clip_height = graphics_height() - origin_y;
+    }
+    if (clip_width == 0u || clip_height == 0u) {
+        return IMAGE_ERR_OUTPUT;
+    }
+
+    decoded = stbi_load_from_memory(data, (int)size, &width, &height, &components, 3);
+    if (decoded == 0) {
+        return IMAGE_ERR_DECODE;
+    }
+
+    rc = image_fill_info(width, height, components, &info);
+    if (rc == IMAGE_OK) {
+        if (info.width > IMAGE_SCREEN_MAX_DECODE_PIXELS / info.height) {
+            rc = IMAGE_ERR_UNSUPPORTED;
+        }
+    }
+    if (rc == IMAGE_OK) {
+        for (y = 0; y < clip_height; ++y) {
+            src_y = (uint32_t)(((uint64_t)y * info.height) / target_height);
+            if (src_y >= info.height) {
+                src_y = info.height - 1u;
+            }
+            for (x = 0; x < clip_width; ++x) {
+                src_x = (uint32_t)(((uint64_t)x * info.width) / target_width);
+                if (src_x >= info.width) {
+                    src_x = info.width - 1u;
+                }
+                index = (src_y * info.width + src_x) * 3u;
+                color = ((uint32_t)decoded[index] << 16) |
+                        ((uint32_t)decoded[index + 1u] << 8) |
+                        (uint32_t)decoded[index + 2u];
+                graphics_put_pixel(origin_x + x, origin_y + y, color);
+            }
         }
     }
 

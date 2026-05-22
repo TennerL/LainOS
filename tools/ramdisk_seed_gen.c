@@ -19,6 +19,33 @@ static void emit_c_string(FILE *out, const char *text) {
     fputc('"', out);
 }
 
+static void split_seed_arg(const char *arg, const char **input_path, const char **seed_path) {
+    const char *equals = strchr(arg, '=');
+
+    if (!equals || equals == arg || equals[1] == '\0') {
+        *input_path = arg;
+        *seed_path = arg;
+        return;
+    }
+
+    *input_path = arg;
+    *seed_path = equals + 1;
+}
+
+static void copy_seed_input_path(char *dst, size_t dst_size, const char *arg) {
+    const char *equals = strchr(arg, '=');
+    size_t len = equals ? (size_t)(equals - arg) : strlen(arg);
+
+    if (dst_size == 0) {
+        return;
+    }
+    if (len >= dst_size) {
+        len = dst_size - 1;
+    }
+    memcpy(dst, arg, len);
+    dst[len] = '\0';
+}
+
 static int emit_file_array(FILE *out, const char *path, unsigned int index) {
     FILE *in = fopen(path, "rb");
     int ch;
@@ -80,7 +107,9 @@ int main(int argc, char **argv) {
     fprintf(out, "} ramdisk_seed_entry_t;\n\n");
 
     for (int i = 2; i < argc; ++i) {
-        if (emit_file_array(out, argv[i], (unsigned int)(i - 2)) != 0) {
+        char input_path[512];
+        copy_seed_input_path(input_path, sizeof(input_path), argv[i]);
+        if (emit_file_array(out, input_path, (unsigned int)(i - 2)) != 0) {
             fclose(out);
             return 1;
         }
@@ -88,8 +117,12 @@ int main(int argc, char **argv) {
 
     fprintf(out, "static const ramdisk_seed_entry_t ramdisk_seed_entries[] = {\n");
     for (int i = 2; i < argc; ++i) {
+        const char *input_path;
+        const char *seed_path;
+        split_seed_arg(argv[i], &input_path, &seed_path);
+        (void)input_path;
         fprintf(out, "    { ");
-        emit_c_string(out, argv[i]);
+        emit_c_string(out, seed_path);
         fprintf(out, ", ramdisk_seed_file_%u, (uint32_t)sizeof(ramdisk_seed_file_%u) },\n",
                 (unsigned int)(i - 2),
                 (unsigned int)(i - 2));

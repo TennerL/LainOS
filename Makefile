@@ -22,6 +22,7 @@ PXE_BOOTLOADER := BOOTX64.EFI
 BUILD_VERSION_H := build/version.h
 RAMDISK_SEED_H := build/ramdisk_seed.h
 RAMDISK_SEED_FILES := $(shell find examples -type f | sort)
+RAMDISK_SEED_ARGS := $(RAMDISK_SEED_FILES)
 EFI_ARCH ?= x86_64
 EFI_INC ?= /usr/include/efi
 EFI_LIBDIR ?= /usr/lib
@@ -37,7 +38,7 @@ GENISOIMAGE ?= genisoimage
 ESP_SIZE_KB ?= 65536
 ISO_ESP_SIZE_KB ?= 16384
 BOOTDISK_SIZE_KB ?= 131072
-DATA_SIZE_KB ?= 65536
+DATA_SIZE_KB ?= 131072
 NTFS_DRIVER ?=
 BOOT_RES_WIDTH ?= 0
 BOOT_RES_HEIGHT ?= 0
@@ -142,7 +143,11 @@ build/pxe/$(PXE_BOOTLOADER): build/bootloader-pxe.so
 	$(MKDIR_P) $(PXE_DIR)
 	$(OBJCOPY) $(OBJCOPY_EFI_FLAGS) $< $@
 
-pxe: build/pxe/$(PXE_BOOTLOADER)
+refresh-ramdisk: build/tools/ramdisk_seed_gen | build
+	build/tools/ramdisk_seed_gen $(RAMDISK_SEED_H) $(RAMDISK_SEED_ARGS)
+
+pxe: refresh-ramdisk
+	$(MAKE) build/pxe/$(PXE_BOOTLOADER)
 
 build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED_H) | build
 	$(MKDIR_P) $(@D)
@@ -159,6 +164,10 @@ build/kernel/%.o: kernel/%.asm | build
 build/tools/zcc_host: tools/zcc_host.c kernel/z/zscript.c kernel/include/zscript.h | build
 	$(MKDIR_P) build/tools
 	$(CC) $(HOST_CFLAGS) tools/zcc_host.c kernel/z/zscript.c -o $@
+
+build/tools/zmod_link_host: tools/zmod_link_host.c kernel/z/zscript.c kernel/z/assembler.c kernel/z/zobject.c kernel/include/zscript.h kernel/include/assembler.h kernel/include/zobject.h | build
+	$(MKDIR_P) build/tools
+	$(CC) $(HOST_CFLAGS) tools/zmod_link_host.c kernel/z/zscript.c kernel/z/assembler.c kernel/z/zobject.c -o $@
 
 zcc-smoke: build/tools/zcc_host | build
 	$(MKDIR_P) build/zcc-smoke
@@ -188,7 +197,7 @@ build/tools/ramdisk_seed_gen: tools/ramdisk_seed_gen.c | build
 	$(CC) $(HOST_CFLAGS) tools/ramdisk_seed_gen.c -o $@
 
 $(RAMDISK_SEED_H): build/tools/ramdisk_seed_gen $(RAMDISK_SEED_FILES) | build
-	build/tools/ramdisk_seed_gen $@ $(RAMDISK_SEED_FILES)
+	build/tools/ramdisk_seed_gen $@ $(RAMDISK_SEED_ARGS)
 
 build/kernel/z/zlink_probe.asm: kernel/z/zlink_probe.Z build/tools/zcc_host | build
 	$(MKDIR_P) $(@D)
@@ -365,4 +374,4 @@ print-efi-config:
 	@echo EFI_LDS=$(EFI_LDS)
 	@echo EFI_ARCH=$(EFI_ARCH)
 
-.PHONY: all build image pxe run run-ahci run-usb run-net run-bootdisk run-bootdisk-gpt run-iso reseed-data zcc-smoke lainfs-smoke clean inspect-efi print-efi-config FORCE
+.PHONY: all build image refresh-ramdisk pxe run run-ahci run-usb run-net run-bootdisk run-bootdisk-gpt run-iso reseed-data zcc-smoke lainfs-smoke clean inspect-efi print-efi-config FORCE

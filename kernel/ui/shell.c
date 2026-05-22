@@ -4633,6 +4633,8 @@ static void cmd_net_print_debug(void) {
     console_put_dec64(debug.tcp_stream_rx);
     console_puts(" retx=");
     console_put_dec64(debug.tcp_stream_retx);
+    console_puts(" txerr=");
+    console_put_dec64(debug.tcp_stream_last_error);
     console_puts(" tls_state=0x");
     console_put_hex32(debug.tls_last_state);
     console_puts(" tls_err=");
@@ -5159,6 +5161,20 @@ static void cmd_wget(const char *args, const boot_info_t *info) {
         console_put_dec64(debug.tls_last_got);
         console_puts(" body=");
         console_put_dec64(debug.tls_last_body_size);
+        console_puts("\n");
+        return;
+    }
+    if (status == -4) {
+        net_debug_info_t debug;
+        net_debug_info(&debug);
+        console_puts("wget failed: tls send failed state=0x");
+        console_put_hex32(debug.tls_last_state);
+        console_puts(" err=");
+        console_put_dec64(debug.tls_last_error);
+        console_puts(" txerr=");
+        console_put_dec64(debug.tcp_stream_last_error);
+        console_puts(" retx=");
+        console_put_dec64(debug.tcp_stream_retx);
         console_puts("\n");
         return;
     }
