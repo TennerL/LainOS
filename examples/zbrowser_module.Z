@@ -19,6 +19,11 @@
 #define ZBROWSER_MAX_INPUTS 16
 #define ZBROWSER_INPUT_NAME_CAPACITY 48
 #define ZBROWSER_INPUT_VALUE_CAPACITY 96
+#define ZBROWSER_MAX_INLINE_CONTROLS 64
+#define ZBROWSER_INLINE_LABEL_CAPACITY 48
+#define ZBROWSER_INLINE_CONTROL_INPUT 1
+#define ZBROWSER_INLINE_CONTROL_BUTTON 2
+#define ZBROWSER_INLINE_CONTROL_SELECT 3
 #define ZBROWSER_REGION_ARTICLE 0
 #define ZBROWSER_REGION_LEFT 1
 #define ZBROWSER_REGION_RIGHT 2
@@ -187,8 +192,25 @@ global uint32_t zbrowser_cached_image_valids[14];
 global uint8_t zbrowser_input_names[768];
 global uint8_t zbrowser_input_values[1536];
 global uint32_t zbrowser_input_lines[16];
+global uint32_t zbrowser_input_x[16];
+global uint32_t zbrowser_input_y[16];
+global uint32_t zbrowser_input_w[16];
+global uint32_t zbrowser_input_h[16];
 global uint32_t zbrowser_input_count;
 global uint32_t zbrowser_focused_input;
+global uint32_t zbrowser_submit_x[16];
+global uint32_t zbrowser_submit_y[16];
+global uint32_t zbrowser_submit_w[16];
+global uint32_t zbrowser_submit_h[16];
+global uint32_t zbrowser_submit_count;
+global uint32_t zbrowser_inline_control_lines[64];
+global uint32_t zbrowser_inline_control_cols[64];
+global uint32_t zbrowser_inline_control_w[64];
+global uint32_t zbrowser_inline_control_h[64];
+global uint32_t zbrowser_inline_control_type[64];
+global uint32_t zbrowser_inline_control_ref[64];
+global uint8_t zbrowser_inline_control_labels[3072];
+global uint32_t zbrowser_inline_control_count;
 global uint32_t zbrowser_image_candidates;
 global int zbrowser_image_fetch_result;
 global int zbrowser_image_probe_result;
@@ -332,6 +354,10 @@ uint8_t *input_name_slot(uint32_t index) {
 
 uint8_t *input_value_slot(uint32_t index) {
     return zbrowser_input_values + index * ZBROWSER_INPUT_VALUE_CAPACITY;
+}
+
+uint8_t *inline_control_label_slot(uint32_t index) {
+    return zbrowser_inline_control_labels + index * ZBROWSER_INLINE_LABEL_CAPACITY;
 }
 
 uint8_t *image_url_slot(uint32_t index) {
@@ -2404,6 +2430,24 @@ uint32_t zbrowser_render_line_limit(void) {
     return zbrowser_scroll + visible + 24;
 }
 
+uint32_t zbrowser_line_max_cols(void) {
+    uint32_t aw;
+    uint32_t max_cols;
+
+    aw = article_w();
+    max_cols = 18;
+    if (aw > 32) {
+        max_cols = (aw - 24) / 8;
+    }
+    if (max_cols >= ZBROWSER_LINE_CAPACITY) {
+        max_cols = ZBROWSER_LINE_CAPACITY - 1;
+    }
+    if (max_cols < 4) {
+        max_cols = 4;
+    }
+    return max_cols;
+}
+
 void draw_line_text_runs(uint32_t x, uint32_t y) {
     uint32_t start;
     uint32_t end;
@@ -2428,6 +2472,100 @@ void draw_line_text_runs(uint32_t x, uint32_t y) {
     }
 }
 
+int line_has_inline_control(uint32_t line) {
+    uint32_t i;
+
+    i = 0;
+    while (i < zbrowser_inline_control_count) {
+        if (zbrowser_inline_control_lines[i] == line) {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+void draw_inline_control_record(uint32_t index, uint32_t line_x, uint32_t line_y) {
+    uint32_t type;
+    uint32_t ref;
+    uint32_t box_x;
+    uint32_t box_y;
+    uint32_t box_w;
+    uint32_t box_h;
+    uint32_t fill;
+    uint8_t *label;
+    uint8_t *value;
+
+    if (index >= zbrowser_inline_control_count) {
+        return;
+    }
+    type = zbrowser_inline_control_type[index];
+    ref = zbrowser_inline_control_ref[index];
+    box_x = line_x + zbrowser_inline_control_cols[index] * 8;
+    box_y = line_y;
+    box_w = zbrowser_inline_control_w[index];
+    box_h = zbrowser_inline_control_h[index];
+
+    if (type == ZBROWSER_INLINE_CONTROL_INPUT) {
+        if (ref >= zbrowser_input_count) {
+            return;
+        }
+        fill = 0xffffff;
+        if (zbrowser_focused_input == ref) {
+            fill = 0xeaf3ff;
+        }
+        gfx_fill_rect(box_x, box_y, box_w, box_h, fill);
+        gfx_draw_rect(box_x, box_y, box_w, box_h, 0xa2a9b1);
+        value = input_value_slot(ref);
+        draw_text_at_pixel(box_x + 8, box_y + 6, value, 0x202122, fill);
+        if (zbrowser_focused_input == ref) {
+            draw_text_at_pixel(box_x + box_w - 16, box_y + 6, "_", 0x3366cc, fill);
+        }
+        zbrowser_input_x[ref] = box_x;
+        zbrowser_input_y[ref] = box_y;
+        zbrowser_input_w[ref] = box_w;
+        zbrowser_input_h[ref] = box_h;
+        return;
+    }
+
+    if (type == ZBROWSER_INLINE_CONTROL_BUTTON) {
+        label = inline_control_label_slot(index);
+        gfx_fill_rect(box_x, box_y, box_w, box_h, 0xeaecf0);
+        gfx_draw_rect(box_x, box_y, box_w, box_h, 0xa2a9b1);
+        draw_text_at_pixel(box_x + 10, box_y + 6, label, 0x202122, 0xeaecf0);
+        if (zbrowser_submit_count < ZBROWSER_MAX_INPUTS) {
+            zbrowser_submit_x[zbrowser_submit_count] = box_x;
+            zbrowser_submit_y[zbrowser_submit_count] = box_y;
+            zbrowser_submit_w[zbrowser_submit_count] = box_w;
+            zbrowser_submit_h[zbrowser_submit_count] = box_h;
+            zbrowser_submit_count = zbrowser_submit_count + 1;
+        }
+        return;
+    }
+
+    if (type == ZBROWSER_INLINE_CONTROL_SELECT) {
+        label = inline_control_label_slot(index);
+        gfx_fill_rect(box_x, box_y, box_w, box_h, 0xf8f9fa);
+        gfx_draw_rect(box_x, box_y, box_w, box_h, 0xa2a9b1);
+        draw_text_at_pixel(box_x + 8, box_y + 6, label, 0x202122, 0xf8f9fa);
+        if (box_w > 32) {
+            draw_text_at_pixel(box_x + box_w - 20, box_y + 6, "v", 0x3366cc, 0xf8f9fa);
+        }
+    }
+}
+
+void draw_inline_controls_on_line(uint32_t line, uint32_t line_x, uint32_t line_y) {
+    uint32_t i;
+
+    i = 0;
+    while (i < zbrowser_inline_control_count) {
+        if (zbrowser_inline_control_lines[i] == line) {
+            draw_inline_control_record(i, line_x, line_y);
+        }
+        i = i + 1;
+    }
+}
+
 void flush_line(void) {
     uint32_t h;
     uint32_t w;
@@ -2437,11 +2575,13 @@ void flush_line(void) {
     uint32_t i;
     uint32_t seg_start;
     uint32_t seg_end;
+    uint32_t had_inline;
 
     h = gfx_height();
     if (zbrowser_line_len == 0) {
         return;
     }
+    had_inline = line_has_inline_control(zbrowser_line_no);
     zbrowser_line[zbrowser_line_len] = 0;
     if (zbrowser_line_no >= zbrowser_scroll) {
         draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
@@ -2477,13 +2617,18 @@ void flush_line(void) {
                 }
                 i = i + 1;
             }
+            draw_inline_controls_on_line(zbrowser_line_no, x, draw_y);
         }
     }
     zbrowser_line_len = 0;
     zbrowser_line[0] = 0;
     zbrowser_line_fg[0] = zbrowser_text_fg;
     zbrowser_last_space = 0;
-    zbrowser_line_no = zbrowser_line_no + 1;
+    if (had_inline != 0) {
+        zbrowser_line_no = zbrowser_line_no + 2;
+    } else {
+        zbrowser_line_no = zbrowser_line_no + 1;
+    }
 }
 
 void save_region_line(void) {
@@ -2635,6 +2780,10 @@ uint32_t register_input(const uint8_t *name, const uint8_t *value) {
         copy_text(slot_value, ZBROWSER_INPUT_VALUE_CAPACITY, value);
     }
     zbrowser_input_lines[index] = zbrowser_line_no;
+    zbrowser_input_x[index] = 0;
+    zbrowser_input_y[index] = 0;
+    zbrowser_input_w[index] = 0;
+    zbrowser_input_h[index] = 0;
     zbrowser_input_count = zbrowser_input_count + 1;
     return index;
 }
@@ -2670,6 +2819,185 @@ uint32_t control_x_for_width(uint32_t box_w) {
     return ax + 8;
 }
 
+uint32_t input_control_width_for_tag(const uint8_t *html, uint32_t pos) {
+    uint32_t width;
+    uint32_t chars;
+    uint32_t styled;
+    uint32_t max_w;
+
+    width = 180;
+    if (zb_attr_value(html, pos, "size", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
+        chars = css_length_value_px(zbrowser_attr, 0, 0);
+        if (chars != 0) {
+            if (chars < 4) {
+                chars = 4;
+            }
+            if (chars > 80) {
+                chars = 80;
+            }
+            width = chars * 8 + 24;
+        }
+    }
+    styled = image_style_length(html, pos, "width", article_w());
+    if (styled != 0) {
+        width = styled;
+    }
+    if (width > 460) {
+        width = 460;
+    }
+    max_w = 96;
+    if (article_w() > 32) {
+        max_w = article_w() - 24;
+    }
+    if (width > max_w) {
+        width = max_w;
+    }
+    if (width < 64) {
+        width = 64;
+    }
+    return width;
+}
+
+uint32_t button_control_width_for_label(const uint8_t *label) {
+    uint32_t width;
+    uint32_t max_w;
+
+    width = os_strlen(label) * 8 + 28;
+    if (width < 72) {
+        width = 72;
+    }
+    if (width > 240) {
+        width = 240;
+    }
+    max_w = 96;
+    if (article_w() > 32) {
+        max_w = article_w() - 24;
+    }
+    if (width > max_w) {
+        width = max_w;
+    }
+    return width;
+}
+
+uint32_t select_control_width_for_label(const uint8_t *label) {
+    uint32_t width;
+    uint32_t max_w;
+
+    width = os_strlen(label) * 8 + 44;
+    if (width < 120) {
+        width = 120;
+    }
+    if (width > 320) {
+        width = 320;
+    }
+    max_w = 96;
+    if (article_w() > 32) {
+        max_w = article_w() - 24;
+    }
+    if (width > max_w) {
+        width = max_w;
+    }
+    return width;
+}
+
+void append_inline_space(void) {
+    if (zbrowser_line_len + 1 >= ZBROWSER_LINE_CAPACITY) {
+        return;
+    }
+    zbrowser_line[zbrowser_line_len] = 32;
+    zbrowser_line_fg[zbrowser_line_len] = zbrowser_text_fg;
+    zbrowser_line_len = zbrowser_line_len + 1;
+}
+
+int emit_inline_control(uint32_t type,
+                        uint32_t ref,
+                        const uint8_t *label,
+                        uint32_t width,
+                        uint32_t height) {
+    uint32_t max_cols;
+    uint32_t cols;
+    uint32_t gap;
+    uint32_t index;
+    uint32_t i;
+
+    if (zbrowser_inline_control_count >= ZBROWSER_MAX_INLINE_CONTROLS) {
+        return 0;
+    }
+    if (width < 16) {
+        width = 16;
+    }
+    cols = (width + 7) / 8;
+    if (cols < 2) {
+        cols = 2;
+    }
+    max_cols = zbrowser_line_max_cols();
+    if (cols + 1 >= max_cols) {
+        cols = max_cols - 2;
+        width = cols * 8;
+    }
+    gap = 0;
+    if (zbrowser_line_len != 0) {
+        gap = 1;
+    }
+    if (zbrowser_line_len + gap + cols >= max_cols) {
+        flush_line();
+        gap = 0;
+    }
+    if (gap != 0) {
+        append_inline_space();
+    }
+
+    index = zbrowser_inline_control_count;
+    zbrowser_inline_control_lines[index] = zbrowser_line_no;
+    zbrowser_inline_control_cols[index] = zbrowser_line_len;
+    zbrowser_inline_control_w[index] = width;
+    zbrowser_inline_control_h[index] = height;
+    zbrowser_inline_control_type[index] = type;
+    zbrowser_inline_control_ref[index] = ref;
+    copy_text(inline_control_label_slot(index), ZBROWSER_INLINE_LABEL_CAPACITY, label);
+    zbrowser_inline_control_count = index + 1;
+
+    i = 0;
+    while (i < cols && zbrowser_line_len + 1 < ZBROWSER_LINE_CAPACITY) {
+        append_inline_space();
+        i = i + 1;
+    }
+    zbrowser_last_space = 0;
+    return 1;
+}
+
+void draw_inline_input_control(const uint8_t *html,
+                               uint32_t pos,
+                               uint32_t index,
+                               const uint8_t *value) {
+    uint32_t width;
+
+    width = input_control_width_for_tag(html, pos);
+    if (emit_inline_control(ZBROWSER_INLINE_CONTROL_INPUT, index, "", width, 20) == 0) {
+        draw_input_control(index, value);
+        return;
+    }
+    zbrowser_input_lines[index] = zbrowser_line_no;
+}
+
+void draw_inline_button_control(const uint8_t *label) {
+    uint32_t width;
+
+    width = button_control_width_for_label(label);
+    if (emit_inline_control(ZBROWSER_INLINE_CONTROL_BUTTON, 9999, label, width, 20) == 0) {
+        draw_button_control(label);
+    }
+}
+
+void draw_inline_select_control(const uint8_t *label) {
+    uint32_t width;
+
+    width = select_control_width_for_label(label);
+    if (emit_inline_control(ZBROWSER_INLINE_CONTROL_SELECT, 9999, label, width, 20) == 0) {
+        draw_select_control(label);
+    }
+}
+
 void draw_input_control(uint32_t index, const uint8_t *value) {
     uint32_t h;
     uint32_t w;
@@ -2699,6 +3027,7 @@ void draw_input_control(uint32_t index, const uint8_t *value) {
         box_w = 360;
     }
     box_x = control_x_for_width(box_w);
+    zbrowser_input_lines[index] = zbrowser_line_no;
 
     fill = 0xffffff;
     if (zbrowser_focused_input == index) {
@@ -2710,6 +3039,10 @@ void draw_input_control(uint32_t index, const uint8_t *value) {
     if (zbrowser_focused_input == index) {
         draw_text_at_pixel(box_x + box_w - 16, draw_y + 6, "_", 0x3366cc, fill);
     }
+    zbrowser_input_x[index] = box_x;
+    zbrowser_input_y[index] = draw_y;
+    zbrowser_input_w[index] = box_w;
+    zbrowser_input_h[index] = 20;
     zbrowser_line_no = zbrowser_line_no + 2;
 }
 
@@ -2745,6 +3078,13 @@ void draw_button_control(const uint8_t *label) {
     gfx_fill_rect(box_x, draw_y, box_w, 20, 0xeaecf0);
     gfx_draw_rect(box_x, draw_y, box_w, 20, 0xa2a9b1);
     draw_text_at_pixel(box_x + 10, draw_y + 6, label, 0x202122, 0xeaecf0);
+    if (zbrowser_submit_count < ZBROWSER_MAX_INPUTS) {
+        zbrowser_submit_x[zbrowser_submit_count] = box_x;
+        zbrowser_submit_y[zbrowser_submit_count] = draw_y;
+        zbrowser_submit_w[zbrowser_submit_count] = box_w;
+        zbrowser_submit_h[zbrowser_submit_count] = 20;
+        zbrowser_submit_count = zbrowser_submit_count + 1;
+    }
     zbrowser_line_no = zbrowser_line_no + 2;
 }
 
@@ -3094,7 +3434,6 @@ void blank_line(void) {
 }
 
 void emit_char(uint8_t ch) {
-    uint32_t aw;
     uint32_t max_cols;
 
     if (ch == 9 || ch == 10 || ch == 13 || ch == 32) {
@@ -3113,14 +3452,7 @@ void emit_char(uint8_t ch) {
         return;
     }
 
-    aw = article_w();
-    max_cols = 18;
-    if (aw > 32) {
-        max_cols = (aw - 24) / 8;
-    }
-    if (max_cols >= ZBROWSER_LINE_CAPACITY) {
-        max_cols = ZBROWSER_LINE_CAPACITY - 1;
-    }
+    max_cols = zbrowser_line_max_cols();
     if (zbrowser_line_len + 1 >= max_cols) {
         flush_line();
     }
@@ -3357,6 +3689,8 @@ void render_html(const uint8_t *html) {
     zbrowser_link_count = 0;
     zbrowser_images_loaded = 0;
     zbrowser_input_count = 0;
+    zbrowser_submit_count = 0;
+    zbrowser_inline_control_count = 0;
     zbrowser_form_action[0] = 0;
     zbrowser_image_candidates = 0;
     zbrowser_text_fg = zbrowser_page_text_fg;
@@ -3624,7 +3958,7 @@ void render_html(const uint8_t *html) {
                             zbrowser_url_tmp[0] == 0) {
                             copy_text(zbrowser_url_tmp, ZBROWSER_URL_CAPACITY, "Submit");
                         }
-                        draw_button_control(zbrowser_url_tmp);
+                        draw_inline_button_control(zbrowser_url_tmp);
                     }
                 } else {
                     if (zb_attr_value(html, pos, "name", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) == 0) {
@@ -3635,8 +3969,7 @@ void render_html(const uint8_t *html) {
                     input_index = register_input(zbrowser_attr, zbrowser_url_tmp);
                     if (input_index != 9999) {
                         input_value = input_value_slot(input_index);
-                        flush_line();
-                        draw_input_control(input_index, input_value);
+                        draw_inline_input_control(html, pos, input_index, input_value);
                     } else {
                         emit_text("[input]");
                     }
@@ -3651,7 +3984,7 @@ void render_html(const uint8_t *html) {
                     if (zbrowser_url_tmp[0] == 0) {
                         copy_text(zbrowser_url_tmp, ZBROWSER_URL_CAPACITY, "Submit");
                     }
-                    draw_button_control(zbrowser_url_tmp);
+                    draw_inline_button_control(zbrowser_url_tmp);
                     pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "button");
                     continue;
                 }
@@ -3676,7 +4009,7 @@ void render_html(const uint8_t *html) {
                         zbrowser_url_tmp[0] == 0) {
                         copy_text(zbrowser_url_tmp, ZBROWSER_URL_CAPACITY, "Select");
                     }
-                    draw_select_control(zbrowser_url_tmp);
+                    draw_inline_select_control(zbrowser_url_tmp);
                     pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "select");
                     continue;
                 }
@@ -4677,6 +5010,34 @@ int activate_link_at_point(uint32_t x, uint32_t y) {
     uint32_t i;
 
     i = 0;
+    while (i < zbrowser_input_count) {
+        if (zbrowser_input_w[i] != 0 &&
+            x >= zbrowser_input_x[i] &&
+            x < zbrowser_input_x[i] + zbrowser_input_w[i] &&
+            y >= zbrowser_input_y[i] &&
+            y < zbrowser_input_y[i] + zbrowser_input_h[i]) {
+            zbrowser_focused_input = i;
+            zbrowser_editing = 0;
+            zbrowser_needs_redraw = 1;
+            return 1;
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < zbrowser_submit_count) {
+        if (zbrowser_submit_w[i] != 0 &&
+            x >= zbrowser_submit_x[i] &&
+            x < zbrowser_submit_x[i] + zbrowser_submit_w[i] &&
+            y >= zbrowser_submit_y[i] &&
+            y < zbrowser_submit_y[i] + zbrowser_submit_h[i]) {
+            submit_focused_form();
+            return 1;
+        }
+        i = i + 1;
+    }
+
+    i = 0;
     while (i < zbrowser_link_count) {
         if (zbrowser_link_w[i] != 0 &&
             x >= zbrowser_link_x[i] &&
@@ -4893,6 +5254,8 @@ zbrowser_image_decode_budget = 0;
 zbrowser_scroll_cooldown = 0;
 zbrowser_focused_input = 9999;
 zbrowser_input_count = 0;
+zbrowser_submit_count = 0;
+zbrowser_inline_control_count = 0;
 zbrowser_form_action[0] = 0;
 clear_image_cache();
 zbrowser_image_candidates = 0;
