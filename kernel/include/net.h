@@ -12,6 +12,13 @@
 #define NET_HTTP_FLAG_TRUNCATED 0x00000001u
 #define NET_HTTP_FLAG_CONTENT_LENGTH 0x00000002u
 #define NET_HTTP_FLAG_HEADER_TRUNCATED 0x00000004u
+#define NET_HTTP_FLAG_CHUNKED 0x00000008u
+#define NET_HTTP_FLAG_DECHUNKED 0x00000010u
+#define NET_HTTP_FLAG_CHUNK_DECODE_ERROR 0x00000020u
+#define NET_HTTP_FLAG_GZIP 0x00000040u
+#define NET_HTTP_FLAG_DEFLATE 0x00000080u
+#define NET_HTTP_FLAG_DECOMPRESSED 0x00000100u
+#define NET_HTTP_FLAG_DECOMPRESS_ERROR 0x00000200u
 
 typedef int (*net_send_frame_t)(void *ctx, const void *data, uint32_t size);
 typedef int (*net_poll_t)(void *ctx);
@@ -192,6 +199,12 @@ void net_http_parse_info(const char *header,
                          int header_truncated,
                          int error,
                          net_http_info_t *info);
+int net_http_decode_chunked(char *body, uint32_t in_size, uint32_t capacity, uint32_t *out_size);
+int net_http_decode_content(char *body,
+                            uint32_t in_size,
+                            uint32_t capacity,
+                            uint32_t flags,
+                            uint32_t *out_size);
 int net_tcp_stream_connect(uint32_t index,
                            uint32_t ip,
                            uint16_t port,

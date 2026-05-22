@@ -6,6 +6,7 @@
 #include "libc.h"
 #include "registry.h"
 #include "shell.h"
+#include "weblayout.h"
 
 static int kernel_export_streq(const char *a, const char *b) {
     while (*a && *b && *a == *b) {
@@ -102,7 +103,11 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("image_decode_rgb24", image_decode_rgb24),
     KERNEL_EXPORT("image_decode_to_screen", image_decode_to_screen),
     KERNEL_EXPORT("image_decode_to_screen_scaled", image_decode_to_screen_scaled),
+    KERNEL_EXPORT("image_decode_to_screen_tiled", image_decode_to_screen_tiled),
     KERNEL_EXPORT("image_supported_formats", image_supported_formats),
+    KERNEL_EXPORT("web_style_prepare_document", web_style_prepare_document),
+    KERNEL_EXPORT("web_style_for_tag", web_style_for_tag),
+    KERNEL_EXPORT("web_style_for_cached_rules", web_style_for_cached_rules),
     KERNEL_EXPORT("jpg_probe", jpg_probe),
     KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
     KERNEL_EXPORT("jpg_decode_to_screen", jpg_decode_to_screen),
@@ -213,6 +218,22 @@ int kernel_export_value(const char *name, uint64_t *out) {
     }
     if (kernel_export_streq(name, "image_decode_to_screen_scaled")) {
         *out = (uint64_t)(uintptr_t)image_decode_to_screen_scaled;
+        return 0;
+    }
+    if (kernel_export_streq(name, "image_decode_to_screen_tiled")) {
+        *out = (uint64_t)(uintptr_t)image_decode_to_screen_tiled;
+        return 0;
+    }
+    if (kernel_export_streq(name, "web_style_for_tag")) {
+        *out = (uint64_t)(uintptr_t)web_style_for_tag;
+        return 0;
+    }
+    if (kernel_export_streq(name, "web_style_prepare_document")) {
+        *out = (uint64_t)(uintptr_t)web_style_prepare_document;
+        return 0;
+    }
+    if (kernel_export_streq(name, "web_style_for_cached_rules")) {
+        *out = (uint64_t)(uintptr_t)web_style_for_cached_rules;
         return 0;
     }
 

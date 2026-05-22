@@ -604,9 +604,11 @@ static void console_put_char_at_pixel_colors(uint32_t x,
         uint8_t bits = font_data[glyph][glyph_row];
 
         for (uint32_t glyph_col = 0; glyph_col < FONT_W; ++glyph_col) {
-            uint32_t color =
-                (bits & (1u << (7u - glyph_col))) ? fg : bg;
-            put_pixel(x + glyph_col, y + glyph_row, color);
+            if (bits & (1u << (7u - glyph_col))) {
+                put_pixel(x + glyph_col, y + glyph_row, fg);
+            } else if (bg != 0xffffffffu) {
+                put_pixel(x + glyph_col, y + glyph_row, bg);
+            }
         }
     }
 }

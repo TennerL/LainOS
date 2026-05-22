@@ -62,6 +62,10 @@ static const char *const host_kernel_exports[] = {
     "image_decode_rgb24",
     "image_decode_to_screen",
     "image_decode_to_screen_scaled",
+    "image_decode_to_screen_tiled",
+    "web_style_prepare_document",
+    "web_style_for_tag",
+    "web_style_for_cached_rules",
 };
 
 static int host_streq(const char *a, const char *b) {
@@ -87,7 +91,11 @@ int kernel_export_value(const char *name, uint64_t *out) {
     if (host_streq(name, "image_probe") ||
         host_streq(name, "image_decode_rgb24") ||
         host_streq(name, "image_decode_to_screen") ||
-        host_streq(name, "image_decode_to_screen_scaled")) {
+        host_streq(name, "image_decode_to_screen_scaled") ||
+        host_streq(name, "image_decode_to_screen_tiled") ||
+        host_streq(name, "web_style_prepare_document") ||
+        host_streq(name, "web_style_for_tag") ||
+        host_streq(name, "web_style_for_cached_rules")) {
         if (out) {
             *out = 0x1000f0000ull;
         }

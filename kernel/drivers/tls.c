@@ -164,7 +164,7 @@ static int tls_build_http_request(const char *path,
     APPEND_TEXT(path);
     APPEND_TEXT(" HTTP/1.0\r\nHost: ");
     APPEND_TEXT(host);
-    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: gzip, deflate\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_TEXT
 #undef APPEND_CH
@@ -192,6 +192,8 @@ int net_tls_http_get(uint32_t index,
     tls_http_body_t body;
     unsigned long long last_progress;
     int result = -10;
+    net_http_info_t final_info;
+    uint32_t decoded_size;
 
     if (out_size) {
         *out_size = 0;
@@ -364,16 +366,39 @@ int net_tls_http_get(uint32_t index,
         }
     }
 
-    if (result == 0 && out_size) {
-        *out_size = body.out_size;
-    }
     net_http_parse_info(body.header,
                         body.header_size,
                         body.out_size,
                         body.full,
                         body.header_truncated,
                         result,
-                        info);
+                        &final_info);
+    if (result == 0 && (final_info.flags & NET_HTTP_FLAG_CHUNKED) != 0) {
+        if (net_http_decode_chunked(out, body.out_size, out_capacity, &decoded_size) == 0) {
+            body.out_size = decoded_size;
+            final_info.flags |= NET_HTTP_FLAG_DECHUNKED;
+            final_info.body_size = decoded_size;
+        } else {
+            final_info.flags |= NET_HTTP_FLAG_CHUNK_DECODE_ERROR;
+        }
+    }
+    if (result == 0 && (final_info.flags & (NET_HTTP_FLAG_GZIP | NET_HTTP_FLAG_DEFLATE)) != 0) {
+        if (net_http_decode_content(out, body.out_size, out_capacity, final_info.flags, &decoded_size) == 0) {
+            body.out_size = decoded_size;
+            final_info.flags |= NET_HTTP_FLAG_DECOMPRESSED;
+            final_info.body_size = decoded_size;
+        } else {
+            final_info.flags |= NET_HTTP_FLAG_DECOMPRESS_ERROR;
+            final_info.error = -15;
+            result = -15;
+        }
+    }
+    if (result == 0 && out_size) {
+        *out_size = body.out_size;
+    }
+    if (info) {
+        *info = final_info;
+    }
     if (info && result == -4) {
         info->tls_error = br_ssl_engine_last_error(&cc->eng);
         if (info->tls_error == 0) {

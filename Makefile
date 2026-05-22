@@ -83,6 +83,7 @@ KERNEL_C_SOURCES := \
 	kernel/ui/shell.c \
 	kernel/ui/editor.c \
 	kernel/ui/browser.c \
+	kernel/ui/weblayout.c \
 	kernel/ui/desktop.c \
 	kernel/z/assembler.c \
 	kernel/z/zscript.c \

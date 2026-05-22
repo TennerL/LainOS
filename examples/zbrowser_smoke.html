@@ -2,14 +2,27 @@
 <html>
 <head>
 <title>Z Browser Smoke</title>
+<style>
+body { background:#ffffff; color:#202122; }
+h1 { color:#f7d154; text-align:center; }
+.css-panel {
+  background:#102033 url(https://dummyimage.com/320x120/102033/f7d154.jpg&text=CSS+Background);
+  color:white;
+}
+.stylesheet-note { color:blue; text-align:right; }
+</style>
 </head>
 <body>
-<h1 style="color:#f7d154">Z Browser Smoke</h1>
-<div class="infobox">
-<p>This page should show styled blocks, several images, table cells, links, and a visible input box.</p>
+<h1>Z Browser Smoke</h1>
+<div class="css-panel">
+This block should discover and render a stylesheet background image candidate.
 </div>
-<form action="https://en.wikipedia.org/wiki/Special:Search">
-<input type="search" name="search" value="LainOS">
+<p class="stylesheet-note">This sentence should be styled by a stylesheet rule, not an inline style.</p>
+<div class="infobox">
+<p>This page should show styled blocks, several images, table cells, links, a background image, and a visible input box.</p>
+</div>
+<form action="https://www.google.com/search">
+<input type="search" name="q" value="LainOS">
 <button type="submit">Search</button>
 <select name="scope"><option>Articles</option><option>Images</option></select>
 <textarea name="notes">Browser form text</textarea>
@@ -18,9 +31,9 @@
 <hr>
 <div class="hatnote" style="text-align:center">Centered hatnote block rendered by v0.7.</div>
 <div class="ambox">Notice boxes should look different from normal body text.</div>
-<div class="vector-page-toolbar">This utility toolbar should be hidden.</div>
+<div class="noprint">This utility toolbar should be hidden.</div>
 <figure class="thumb">
-<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Wikipedia-logo.png/160px-Wikipedia-logo.png" alt="figure image">
+<img src="https://dummyimage.com/160x90/3b82f6/ffffff.png&text=PNG" alt="figure image">
 <figcaption class="thumbcaption">A centered image caption should look like a caption.</figcaption>
 </figure>
 <blockquote style="font-style:italic">This blockquote should render as a visual callout instead of normal paragraph text.</blockquote>
@@ -29,12 +42,12 @@
 <dd><em>Definition body</em> with smaller <small>secondary text</small>.</dd>
 </dl>
 <p>
-<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Milleniumstadiumchampionshipplayofffinal06.jpg/250px-Milleniumstadiumchampionshipplayofffinal06.jpg" alt="Wikipedia test image">
+<img src="https://dummyimage.com/250x150/10b981/ffffff.jpg&text=JPG" alt="jpeg test image">
 </p>
 <div class="thumb">
-<img srcset="https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Wikipedia-logo.png/160px-Wikipedia-logo.png 1x, https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Wikipedia-logo.png/320px-Wikipedia-logo.png 2x" alt="srcset test image">
+<img srcset="https://dummyimage.com/160x90/ef4444/ffffff.gif&text=GIF 1x, https://dummyimage.com/320x180/ef4444/ffffff.gif&text=GIF 2x" alt="srcset gif image">
 </div>
 <p><mark>Highlighted text</mark> and <code>inline code</code> should get distinct colors.</p>
-<p><a href="https://en.wikipedia.org/wiki/Main_Page">Wikipedia main page</a></p>
+<p><a href="https://nihonsaba.net/">Nihonsaba</a></p>
 </body>
 </html>

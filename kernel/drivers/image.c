@@ -12,7 +12,7 @@ static int image_abs(int value) {
 }
 
 static void *image_stbi_malloc(size_t size) {
-    if (size == 0 || size > 0xffffffffu) {
+    if (size == 0 || size > (32u * 1024u * 1024u)) {
         return 0;
     }
     return kmalloc((uint32_t)size);
@@ -35,7 +35,7 @@ static void *image_stbi_realloc_sized(void *ptr, size_t old_size, size_t new_siz
         image_stbi_free(ptr);
         return 0;
     }
-    if (new_size > 0xffffffffu) {
+    if (new_size > (32u * 1024u * 1024u)) {
         return 0;
     }
 
@@ -80,6 +80,71 @@ static void *image_stbi_realloc_sized(void *ptr, size_t old_size, size_t new_siz
 #define IMAGE_MAX_PIXELS (IMAGE_MAX_DIMENSION * IMAGE_MAX_DIMENSION)
 #define IMAGE_SCREEN_MAX_DECODE_PIXELS (2048u * 2048u)
 #define IMAGE_SCREEN_MAX_TARGET_PIXELS (1024u * 768u)
+
+static uint32_t image_blend_rgb(uint32_t dst, uint32_t src, uint32_t alpha) {
+    uint32_t inv;
+    uint32_t sr;
+    uint32_t sg;
+    uint32_t sb;
+    uint32_t dr;
+    uint32_t dg;
+    uint32_t db;
+
+    if (alpha >= 255u) {
+        return src;
+    }
+    if (alpha == 0u) {
+        return dst;
+    }
+    inv = 255u - alpha;
+    sr = (src >> 16) & 0xffu;
+    sg = (src >> 8) & 0xffu;
+    sb = src & 0xffu;
+    dr = (dst >> 16) & 0xffu;
+    dg = (dst >> 8) & 0xffu;
+    db = dst & 0xffu;
+    return (((sr * alpha + dr * inv) / 255u) << 16) |
+           (((sg * alpha + dg * inv) / 255u) << 8) |
+           ((sb * alpha + db * inv) / 255u);
+}
+
+typedef struct {
+    stbi_uc *pixels;
+    stbi_uc *owned_pixels;
+    int width;
+    int height;
+    int components;
+} image_rgba_frame_t;
+
+static int image_load_rgba_frame(const uint8_t *data,
+                                 uint32_t size,
+                                 image_rgba_frame_t *frame) {
+    frame->pixels = 0;
+    frame->owned_pixels = 0;
+    frame->width = 0;
+    frame->height = 0;
+    frame->components = 0;
+
+    frame->owned_pixels = stbi_load_from_memory(data,
+                                                (int)size,
+                                                &frame->width,
+                                                &frame->height,
+                                                &frame->components,
+                                                4);
+    if (frame->owned_pixels == 0) {
+        return IMAGE_ERR_DECODE;
+    }
+    frame->pixels = frame->owned_pixels;
+    return IMAGE_OK;
+}
+
+static void image_free_rgba_frame(image_rgba_frame_t *frame) {
+    if (frame->owned_pixels != 0) {
+        STBI_FREE(frame->owned_pixels);
+    }
+    frame->pixels = 0;
+    frame->owned_pixels = 0;
+}
 
 static int image_fill_info(int width, int height, int components, image_info_t *out_image) {
     uint32_t w;
@@ -224,7 +289,7 @@ int image_decode_to_screen_scaled(const uint8_t *data,
                                   uint32_t max_width,
                                   uint32_t max_height) {
     image_info_t info;
-    stbi_uc *decoded;
+    image_rgba_frame_t decoded;
     uint32_t target_width;
     uint32_t target_height;
     uint32_t clip_width;
@@ -235,6 +300,7 @@ int image_decode_to_screen_scaled(const uint8_t *data,
     uint32_t src_y;
     uint32_t index;
     uint32_t color;
+    uint32_t alpha;
     int width = 0;
     int height = 0;
     int components = 0;
@@ -287,10 +353,13 @@ int image_decode_to_screen_scaled(const uint8_t *data,
         return IMAGE_ERR_OUTPUT;
     }
 
-    decoded = stbi_load_from_memory(data, (int)size, &width, &height, &components, 3);
-    if (decoded == 0) {
-        return IMAGE_ERR_DECODE;
+    rc = image_load_rgba_frame(data, size, &decoded);
+    if (rc != IMAGE_OK) {
+        return rc;
     }
+    width = decoded.width;
+    height = decoded.height;
+    components = decoded.components;
 
     rc = image_fill_info(width, height, components, &info);
     if (rc == IMAGE_OK) {
@@ -309,16 +378,108 @@ int image_decode_to_screen_scaled(const uint8_t *data,
                 if (src_x >= info.width) {
                     src_x = info.width - 1u;
                 }
-                index = (src_y * info.width + src_x) * 3u;
-                color = ((uint32_t)decoded[index] << 16) |
-                        ((uint32_t)decoded[index + 1u] << 8) |
-                        (uint32_t)decoded[index + 2u];
+                index = (src_y * info.width + src_x) * 4u;
+                color = ((uint32_t)decoded.pixels[index] << 16) |
+                        ((uint32_t)decoded.pixels[index + 1u] << 8) |
+                        (uint32_t)decoded.pixels[index + 2u];
+                alpha = (uint32_t)decoded.pixels[index + 3u];
+                if (alpha != 255u) {
+                    color = image_blend_rgb(graphics_get_pixel(origin_x + x, origin_y + y), color, alpha);
+                }
                 graphics_put_pixel(origin_x + x, origin_y + y, color);
             }
         }
     }
 
-    STBI_FREE(decoded);
+    image_free_rgba_frame(&decoded);
+    return rc;
+}
+
+int image_decode_to_screen_tiled(const uint8_t *data,
+                                 uint32_t size,
+                                 uint32_t origin_x,
+                                 uint32_t origin_y,
+                                 uint32_t width,
+                                 uint32_t height) {
+    image_info_t info;
+    image_rgba_frame_t decoded;
+    uint32_t clip_width;
+    uint32_t clip_height;
+    uint32_t x;
+    uint32_t y;
+    uint32_t src_x;
+    uint32_t src_y;
+    uint32_t index;
+    uint32_t color;
+    uint32_t alpha;
+    int image_width = 0;
+    int image_height = 0;
+    int components = 0;
+    int rc;
+
+    if (width == 0u || height == 0u) {
+        return IMAGE_ERR_OUTPUT;
+    }
+    if (origin_x >= graphics_width() || origin_y >= graphics_height()) {
+        return IMAGE_ERR_OUTPUT;
+    }
+    if (width > IMAGE_SCREEN_MAX_DECODE_PIXELS / height) {
+        return IMAGE_ERR_OUTPUT;
+    }
+
+    rc = image_probe(data, size, &info);
+    if (rc != IMAGE_OK) {
+        return rc;
+    }
+    if (info.width > IMAGE_SCREEN_MAX_DECODE_PIXELS / info.height) {
+        return IMAGE_ERR_UNSUPPORTED;
+    }
+
+    clip_width = width;
+    clip_height = height;
+    if (clip_width > graphics_width() - origin_x) {
+        clip_width = graphics_width() - origin_x;
+    }
+    if (clip_height > graphics_height() - origin_y) {
+        clip_height = graphics_height() - origin_y;
+    }
+    if (clip_width == 0u || clip_height == 0u) {
+        return IMAGE_ERR_OUTPUT;
+    }
+
+    rc = image_load_rgba_frame(data, size, &decoded);
+    if (rc != IMAGE_OK) {
+        return rc;
+    }
+    image_width = decoded.width;
+    image_height = decoded.height;
+    components = decoded.components;
+
+    rc = image_fill_info(image_width, image_height, components, &info);
+    if (rc == IMAGE_OK) {
+        if (info.width > IMAGE_SCREEN_MAX_DECODE_PIXELS / info.height) {
+            rc = IMAGE_ERR_UNSUPPORTED;
+        }
+    }
+    if (rc == IMAGE_OK) {
+        for (y = 0; y < clip_height; ++y) {
+            src_y = y % info.height;
+            for (x = 0; x < clip_width; ++x) {
+                src_x = x % info.width;
+                index = (src_y * info.width + src_x) * 4u;
+                color = ((uint32_t)decoded.pixels[index] << 16) |
+                        ((uint32_t)decoded.pixels[index + 1u] << 8) |
+                        (uint32_t)decoded.pixels[index + 2u];
+                alpha = (uint32_t)decoded.pixels[index + 3u];
+                if (alpha != 255u) {
+                    color = image_blend_rgb(graphics_get_pixel(origin_x + x, origin_y + y), color, alpha);
+                }
+                graphics_put_pixel(origin_x + x, origin_y + y, color);
+            }
+        }
+    }
+
+    image_free_rgba_frame(&decoded);
     return rc;
 }
 

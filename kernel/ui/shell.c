@@ -25,7 +25,7 @@
 #define EXEC_BUFFER_SIZE (1024u * 1024u)
 #define EXEC_API_MAGIC 0x4C41494E45584543ull
 #define ASM_SOURCE_SIZE (1024u * 1024u)
-#define Z_INCLUDE_BUFFER_SIZE (128u * 1024u)
+#define Z_INCLUDE_BUFFER_SIZE (256u * 1024u)
 #define ZMODULE_IMAGE_SIZE (512u * 1024u)
 #define SHELL_PATH_SIZE 128u
 #define SHELL_MAX_SESSIONS 2u
@@ -6622,6 +6622,14 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
                                         &source_size);
         if (status == -5) {
             console_puts("zbuild failed: source not found on line ");
+            console_put_dec64(line);
+            console_puts(": ");
+            console_puts(source_name);
+            console_puts("\n");
+            return;
+        }
+        if (status == -6) {
+            console_puts("zbuild failed: source file is too large on line ");
             console_put_dec64(line);
             console_puts(": ");
             console_puts(source_name);

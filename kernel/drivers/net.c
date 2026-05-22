@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "kmem.h"
 #include "net.h"
 
 #define NET_ETH_TYPE_ARP 0x0806u
@@ -21,6 +22,9 @@
 #define NET_DHCP_CLIENT_PORT 68u
 #define NET_DHCP_SERVER_PORT 67u
 #define NET_DNS_PORT 53u
+
+extern int stbi_zlib_decode_buffer(char *obuffer, int olen, const char *ibuffer, int ilen);
+extern int stbi_zlib_decode_noheader_buffer(char *obuffer, int olen, const char *ibuffer, int ilen);
 
 static net_device_t devices[NET_MAX_DEVICES];
 static uint32_t device_count;
@@ -802,11 +806,45 @@ static uint32_t net_http_parse_uint(const char *header, uint32_t header_size, ui
     while (*pos < header_size &&
            header[*pos] >= '0' &&
            header[*pos] <= '9') {
+        uint32_t digit = (uint32_t)(header[*pos] - '0');
         *saw_digit = 1;
-        value = value * 10u + (uint32_t)(header[*pos] - '0');
+        if (value > 429496729u || (value == 429496729u && digit > 5u)) {
+            value = 0xFFFFFFFFu;
+        } else {
+            value = value * 10u + digit;
+        }
         *pos = *pos + 1u;
     }
     return value;
+}
+
+static int net_http_header_value_contains(const char *header,
+                                          uint32_t header_size,
+                                          uint32_t pos,
+                                          const char *needle) {
+    uint32_t match = 0;
+
+    while (pos < header_size && (header[pos] == ' ' || header[pos] == '\t')) {
+        ++pos;
+    }
+    while (pos < header_size && header[pos] != '\r' && header[pos] != '\n') {
+        char a = header[pos];
+        char b = needle[match];
+
+        if (a >= 'A' && a <= 'Z') {
+            a = (char)(a + ('a' - 'A'));
+        }
+        if (a == b) {
+            ++match;
+            if (needle[match] == '\0') {
+                return 1;
+            }
+        } else {
+            match = (a == needle[0]) ? 1u : 0u;
+        }
+        ++pos;
+    }
+    return 0;
 }
 
 static void net_http_copy_header_value(const char *header,
@@ -828,7 +866,223 @@ static void net_http_copy_header_value(const char *header,
            out_pos + 1u < out_capacity) {
         out[out_pos++] = header[pos++];
     }
+    while (out_pos > 0u &&
+           (out[out_pos - 1u] == ' ' || out[out_pos - 1u] == '\t')) {
+        --out_pos;
+    }
     out[out_pos] = '\0';
+}
+
+static int net_http_hex_value(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    return -1;
+}
+
+int net_http_decode_chunked(char *body, uint32_t in_size, uint32_t capacity, uint32_t *out_size) {
+    uint32_t read_pos = 0;
+    uint32_t write_pos = 0;
+
+    if (out_size) {
+        *out_size = 0;
+    }
+    if (!body || capacity == 0) {
+        return -1;
+    }
+
+    while (read_pos < in_size) {
+        uint32_t chunk_size = 0;
+        int saw_digit = 0;
+
+        while (read_pos < in_size && (body[read_pos] == '\r' || body[read_pos] == '\n')) {
+            ++read_pos;
+        }
+        while (read_pos < in_size) {
+            int digit = net_http_hex_value(body[read_pos]);
+            if (digit < 0) {
+                break;
+            }
+            saw_digit = 1;
+            if (chunk_size > 0x0fffffffu) {
+                return -1;
+            }
+            chunk_size = (chunk_size << 4) | (uint32_t)digit;
+            ++read_pos;
+        }
+        if (!saw_digit) {
+            return -1;
+        }
+
+        while (read_pos < in_size && body[read_pos] != '\n') {
+            ++read_pos;
+        }
+        if (read_pos >= in_size) {
+            return -2;
+        }
+        ++read_pos;
+
+        if (chunk_size == 0) {
+            if (write_pos < capacity) {
+                body[write_pos] = '\0';
+            }
+            if (out_size) {
+                *out_size = write_pos;
+            }
+            return 0;
+        }
+        if (chunk_size > in_size - read_pos) {
+            return -2;
+        }
+        if (chunk_size >= capacity || write_pos > capacity - chunk_size - 1u) {
+            return -3;
+        }
+        for (uint32_t i = 0; i < chunk_size; ++i) {
+            body[write_pos++] = body[read_pos++];
+        }
+
+        if (read_pos < in_size && body[read_pos] == '\r') {
+            ++read_pos;
+        }
+        if (read_pos < in_size && body[read_pos] == '\n') {
+            ++read_pos;
+        } else if (read_pos < in_size) {
+            return -1;
+        }
+    }
+    return -2;
+}
+
+static int net_http_gzip_deflate_range(const char *body,
+                                       uint32_t in_size,
+                                       uint32_t *out_offset,
+                                       uint32_t *out_size) {
+    const uint8_t *data = (const uint8_t *)body;
+    uint32_t pos;
+    uint8_t flags;
+
+    if (!body || in_size < 18u || !out_offset || !out_size) {
+        return -1;
+    }
+    if (data[0] != 0x1fu || data[1] != 0x8bu || data[2] != 8u) {
+        return -1;
+    }
+    flags = data[3];
+    if ((flags & 0xe0u) != 0) {
+        return -1;
+    }
+
+    pos = 10u;
+    if ((flags & 0x04u) != 0) {
+        uint32_t extra_len;
+        if (pos + 2u > in_size) {
+            return -1;
+        }
+        extra_len = (uint32_t)data[pos] | ((uint32_t)data[pos + 1u] << 8);
+        pos += 2u;
+        if (extra_len > in_size - pos) {
+            return -1;
+        }
+        pos += extra_len;
+    }
+    if ((flags & 0x08u) != 0) {
+        while (pos < in_size && data[pos] != 0) {
+            ++pos;
+        }
+        if (pos >= in_size) {
+            return -1;
+        }
+        ++pos;
+    }
+    if ((flags & 0x10u) != 0) {
+        while (pos < in_size && data[pos] != 0) {
+            ++pos;
+        }
+        if (pos >= in_size) {
+            return -1;
+        }
+        ++pos;
+    }
+    if ((flags & 0x02u) != 0) {
+        if (pos + 2u > in_size) {
+            return -1;
+        }
+        pos += 2u;
+    }
+    if (pos + 8u > in_size) {
+        return -1;
+    }
+
+    *out_offset = pos;
+    *out_size = in_size - pos - 8u;
+    return 0;
+}
+
+int net_http_decode_content(char *body,
+                            uint32_t in_size,
+                            uint32_t capacity,
+                            uint32_t flags,
+                            uint32_t *out_size) {
+    char *compressed;
+    uint32_t decode_capacity;
+    uint32_t gzip_offset;
+    uint32_t gzip_size;
+    int decoded;
+
+    if (out_size) {
+        *out_size = in_size;
+    }
+    if ((flags & (NET_HTTP_FLAG_GZIP | NET_HTTP_FLAG_DEFLATE)) == 0) {
+        return 1;
+    }
+    if (!body || in_size == 0 || capacity <= 1u || in_size > 0x7fffffffu || capacity > 0x7fffffffu) {
+        return -1;
+    }
+
+    compressed = (char *)kmalloc(in_size);
+    if (!compressed) {
+        return -2;
+    }
+    net_copy(compressed, body, in_size);
+
+    decode_capacity = capacity - 1u;
+    decoded = -1;
+    if ((flags & NET_HTTP_FLAG_GZIP) != 0) {
+        if (net_http_gzip_deflate_range(compressed, in_size, &gzip_offset, &gzip_size) == 0 &&
+            gzip_size <= 0x7fffffffu) {
+            decoded = stbi_zlib_decode_noheader_buffer(body,
+                                                       (int)decode_capacity,
+                                                       compressed + gzip_offset,
+                                                       (int)gzip_size);
+        }
+    } else if ((flags & NET_HTTP_FLAG_DEFLATE) != 0) {
+        decoded = stbi_zlib_decode_buffer(body,
+                                          (int)decode_capacity,
+                                          compressed,
+                                          (int)in_size);
+        if (decoded < 0) {
+            decoded = stbi_zlib_decode_noheader_buffer(body,
+                                                       (int)decode_capacity,
+                                                       compressed,
+                                                       (int)in_size);
+        }
+    }
+
+    kfree(compressed);
+    if (decoded < 0) {
+        return -3;
+    }
+    body[(uint32_t)decoded] = '\0';
+    if (out_size) {
+        *out_size = (uint32_t)decoded;
+    }
+    return 0;
 }
 
 void net_http_parse_info(const char *header,
@@ -903,6 +1157,17 @@ void net_http_parse_info(const char *header,
                                        i + 9u,
                                        info->location,
                                        sizeof(info->location));
+        } else if (net_http_header_match_at(header, header_size, i, "transfer-encoding:")) {
+            if (net_http_header_value_contains(header, header_size, i + 18u, "chunked")) {
+                info->flags |= NET_HTTP_FLAG_CHUNKED;
+            }
+        } else if (net_http_header_match_at(header, header_size, i, "content-encoding:")) {
+            if (net_http_header_value_contains(header, header_size, i + 17u, "gzip") ||
+                net_http_header_value_contains(header, header_size, i + 17u, "x-gzip")) {
+                info->flags |= NET_HTTP_FLAG_GZIP;
+            } else if (net_http_header_value_contains(header, header_size, i + 17u, "deflate")) {
+                info->flags |= NET_HTTP_FLAG_DEFLATE;
+            }
         }
     }
 }
@@ -1797,7 +2062,7 @@ static int net_build_http_request(const char *path,
         APPEND_DEC(parts[2]); APPEND_CH('.');
         APPEND_DEC(parts[3]);
     }
-    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: gzip, deflate\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_DEC
 #undef APPEND_TEXT
@@ -2027,6 +2292,8 @@ int net_http_get_ex(uint32_t index,
     char request[512];
     uint32_t request_size;
     int is_https = 0;
+    net_http_info_t final_info;
+    uint32_t decoded_size;
 
     if (out_size) {
         *out_size = 0;
@@ -2139,16 +2406,43 @@ int net_http_get_ex(uint32_t index,
         return -6;
     }
 
-    if (out_size) {
-        *out_size = tcp_get.out_size;
-    }
     net_http_parse_info(tcp_get.header,
                         tcp_get.header_size,
                         tcp_get.out_size,
                         tcp_get.full,
                         tcp_get.header_truncated,
                         0,
-                        info);
+                        &final_info);
+    if ((final_info.flags & NET_HTTP_FLAG_CHUNKED) != 0) {
+        if (net_http_decode_chunked(out, tcp_get.out_size, out_capacity, &decoded_size) == 0) {
+            tcp_get.out_size = decoded_size;
+            final_info.flags |= NET_HTTP_FLAG_DECHUNKED;
+            final_info.body_size = decoded_size;
+        } else {
+            final_info.flags |= NET_HTTP_FLAG_CHUNK_DECODE_ERROR;
+        }
+    }
+    if ((final_info.flags & (NET_HTTP_FLAG_GZIP | NET_HTTP_FLAG_DEFLATE)) != 0) {
+        if (net_http_decode_content(out, tcp_get.out_size, out_capacity, final_info.flags, &decoded_size) == 0) {
+            tcp_get.out_size = decoded_size;
+            final_info.flags |= NET_HTTP_FLAG_DECOMPRESSED;
+            final_info.body_size = decoded_size;
+        } else {
+            final_info.flags |= NET_HTTP_FLAG_DECOMPRESS_ERROR;
+            final_info.error = -15;
+            if (info) {
+                *info = final_info;
+            }
+            tcp_get.active = 0;
+            return -15;
+        }
+    }
+    if (out_size) {
+        *out_size = tcp_get.out_size;
+    }
+    if (info) {
+        *info = final_info;
+    }
     tcp_get.active = 0;
     return 0;
 }
