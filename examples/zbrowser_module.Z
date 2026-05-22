@@ -24,6 +24,10 @@
 #define ZBROWSER_INLINE_CONTROL_INPUT 1
 #define ZBROWSER_INLINE_CONTROL_BUTTON 2
 #define ZBROWSER_INLINE_CONTROL_SELECT 3
+#define ZBROWSER_TABLE_MAX_COLS 16
+#define ZBROWSER_MAX_TABLE_BOXES 128
+#define ZBROWSER_TABLE_BOX_BG 1
+#define ZBROWSER_TABLE_BOX_BORDER 2
 #define ZBROWSER_REGION_ARTICLE 0
 #define ZBROWSER_REGION_LEFT 1
 #define ZBROWSER_REGION_RIGHT 2
@@ -211,6 +215,28 @@ global uint32_t zbrowser_inline_control_type[64];
 global uint32_t zbrowser_inline_control_ref[64];
 global uint8_t zbrowser_inline_control_labels[3072];
 global uint32_t zbrowser_inline_control_count;
+global uint32_t zbrowser_table_depth;
+global uint32_t zbrowser_table_row_active;
+global uint32_t zbrowser_table_col;
+global uint32_t zbrowser_table_cell_open;
+global uint32_t zbrowser_table_cell_line;
+global uint32_t zbrowser_tbl_box_start_col;
+global uint32_t zbrowser_tbl_cell_start_col;
+global uint32_t zbrowser_tbl_target_cols;
+global uint32_t zbrowser_tbl_cell_align;
+global uint32_t zbrowser_tbl_cell_pad_cols;
+global uint32_t zbrowser_tbl_default_pad_cols;
+global uint32_t zbrowser_tbl_cell_gap_cols;
+global uint32_t zbrowser_table_has_border;
+global uint32_t zbrowser_table_border_color;
+global uint32_t zbrowser_table_bg_color;
+global uint32_t zbrowser_table_box_lines[128];
+global uint32_t zbrowser_table_box_cols[128];
+global uint32_t zbrowser_tbl_box_width_cols[128];
+global uint32_t zbrowser_table_box_bg[128];
+global uint32_t zbrowser_table_box_border[128];
+global uint32_t zbrowser_table_box_flags[128];
+global uint32_t zbrowser_table_box_count;
 global uint32_t zbrowser_image_candidates;
 global int zbrowser_image_fetch_result;
 global int zbrowser_image_probe_result;
@@ -1688,6 +1714,19 @@ uint32_t text_bg_for_draw(void) {
     return zbrowser_text_bg;
 }
 
+int line_has_table_box(uint32_t line) {
+    uint32_t i;
+
+    i = 0;
+    while (i < zbrowser_table_box_count) {
+        if (zbrowser_table_box_lines[i] == line) {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 void push_text_style(void) {
     uint32_t depth;
 
@@ -2453,7 +2492,12 @@ void draw_line_text_runs(uint32_t x, uint32_t y) {
     uint32_t end;
     uint32_t i;
     uint32_t fg;
+    uint32_t bg;
 
+    bg = text_bg_for_draw();
+    if (line_has_table_box(zbrowser_line_no) != 0) {
+        bg = 0xffffffff;
+    }
     start = 0;
     while (start < zbrowser_line_len) {
         fg = zbrowser_line_fg[start];
@@ -2467,7 +2511,7 @@ void draw_line_text_runs(uint32_t x, uint32_t y) {
             i = i + 1;
         }
         zbrowser_line_segment[i] = 0;
-        draw_text_at_pixel(x + start * 8, y, zbrowser_line_segment, fg, text_bg_for_draw());
+        draw_text_at_pixel(x + start * 8, y, zbrowser_line_segment, fg, bg);
         start = end;
     }
 }
@@ -2483,6 +2527,41 @@ int line_has_inline_control(uint32_t line) {
         i = i + 1;
     }
     return 0;
+}
+
+void draw_table_boxes_on_line(uint32_t line,
+                              uint32_t line_x,
+                              uint32_t line_y,
+                              uint32_t phase) {
+    uint32_t i;
+    uint32_t box_x;
+    uint32_t box_w;
+    uint32_t box_h;
+
+    box_h = 12;
+    if (line_has_inline_control(line) != 0) {
+        box_h = 20;
+    }
+    i = 0;
+    while (i < zbrowser_table_box_count) {
+        if (zbrowser_table_box_lines[i] == line) {
+            box_x = line_x + zbrowser_table_box_cols[i] * 8;
+            box_w = zbrowser_tbl_box_width_cols[i] * 8;
+            if (box_w > 0) {
+                if (phase == 0 &&
+                    (zbrowser_table_box_flags[i] == ZBROWSER_TABLE_BOX_BG ||
+                     zbrowser_table_box_flags[i] == ZBROWSER_TABLE_BOX_BG + ZBROWSER_TABLE_BOX_BORDER)) {
+                    gfx_fill_rect(box_x, line_y, box_w, box_h, zbrowser_table_box_bg[i]);
+                }
+                if (phase != 0 &&
+                    (zbrowser_table_box_flags[i] == ZBROWSER_TABLE_BOX_BORDER ||
+                     zbrowser_table_box_flags[i] == ZBROWSER_TABLE_BOX_BG + ZBROWSER_TABLE_BOX_BORDER)) {
+                    gfx_draw_rect(box_x, line_y, box_w, box_h, zbrowser_table_box_border[i]);
+                }
+            }
+        }
+        i = i + 1;
+    }
 }
 
 void draw_inline_control_record(uint32_t index, uint32_t line_x, uint32_t line_y) {
@@ -2594,6 +2673,7 @@ void flush_line(void) {
             } else if (zbrowser_text_align == 2 && article_w() > text_w + 20) {
                 x = article_x() + article_w() - text_w - 10;
             }
+            draw_table_boxes_on_line(zbrowser_line_no, x, draw_y, 0);
             draw_line_text_runs(x, draw_y);
             i = 0;
             while (i < zbrowser_link_count) {
@@ -2618,6 +2698,7 @@ void flush_line(void) {
                 i = i + 1;
             }
             draw_inline_controls_on_line(zbrowser_line_no, x, draw_y);
+            draw_table_boxes_on_line(zbrowser_line_no, x, draw_y, 1);
         }
     }
     zbrowser_line_len = 0;
@@ -2909,6 +2990,171 @@ void append_inline_space(void) {
     zbrowser_line_len = zbrowser_line_len + 1;
 }
 
+uint32_t table_cols_from_px(uint32_t px, uint32_t max_cols) {
+    uint32_t cols;
+
+    if (px == 0) {
+        return 0;
+    }
+    cols = (px + 7) / 8;
+    if (cols == 0) {
+        cols = 1;
+    }
+    if (cols > max_cols) {
+        cols = max_cols;
+    }
+    return cols;
+}
+
+uint32_t table_attr_cols(const uint8_t *html,
+                         uint32_t pos,
+                         const uint8_t *attr,
+                         uint32_t fallback,
+                         uint32_t max_cols) {
+    uint32_t px;
+    uint32_t cols;
+
+    if (zb_attr_value(html, pos, attr, zbrowser_attr, ZBROWSER_ATTR_CAPACITY) == 0) {
+        return fallback;
+    }
+    px = css_length_value_px(zbrowser_attr, 0, 0);
+    cols = table_cols_from_px(px, max_cols);
+    return cols;
+}
+
+uint32_t table_cell_padding_cols_for_tag(const uint8_t *html,
+                                         uint32_t pos,
+                                         uint32_t fallback) {
+    uint32_t px;
+    uint32_t cols;
+
+    if (style_length_px_prop(html, pos, "padding-left", article_w(), &px) != 0 ||
+        style_length_px_prop(html, pos, "padding", article_w(), &px) != 0) {
+        cols = table_cols_from_px(px, 4);
+        return cols;
+    }
+    return fallback;
+}
+
+int table_style_has_visible_border(const uint8_t *html, uint32_t pos) {
+    uint32_t px;
+
+    if (zb_attr_value(html, pos, "border", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
+        if (zbrowser_attr[0] == 0) {
+            return 1;
+        }
+        px = css_length_value_px(zbrowser_attr, 0, 0);
+        if (px != 0) {
+            return 1;
+        }
+    }
+    if (style_property_has(html, pos, "border", "solid") != 0 ||
+        style_property_has(html, pos, "border", "1px") != 0 ||
+        style_property_has(html, pos, "border", "#") != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+uint32_t table_border_color_for_tag(const uint8_t *html,
+                                    uint32_t pos,
+                                    uint32_t fallback) {
+    uint32_t color;
+
+    if (style_property_value(html, pos, "border-color", zbrowser_css_property, ZBROWSER_ATTR_CAPACITY) != 0 &&
+        css_color_value(zbrowser_css_property, &color) != 0) {
+        return color;
+    }
+    return fallback;
+}
+
+void register_table_box(uint32_t line,
+                        uint32_t col,
+                        uint32_t width_cols,
+                        uint32_t bg,
+                        uint32_t border,
+                        uint32_t flags) {
+    uint32_t index;
+
+    if (zbrowser_table_box_count >= ZBROWSER_MAX_TABLE_BOXES) {
+        return;
+    }
+    if (width_cols == 0) {
+        return;
+    }
+    if (flags == 0) {
+        return;
+    }
+    index = zbrowser_table_box_count;
+    zbrowser_table_box_lines[index] = line;
+    zbrowser_table_box_cols[index] = col;
+    zbrowser_tbl_box_width_cols[index] = width_cols;
+    zbrowser_table_box_bg[index] = bg;
+    zbrowser_table_box_border[index] = border;
+    zbrowser_table_box_flags[index] = flags;
+    zbrowser_table_box_count = index + 1;
+}
+
+void shift_line_records_right(uint32_t start, uint32_t end, uint32_t shift) {
+    uint32_t i;
+
+    i = 0;
+    while (i < zbrowser_link_count) {
+        if (zbrowser_link_lines[i] == zbrowser_line_no &&
+            zbrowser_link_start_cols[i] >= start &&
+            zbrowser_link_start_cols[i] < end) {
+            zbrowser_link_start_cols[i] = zbrowser_link_start_cols[i] + shift;
+        }
+        if (zbrowser_link_end_lines[i] == zbrowser_line_no &&
+            zbrowser_link_end_cols[i] >= start &&
+            zbrowser_link_end_cols[i] <= end) {
+            zbrowser_link_end_cols[i] = zbrowser_link_end_cols[i] + shift;
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < zbrowser_inline_control_count) {
+        if (zbrowser_inline_control_lines[i] == zbrowser_line_no &&
+            zbrowser_inline_control_cols[i] >= start &&
+            zbrowser_inline_control_cols[i] < end) {
+            zbrowser_inline_control_cols[i] = zbrowser_inline_control_cols[i] + shift;
+        }
+        i = i + 1;
+    }
+}
+
+void shift_line_range_right(uint32_t start, uint32_t end, uint32_t shift) {
+    uint32_t i;
+    uint32_t clear;
+
+    if (shift == 0 || end <= start) {
+        return;
+    }
+    if (end + shift >= ZBROWSER_LINE_CAPACITY) {
+        shift = ZBROWSER_LINE_CAPACITY - end - 1;
+    }
+    if (shift == 0) {
+        return;
+    }
+    i = end;
+    while (i > start) {
+        i = i - 1;
+        zbrowser_line[i + shift] = zbrowser_line[i];
+        zbrowser_line_fg[i + shift] = zbrowser_line_fg[i];
+    }
+    clear = 0;
+    while (clear < shift) {
+        zbrowser_line[start + clear] = 32;
+        zbrowser_line_fg[start + clear] = zbrowser_text_fg;
+        clear = clear + 1;
+    }
+    shift_line_records_right(start, end, shift);
+    if (zbrowser_line_len < end + shift) {
+        zbrowser_line_len = end + shift;
+    }
+}
+
 int emit_inline_control(uint32_t type,
                         uint32_t ref,
                         const uint8_t *label,
@@ -2995,6 +3241,228 @@ void draw_inline_select_control(const uint8_t *label) {
     width = select_control_width_for_label(label);
     if (emit_inline_control(ZBROWSER_INLINE_CONTROL_SELECT, 9999, label, width, 20) == 0) {
         draw_select_control(label);
+    }
+}
+
+uint32_t table_cell_target_cols_for_tag(const uint8_t *html, uint32_t pos) {
+    uint32_t px;
+    uint32_t cols;
+    uint32_t colspan;
+    uint32_t max_cols;
+    uint32_t min_cols;
+
+    cols = 16;
+    if (zb_tag_name_is(html, pos, "th")) {
+        cols = 18;
+    }
+    px = image_style_length(html, pos, "width", article_w());
+    if (px != 0) {
+        cols = (px + 7) / 8;
+    }
+    if (zb_attr_value(html, pos, "colspan", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
+        colspan = css_length_value_px(zbrowser_attr, 0, 1);
+        if (colspan > 1 && colspan < ZBROWSER_TABLE_MAX_COLS) {
+            cols = cols * colspan;
+        }
+    }
+    min_cols = zbrowser_tbl_cell_pad_cols * 2 + 4;
+    if (cols < min_cols) {
+        cols = min_cols;
+    }
+    max_cols = zbrowser_line_max_cols();
+    if (cols > max_cols - 2) {
+        cols = max_cols - 2;
+    }
+    if (cols < 4) {
+        cols = 4;
+    }
+    return cols;
+}
+
+void finish_table_cell(uint32_t add_gap) {
+    uint32_t target;
+    uint32_t max_cols;
+    uint32_t inner_end;
+    uint32_t content_start;
+    uint32_t content_end;
+    uint32_t shift;
+    uint32_t gap;
+
+    if (zbrowser_table_cell_open == 0) {
+        return;
+    }
+    if (zbrowser_line_no == zbrowser_table_cell_line) {
+        target = zbrowser_tbl_box_start_col + zbrowser_tbl_target_cols;
+        max_cols = zbrowser_line_max_cols();
+        if (target > max_cols - 1) {
+            target = max_cols - 1;
+        }
+        inner_end = target;
+        if (inner_end > zbrowser_tbl_cell_pad_cols) {
+            inner_end = inner_end - zbrowser_tbl_cell_pad_cols;
+        }
+        content_start = zbrowser_tbl_cell_start_col;
+        content_end = zbrowser_line_len;
+        while (content_end > content_start && zbrowser_line[content_end - 1] == 32) {
+            content_end = content_end - 1;
+        }
+        if (content_end > content_start && content_end <= inner_end) {
+            shift = 0;
+            if (zbrowser_tbl_cell_align == WEB_STYLE_ALIGN_RIGHT) {
+                shift = inner_end - content_end;
+            } else if (zbrowser_tbl_cell_align == WEB_STYLE_ALIGN_CENTER) {
+                shift = (inner_end - content_end) / 2;
+            }
+            if (shift != 0) {
+                shift_line_range_right(content_start, content_end, shift);
+            }
+        }
+        while (zbrowser_line_len < target && zbrowser_line_len + 1 < ZBROWSER_LINE_CAPACITY) {
+            append_inline_space();
+        }
+        if (add_gap != 0) {
+            gap = 0;
+            while (gap < zbrowser_tbl_cell_gap_cols &&
+                   zbrowser_line_len + 1 < ZBROWSER_LINE_CAPACITY) {
+                append_inline_space();
+                gap = gap + 1;
+            }
+        }
+    }
+    zbrowser_table_cell_open = 0;
+}
+
+void start_table_cell(const uint8_t *html, uint32_t pos) {
+    uint32_t pad;
+    uint32_t bg;
+    uint32_t border;
+    uint32_t flags;
+
+    if (zbrowser_table_depth == 0) {
+        emit_text("  ");
+        return;
+    }
+    if (zbrowser_table_row_active == 0) {
+        zbrowser_table_row_active = 1;
+        zbrowser_table_col = 0;
+    }
+    if (zbrowser_table_cell_open != 0) {
+        finish_table_cell(1);
+    } else if (zbrowser_table_col != 0 && zbrowser_line_len + 1 < ZBROWSER_LINE_CAPACITY) {
+        append_inline_space();
+    }
+    zbrowser_table_cell_open = 1;
+    zbrowser_table_cell_line = zbrowser_line_no;
+    zbrowser_tbl_box_start_col = zbrowser_line_len;
+    zbrowser_tbl_cell_pad_cols = table_cell_padding_cols_for_tag(html, pos, zbrowser_tbl_default_pad_cols);
+    zbrowser_tbl_target_cols = table_cell_target_cols_for_tag(html, pos);
+    zbrowser_tbl_cell_align = style_text_align(html, pos, zbrowser_text_align);
+    if (zb_tag_name_is(html, pos, "th") && zbrowser_tbl_cell_align == WEB_STYLE_ALIGN_LEFT) {
+        zbrowser_tbl_cell_align = WEB_STYLE_ALIGN_CENTER;
+    }
+    bg = style_background_color(html, pos, 0xffffffff);
+    if (bg == 0xffffffff) {
+        bg = zbrowser_table_bg_color;
+    }
+    if (bg == 0xffffffff && zb_tag_name_is(html, pos, "th")) {
+        bg = 0xeaecf0;
+    }
+    border = table_border_color_for_tag(html, pos, zbrowser_table_border_color);
+    flags = 0;
+    if (bg != 0xffffffff) {
+        flags = flags + ZBROWSER_TABLE_BOX_BG;
+    }
+    if (zbrowser_table_has_border != 0 ||
+        table_style_has_visible_border(html, pos) != 0) {
+        flags = flags + ZBROWSER_TABLE_BOX_BORDER;
+    }
+    register_table_box(zbrowser_table_cell_line,
+                       zbrowser_tbl_box_start_col,
+                       zbrowser_tbl_target_cols,
+                       bg,
+                       border,
+                       flags);
+    pad = 0;
+    while (pad < zbrowser_tbl_cell_pad_cols &&
+           zbrowser_line_len + 1 < ZBROWSER_LINE_CAPACITY) {
+        append_inline_space();
+        pad = pad + 1;
+    }
+    zbrowser_tbl_cell_start_col = zbrowser_line_len;
+    zbrowser_table_col = zbrowser_table_col + 1;
+}
+
+void start_table_row(void) {
+    if (zbrowser_table_depth == 0) {
+        return;
+    }
+    finish_table_cell(0);
+    flush_line();
+    zbrowser_table_row_active = 1;
+    zbrowser_table_col = 0;
+    zbrowser_table_cell_open = 0;
+}
+
+void finish_table_row(void) {
+    if (zbrowser_table_depth == 0) {
+        return;
+    }
+    finish_table_cell(0);
+    flush_line();
+    zbrowser_table_row_active = 0;
+    zbrowser_table_col = 0;
+}
+
+void start_table_layout(const uint8_t *html, uint32_t pos) {
+    uint32_t color;
+
+    finish_table_cell(0);
+    flush_line();
+    if (zbrowser_table_depth < 8) {
+        zbrowser_table_depth = zbrowser_table_depth + 1;
+    }
+    zbrowser_table_row_active = 0;
+    zbrowser_table_col = 0;
+    zbrowser_table_cell_open = 0;
+    zbrowser_tbl_box_start_col = 0;
+    zbrowser_tbl_cell_start_col = 0;
+    zbrowser_tbl_target_cols = 0;
+    zbrowser_tbl_cell_align = WEB_STYLE_ALIGN_LEFT;
+    zbrowser_tbl_cell_pad_cols = 0;
+    zbrowser_tbl_default_pad_cols = 0;
+    zbrowser_tbl_cell_gap_cols = 1;
+    zbrowser_table_has_border = table_style_has_visible_border(html, pos);
+    zbrowser_table_border_color = table_border_color_for_tag(html, pos, 0xa2a9b1);
+    zbrowser_table_bg_color = style_background_color(html, pos, 0xffffffff);
+    zbrowser_tbl_default_pad_cols = table_attr_cols(html, pos, "cellpadding", zbrowser_tbl_default_pad_cols, 4);
+    zbrowser_tbl_cell_pad_cols = zbrowser_tbl_default_pad_cols;
+    zbrowser_tbl_cell_gap_cols = table_attr_cols(html, pos, "cellspacing", zbrowser_tbl_cell_gap_cols, 4);
+    if (style_length_px_prop(html, pos, "border-spacing", article_w(), &color) != 0) {
+        zbrowser_tbl_cell_gap_cols = table_cols_from_px(color, 4);
+    }
+}
+
+void finish_table_layout(void) {
+    finish_table_cell(0);
+    flush_line();
+    if (zbrowser_table_depth > 0) {
+        zbrowser_table_depth = zbrowser_table_depth - 1;
+    }
+    zbrowser_table_row_active = 0;
+    zbrowser_table_col = 0;
+    zbrowser_table_cell_open = 0;
+    if (zbrowser_table_depth == 0) {
+        zbrowser_table_cell_line = 0;
+        zbrowser_tbl_box_start_col = 0;
+        zbrowser_tbl_cell_start_col = 0;
+        zbrowser_tbl_target_cols = 0;
+        zbrowser_tbl_cell_align = WEB_STYLE_ALIGN_LEFT;
+        zbrowser_tbl_cell_pad_cols = 0;
+        zbrowser_tbl_default_pad_cols = 0;
+        zbrowser_tbl_cell_gap_cols = 1;
+        zbrowser_table_has_border = 0;
+        zbrowser_table_border_color = 0xa2a9b1;
+        zbrowser_table_bg_color = 0xffffffff;
     }
 }
 
@@ -3691,6 +4159,22 @@ void render_html(const uint8_t *html) {
     zbrowser_input_count = 0;
     zbrowser_submit_count = 0;
     zbrowser_inline_control_count = 0;
+    zbrowser_table_depth = 0;
+    zbrowser_table_row_active = 0;
+    zbrowser_table_col = 0;
+    zbrowser_table_cell_open = 0;
+    zbrowser_table_cell_line = 0;
+    zbrowser_tbl_box_start_col = 0;
+    zbrowser_tbl_cell_start_col = 0;
+    zbrowser_tbl_target_cols = 0;
+    zbrowser_tbl_cell_align = WEB_STYLE_ALIGN_LEFT;
+    zbrowser_tbl_cell_pad_cols = 0;
+    zbrowser_tbl_default_pad_cols = 0;
+    zbrowser_tbl_cell_gap_cols = 1;
+    zbrowser_table_has_border = 0;
+    zbrowser_table_border_color = 0xa2a9b1;
+    zbrowser_table_bg_color = 0xffffffff;
+    zbrowser_table_box_count = 0;
     zbrowser_form_action[0] = 0;
     zbrowser_image_candidates = 0;
     zbrowser_text_fg = zbrowser_page_text_fg;
@@ -3826,6 +4310,12 @@ void render_html(const uint8_t *html) {
                 flush_line();
             } else if (zb_tag_name_is(html, pos, "hr")) {
                 draw_rule_line(0xa2a9b1);
+            } else if (zb_tag_name_is(html, pos, "table")) {
+                if (!zb_is_closing_tag(html, pos)) {
+                    start_table_layout(html, pos);
+                } else {
+                    finish_table_layout();
+                }
             } else if (zb_tag_name_is(html, pos, "p") ||
                        zb_tag_name_is(html, pos, "section") ||
                        zb_tag_name_is(html, pos, "article") ||
@@ -3860,11 +4350,13 @@ void render_html(const uint8_t *html) {
             } else if (zb_tag_name_is(html, pos, "td") ||
                        zb_tag_name_is(html, pos, "th")) {
                 if (!zb_is_closing_tag(html, pos)) {
-                    emit_text("  ");
+                    start_table_cell(html, pos);
                 }
             } else if (zb_tag_name_is(html, pos, "tr")) {
-                if (zb_is_closing_tag(html, pos)) {
-                    flush_line();
+                if (!zb_is_closing_tag(html, pos)) {
+                    start_table_row();
+                } else {
+                    finish_table_row();
                 }
             } else if (zb_tag_name_is(html, pos, "dt")) {
                 if (!zb_is_closing_tag(html, pos)) {
@@ -5256,6 +5748,22 @@ zbrowser_focused_input = 9999;
 zbrowser_input_count = 0;
 zbrowser_submit_count = 0;
 zbrowser_inline_control_count = 0;
+zbrowser_table_depth = 0;
+zbrowser_table_row_active = 0;
+zbrowser_table_col = 0;
+zbrowser_table_cell_open = 0;
+zbrowser_table_cell_line = 0;
+zbrowser_tbl_box_start_col = 0;
+zbrowser_tbl_cell_start_col = 0;
+zbrowser_tbl_target_cols = 0;
+zbrowser_tbl_cell_align = WEB_STYLE_ALIGN_LEFT;
+zbrowser_tbl_cell_pad_cols = 0;
+zbrowser_tbl_default_pad_cols = 0;
+zbrowser_tbl_cell_gap_cols = 1;
+zbrowser_table_has_border = 0;
+zbrowser_table_border_color = 0xa2a9b1;
+zbrowser_table_bg_color = 0xffffffff;
+zbrowser_table_box_count = 0;
 zbrowser_form_action[0] = 0;
 clear_image_cache();
 zbrowser_image_candidates = 0;
