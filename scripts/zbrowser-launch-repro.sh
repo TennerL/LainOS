@@ -98,11 +98,20 @@ rm -f "$monitor_socket" "$screenshot_1" "$screenshot_2"
 capture_screendump() {
   local delay="$1"
   local output="$2"
+  local attempts="${3:-6}"
+  local try=0
   (
     sleep "$delay"
-    if [ -S "$monitor_socket" ]; then
-      printf 'screendump %s\n' "$output" | nc -U "$monitor_socket" >/dev/null 2>&1 || true
-    fi
+    while [ "$try" -lt "$attempts" ]; do
+      if [ -S "$monitor_socket" ]; then
+        printf 'screendump %s\n' "$output" | nc -U "$monitor_socket" >/dev/null 2>&1 || true
+      fi
+      if [ -f "$output" ]; then
+        exit 0
+      fi
+      try=$((try + 1))
+      sleep 2
+    done
   ) &
 }
 

@@ -1186,6 +1186,8 @@ void prepare_web_styles_for_render(const uint8_t *html) {
     uint32_t w;
     uint32_t h;
     int style_result;
+    uint64_t prepare_started;
+    uint64_t prepare_ticks;
 
     doc_addr = (uint64_t)html;
     w = gfx_width();
@@ -1193,9 +1195,12 @@ void prepare_web_styles_for_render(const uint8_t *html) {
     if (zbrowser_css_prepare_pending != 0 &&
         (zbrowser_css_load_done == 0 || zbrowser_css_load_in_progress != 0 || zbrowser_css_task_id != 0)) {
         if (zbrowser_css_prepare_pending == 1) {
-            print("zbrowser css-prepare wait");
+            print("zbrowser css-prepare wait links-loaded=");
             print(zbrowser_css_links_loaded);
+            print(" pending=");
+            print(zbrowser_css_pending_count);
             if (zbrowser_css_url[0] != 0) {
+                print(" next=");
                 print(zbrowser_css_url);
             }
             zbrowser_css_prepare_pending = 2;
@@ -1207,12 +1212,32 @@ void prepare_web_styles_for_render(const uint8_t *html) {
         zbrowser_style_doc_size == zbrowser_size &&
         zbrowser_style_doc_w == w &&
         zbrowser_style_doc_h == h) {
+        print("zbrowser css-prepare render-skip cached");
         clear_web_style_cache();
         return;
     }
     clear_web_style_cache();
     reset_line_cache();
+    prepare_started = ticks();
+    print("zbrowser css-prepare render-start doc-bytes=");
+    print(zbrowser_size);
+    print(" links-loaded=");
+    print(zbrowser_css_links_loaded);
+    print(" appended=");
+    print(zbrowser_css_appended_bytes);
+    print(" viewport=");
+    print(w);
+    print("x");
+    print(h);
     style_result = web_style_prepare_document(html, w, h);
+    prepare_ticks = 0;
+    if (ticks() >= prepare_started) {
+        prepare_ticks = ticks() - prepare_started;
+    }
+    print("zbrowser css-prepare render-done result=");
+    print(style_result);
+    print(" ticks=");
+    print(prepare_ticks);
     zbrowser_style_doc_addr = doc_addr;
     zbrowser_style_doc_size = zbrowser_size;
     zbrowser_style_doc_w = w;
@@ -4305,6 +4330,38 @@ int css_parse_import_url_range(const uint8_t *css,
         return 1;
     }
     return 0;
+}
+
+int append_css_without_imports_to_document(uint8_t *document,
+                                           int size,
+                                           const uint8_t *css,
+                                           int css_size) {
+    uint32_t pos;
+    uint32_t next_pos;
+    uint32_t end;
+
+    if (css == (const uint8_t *)0 || css_size <= 0) {
+        return size;
+    }
+
+    pos = 0;
+    end = (uint32_t)css_size;
+    while (pos < end && (uint32_t)(size + 1) < ZBROWSER_HTTP_CAPACITY) {
+        if (css_parse_import_url_range(css,
+                                       pos,
+                                       end,
+                                       zbrowser_attr,
+                                       ZBROWSER_ATTR_CAPACITY,
+                                       &next_pos) != 0) {
+            pos = next_pos;
+            continue;
+        }
+        document[size] = css[pos];
+        size = size + 1;
+        pos = pos + 1;
+    }
+    document[size] = 0;
+    return size;
 }
 
 uint32_t queue_css_imports_from_range(const uint8_t *base_url,
@@ -9136,6 +9193,9 @@ void zbrowser_complete_css_fetch(void) {
     uint64_t now;
     uint64_t fetch_ticks;
     uint64_t batch_ticks;
+    uint32_t appended_bytes;
+    int size_before_css;
+    int size_after_css;
     int has_next_css;
 
     zbrowser_css_load_in_progress = 0;
@@ -9159,14 +9219,25 @@ void zbrowser_complete_css_fetch(void) {
                                          (uint32_t)zbrowser_css_fetch_size,
                                          0);
             zbrowser_size = append_text_to_document(buffer, zbrowser_size, "\n<style>\n");
-            zbrowser_size = append_buffer_to_document(buffer, zbrowser_size, css_buffer, zbrowser_css_fetch_size);
+            size_before_css = zbrowser_size;
+            zbrowser_size = append_css_without_imports_to_document(buffer,
+                                                                   zbrowser_size,
+                                                                   css_buffer,
+                                                                   zbrowser_css_fetch_size);
+            size_after_css = zbrowser_size;
             zbrowser_size = append_text_to_document(buffer, zbrowser_size, "\n</style>\n");
-            zbrowser_css_appended_bytes = zbrowser_css_appended_bytes + (uint32_t)zbrowser_css_fetch_size;
+            appended_bytes = 0;
+            if (size_after_css >= size_before_css) {
+                appended_bytes = (uint32_t)(size_after_css - size_before_css);
+            }
+            zbrowser_css_appended_bytes = zbrowser_css_appended_bytes + appended_bytes;
             if ((uint32_t)zbrowser_size >= ZBROWSER_HTTP_CAPACITY - 1) {
                 zbrowser_doc_truncated = 1;
             }
             print("zbrowser css-fetch bytes");
             print(zbrowser_css_fetch_size);
+            print(" inline-bytes=");
+            print(appended_bytes);
         }
         has_next_css = css_queue_pop_next(zbrowser_css_url, ZBROWSER_URL_CAPACITY);
         if (has_next_css != 0) {

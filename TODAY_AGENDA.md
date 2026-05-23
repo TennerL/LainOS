@@ -5,6 +5,28 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 00:00-00:07 Europe/Berlin external-CSS finalization fix:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_css_external.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Small patch landed:
+    - `examples/zbrowser_module.Z`: deferred render-side CSS prepare now logs explicit wait/start/done phases, fetched external CSS strips already-queued `@import` directives before inlining, and CSS fetch logs now show `inline-bytes` after stripping
+    - `scripts/zbrowser-launch-repro.sh`: screendump capture now retries instead of making a single best-effort monitor call
+  - Current measured result on the nested external CSS smoke page:
+    - before the fix, external CSS fetch completed (`count=3`) but deferred style prepare failed after `css-trace prepare-style-done` with `zbrowser css-prepare render-done result=-1`
+    - after the fix, the same repro reaches `css-trace prepare-style-finalized`, `css-trace prepare-ready`, `css-trace precompute-summary nodes=18 cached=0 selected=18 failed=0 select_ticks=30 apply_ticks=4241 hint_ticks=2 ticks=7080`
+    - final deferred prepare now completes with `css-trace style-prepare-summary rules=11 prepare_ticks=74 precompute_ticks=7257 rulecache_ticks=192 total_ticks=7523`
+    - zbrowser now reports `zbrowser css-prepare render-done result=11 ticks=7680` and `zbrowser render-first mode=html ticks=7754`
+  - Exact conclusion from these numbers:
+    - the external CSS pipeline was not primarily “slow loading”; it was invalidating itself by concatenating fetched stylesheets into one libcss document sheet while leaving nested `@import` directives in place
+    - once those already-queued imports are stripped during inline assembly, libcss finalization succeeds and the CSS pass reaches full selection/precompute instead of bailing out as `styles unavailable`
+    - on this smoke page, CSS selection is still cheap relative to computed-style application (`select_ticks=30` vs `apply_ticks=4241`), so the next performance work should stay focused on apply/layout cost rather than selector discovery
+  - Remaining blocker after this pass:
+    - the second framebuffer screendump is still missing in the launch harness even with retries, so post-first-render visual completeness is still only partially observed from serial traces
+  - Next concrete patch/verification step:
+    - make the launch harness keep sampling framebuffer output until a post-CSS frame is definitely captured, or add a serial-visible “render complete / cached viewport ready” checkpoint tied to the same moment
+    - with external CSS finalization fixed, instrument `web_css_apply_computed_style()` and/or the render/layout bridge next, since `apply_ticks` remains the dominant measured CSS cost on the external smoke page
 - Latest 2026-05-23 23:30-23:39 Europe/Berlin CSS timing breakdown pass:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`
