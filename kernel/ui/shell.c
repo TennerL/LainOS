@@ -6678,6 +6678,12 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
             return;
         }
 
+        console_puts("zbuild: compiling ");
+        console_puts(source_name);
+        console_puts(" source-bytes=");
+        console_put_dec64(source_size);
+        console_puts("\n");
+
         zero_memory(zscript_output, ASM_SOURCE_SIZE + 1u);
         make_zobject_prefix(object_name, label_prefix, sizeof(label_prefix));
         if (zscript_compile_source_object(source,
@@ -6693,6 +6699,12 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
             return;
         }
         zscript_output[asm_size] = '\0';
+
+        console_puts("zbuild: assembling ");
+        console_puts(source_name);
+        console_puts(" asm-bytes=");
+        console_put_dec64(asm_size);
+        console_puts("\n");
 
         zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
         zobject_status = zobject_from_asm(zscript_output,
@@ -6723,6 +6735,12 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
             }
             return;
         }
+
+        console_puts("zbuild: saving ");
+        console_puts(object_name);
+        console_puts(" object-bytes=");
+        console_put_dec64(object_size);
+        console_puts("\n");
 
         status = lainfs_save_file_in_dir((char)('A' + drive),
                                          build_dir,
