@@ -698,6 +698,7 @@ static uint32_t netsurf_port_hint_display_for_tag(const dom_string *name) {
         netsurf_port_dom_string_equals_ci(name, "ol") ||
         netsurf_port_dom_string_equals_ci(name, "p") ||
         netsurf_port_dom_string_equals_ci(name, "pre") ||
+        netsurf_port_dom_string_equals_ci(name, "search") ||
         netsurf_port_dom_string_equals_ci(name, "section") ||
         netsurf_port_dom_string_equals_ci(name, "summary") ||
         netsurf_port_dom_string_equals_ci(name, "ul")) {
@@ -718,6 +719,7 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
     if (netsurf_port_dom_string_equals_ci(name, "nav") ||
         netsurf_port_dom_string_equals_ci(name, "header") ||
         netsurf_port_dom_string_equals_ci(name, "footer") ||
+        netsurf_port_dom_string_equals_ci(name, "search") ||
         netsurf_port_dom_string_equals_ci(name, "aside")) {
         return NETSURF_PORT_HINT_ROLE_CHROME;
     }
@@ -1317,7 +1319,8 @@ uint32_t netsurf_port_render_smoke(void) {
     static const char html[] =
         "<!doctype html><html><head><title>render smoke</title>"
         "<script>console.log('skip');</script></head>"
-        "<body><div role=\"navigation\" class=\"toc\">chrome</div>"
+        "<body><search><form><input type=\"search\" name=\"site\" value=\"docs\"></form></search>"
+        "<div role=\"navigation\" class=\"toc\">chrome</div>"
         "<span class=\"sr-only\">assistive only</span>"
         "<div role=\"main\"><form><fieldset><legend>Search</legend>"
         "<input type=\"hidden\" name=\"source\" value=\"smoke\">"
@@ -1331,6 +1334,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t legend_pos;
     uint32_t main_pos;
     uint32_t nav_pos;
+    uint32_t search_pos;
     uint32_t sr_only_pos;
     uint32_t hidden_input_pos;
     uint32_t catlinks_pos;
@@ -1376,6 +1380,17 @@ uint32_t netsurf_port_render_smoke(void) {
     flags = 0;
     if (nav_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, nav_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
+    search_pos = netsurf_port_find_tag_pos_from_fragment(out, "<search");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (search_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, search_pos, &display, &role, &flags) == 0 ||
+        display != NETSURF_PORT_HINT_DISPLAY_BLOCK ||
         role != NETSURF_PORT_HINT_ROLE_CHROME) {
         return 0u;
     }

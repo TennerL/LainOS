@@ -3101,6 +3101,7 @@ int tag_is_site_chrome(const uint8_t *html, uint32_t pos) {
     if (zb_tag_name_is(html, pos, "nav") ||
         zb_tag_name_is(html, pos, "header") ||
         zb_tag_name_is(html, pos, "footer") ||
+        zb_tag_name_is(html, pos, "search") ||
         zb_tag_name_is(html, pos, "aside")) {
         return 1;
     }
