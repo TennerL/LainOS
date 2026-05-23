@@ -398,6 +398,8 @@ static int netsurf_port_primary_attr_is_chrome(const dom_string *value) {
     return netsurf_port_dom_string_contains_ci(value, "sidebar") ||
            netsurf_port_dom_string_contains_ci(value, "navbox") ||
            netsurf_port_dom_string_contains_ci(value, "navigation") ||
+           netsurf_port_dom_string_contains_ci(value, "breadcrumb") ||
+           netsurf_port_dom_string_contains_ci(value, "breadcrumbs") ||
            netsurf_port_dom_string_contains_ci(value, "footer") ||
            netsurf_port_dom_string_contains_ci(value, "header") ||
            netsurf_port_dom_string_contains_ci(value, "toc") ||
@@ -722,10 +724,14 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
         (netsurf_port_element_attr_has_token_ci(node, "class", "navbar") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "navigation") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "navbox") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "breadcrumb") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "breadcrumbs") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "sidebar") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "site-header") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "site-footer") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "toc") ||
+         netsurf_port_element_attr_equals_ci(node, "id", "breadcrumb") ||
+         netsurf_port_element_attr_equals_ci(node, "id", "breadcrumbs") ||
          netsurf_port_element_attr_equals_ci(node, "id", "footer"))) {
         return NETSURF_PORT_HINT_ROLE_CHROME;
     }
@@ -1313,6 +1319,7 @@ uint32_t netsurf_port_render_smoke(void) {
         "<!doctype html><html><head><title>render smoke</title>"
         "<script>console.log('skip');</script></head>"
         "<body><search><form><input type=\"search\" name=\"site\" value=\"docs\"></form></search>"
+        "<div class=\"breadcrumbs\">trail</div>"
         "<div role=\"navigation\" class=\"toc\">chrome</div>"
         "<div aria-hidden=\"true\" id=\"aria-hidden-only\">still visible</div>"
         "<span role=\"heading\" aria-level=\"2\">Adapter Heading</span>"
@@ -1339,6 +1346,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t main_pos;
     uint32_t nav_pos;
     uint32_t search_pos;
+    uint32_t breadcrumb_pos;
     uint32_t aria_hidden_pos;
     uint32_t heading_pos;
     uint32_t sr_only_pos;
@@ -1403,6 +1411,16 @@ uint32_t netsurf_port_render_smoke(void) {
     if (search_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, search_pos, &display, &role, &flags) == 0 ||
         display != NETSURF_PORT_HINT_DISPLAY_BLOCK ||
+        role != NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
+    breadcrumb_pos = netsurf_port_find_tag_pos_from_fragment(out, "class=\"breadcrumbs\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (breadcrumb_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, breadcrumb_pos, &display, &role, &flags) == 0 ||
         role != NETSURF_PORT_HINT_ROLE_CHROME) {
         return 0u;
     }
