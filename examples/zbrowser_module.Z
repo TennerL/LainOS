@@ -211,6 +211,7 @@
 
 extern uint32_t gfx_width(void);
 extern uint32_t gfx_height(void);
+extern uint64_t ticks(void);
 extern uint32_t gfx_viewport_active(void);
 extern int gfx_draw_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint8_t *pixels, uint32_t pixel_count);
 extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
@@ -402,8 +403,11 @@ global uint32_t zbrowser_css_load_in_progress;
 global uint32_t zbrowser_css_load_done;
 global uint32_t zbrowser_css_scan_pos;
 global uint32_t zbrowser_css_links_loaded;
+global uint32_t zbrowser_css_prepare_pending;
 global int zbrowser_css_fetch_size;
 global int zbrowser_css_fetch_result;
+global uint64_t zbrowser_css_batch_started_tick;
+global uint64_t zbrowser_css_fetch_started_tick;
 global uint32_t zbrowser_image_task_id;
 global uint32_t zbrowser_image_task_slot;
 global uint32_t zbrowser_image_load_in_progress;
@@ -1068,6 +1072,19 @@ void prepare_web_styles_for_render(const uint8_t *html) {
     doc_addr = (uint64_t)html;
     w = gfx_width();
     h = gfx_height();
+    if (zbrowser_css_prepare_pending != 0 &&
+        (zbrowser_css_load_done == 0 || zbrowser_css_load_in_progress != 0 || zbrowser_css_task_id != 0)) {
+        if (zbrowser_css_prepare_pending == 1) {
+            print("zbrowser css-prepare wait");
+            print(zbrowser_css_links_loaded);
+            if (zbrowser_css_url[0] != 0) {
+                print(zbrowser_css_url);
+            }
+            zbrowser_css_prepare_pending = 2;
+        }
+        clear_web_style_cache();
+        return;
+    }
     if (zbrowser_style_doc_addr == doc_addr &&
         zbrowser_style_doc_size == zbrowser_size &&
         zbrowser_style_doc_w == w &&
@@ -1082,6 +1099,7 @@ void prepare_web_styles_for_render(const uint8_t *html) {
     zbrowser_style_doc_size = zbrowser_size;
     zbrowser_style_doc_w = w;
     zbrowser_style_doc_h = h;
+    zbrowser_css_prepare_pending = 0;
     if (style_result == -1) {
         copy_text(zbrowser_status, 96, "styles unavailable");
     } else if (style_result == -2) {
@@ -1111,6 +1129,7 @@ int prepare_web_styles_for_loaded_document(const uint8_t *html) {
     zbrowser_style_doc_size = zbrowser_size;
     zbrowser_style_doc_w = w;
     zbrowser_style_doc_h = h;
+    zbrowser_css_prepare_pending = 0;
     if (style_result == -1) {
         copy_text(zbrowser_status, 96, "styles unavailable");
     } else if (style_result == -2) {
@@ -4116,14 +4135,20 @@ void prepare_external_css_queue(const uint8_t *html) {
     zbrowser_css_scan_pos = 0;
     zbrowser_css_links_loaded = 0;
     zbrowser_css_url[0] = 0;
+    zbrowser_css_batch_started_tick = 0;
     if (next_external_stylesheet_url(html,
                                      0,
                                      zbrowser_css_url,
                                      ZBROWSER_URL_CAPACITY,
                                      &zbrowser_css_scan_pos) != 0) {
         zbrowser_css_load_done = 0;
+        zbrowser_css_prepare_pending = 1;
+        zbrowser_css_batch_started_tick = ticks();
+        print("zbrowser css-queue start");
+        print(zbrowser_css_url);
     } else {
         zbrowser_css_load_done = 1;
+        zbrowser_css_prepare_pending = 0;
     }
 }
 
@@ -8720,6 +8745,9 @@ void zbrowser_css_worker(uint8_t *arg) {
 
     css_buffer = (uint8_t *)zbrowser_css_buffer_addr;
     copy_text(zbrowser_status, 96, "fetching css");
+    zbrowser_css_fetch_started_tick = ticks();
+    print("zbrowser css-fetch start");
+    print(zbrowser_css_url);
     zbrowser_css_fetch_size = http_get_page_with_retry(zbrowser_css_url,
                                                        css_buffer,
                                                        ZBROWSER_CSS_CAPACITY - 1,
@@ -8750,8 +8778,11 @@ int schedule_css_fetch(void) {
         return 0;
     }
     if (kernel_task_async_supported() == 0) {
-        zbrowser_css_load_done = 1;
-        return 0;
+        zbrowser_css_load_in_progress = 1;
+        copy_text(zbrowser_status, 96, "fetching css");
+        zbrowser_css_worker((uint8_t *)0);
+        zbrowser_complete_css_fetch();
+        return 1;
     }
 
     zbrowser_css_load_in_progress = 1;
@@ -8766,48 +8797,86 @@ int schedule_css_fetch(void) {
     return 1;
 }
 
-void zbrowser_poll_css_task(void) {
+void zbrowser_complete_css_fetch(void) {
     uint8_t *buffer;
     uint8_t *css_buffer;
     uint32_t next_pos;
+    uint32_t has_next_css;
+    uint64_t now;
+    uint64_t fetch_ticks;
+    uint64_t batch_ticks;
 
+    zbrowser_css_load_in_progress = 0;
+    zbrowser_css_links_loaded = zbrowser_css_links_loaded + 1;
+    now = ticks();
+    fetch_ticks = 0;
+    if (now >= zbrowser_css_fetch_started_tick) {
+        fetch_ticks = now - zbrowser_css_fetch_started_tick;
+    }
+    print("zbrowser css-fetch done");
+    print(zbrowser_css_links_loaded);
+    print(zbrowser_css_fetch_result);
+    print(fetch_ticks);
+    if (zbrowser_has_document != 0 && zbrowser_doc_buffer_addr != 0) {
+        buffer = document_buffer();
+        if (zbrowser_css_fetch_size > 0) {
+            css_buffer = (uint8_t *)zbrowser_css_buffer_addr;
+            zbrowser_size = append_text_to_document(buffer, zbrowser_size, "\n<style>\n");
+            zbrowser_size = append_buffer_to_document(buffer, zbrowser_size, css_buffer, zbrowser_css_fetch_size);
+            zbrowser_size = append_text_to_document(buffer, zbrowser_size, "\n</style>\n");
+            if ((uint32_t)zbrowser_size >= ZBROWSER_HTTP_CAPACITY - 1) {
+                zbrowser_doc_truncated = 1;
+            }
+            print("zbrowser css-fetch bytes");
+            print(zbrowser_css_fetch_size);
+        }
+        has_next_css = 0;
+        if (zbrowser_css_links_loaded < ZBROWSER_MAX_EXTERNAL_CSS &&
+            next_external_stylesheet_url(buffer,
+                                         zbrowser_css_scan_pos,
+                                         zbrowser_css_url,
+                                         ZBROWSER_URL_CAPACITY,
+                                         &next_pos) != 0) {
+            has_next_css = 1;
+        }
+        if (has_next_css != 0) {
+            zbrowser_css_scan_pos = next_pos;
+            zbrowser_css_load_done = 0;
+            zbrowser_css_prepare_pending = 1;
+            invalidate_prepared_web_styles();
+            copy_text(zbrowser_status, 96, "loading css");
+            print("zbrowser css-queue next");
+            print(zbrowser_css_url);
+        } else {
+            build_css_rule_cache(buffer);
+            invalidate_prepared_web_styles();
+            zbrowser_css_url[0] = 0;
+            zbrowser_css_load_done = 1;
+            zbrowser_css_prepare_pending = 0;
+            batch_ticks = 0;
+            if (now >= zbrowser_css_batch_started_tick) {
+                batch_ticks = now - zbrowser_css_batch_started_tick;
+            }
+            copy_text(zbrowser_status, 96, "css complete");
+            print("zbrowser css-batch done");
+            print(zbrowser_css_links_loaded);
+            print(batch_ticks);
+        }
+    } else {
+        zbrowser_css_url[0] = 0;
+        zbrowser_css_load_done = 1;
+        zbrowser_css_prepare_pending = 0;
+    }
+    zbrowser_css_fetch_size = 0;
+    zbrowser_css_fetch_started_tick = 0;
+    request_asset_redraw(1);
+}
+
+void zbrowser_poll_css_task(void) {
     if (zbrowser_css_task_id != 0 && kernel_task_done(zbrowser_css_task_id) != 0) {
         kernel_task_release(zbrowser_css_task_id);
         zbrowser_css_task_id = 0;
-        zbrowser_css_load_in_progress = 0;
-        zbrowser_css_links_loaded = zbrowser_css_links_loaded + 1;
-        if (zbrowser_has_document != 0 && zbrowser_doc_buffer_addr != 0) {
-            buffer = document_buffer();
-            if (zbrowser_css_fetch_size > 0) {
-                css_buffer = (uint8_t *)zbrowser_css_buffer_addr;
-                zbrowser_size = append_text_to_document(buffer, zbrowser_size, "\n<style>\n");
-                zbrowser_size = append_buffer_to_document(buffer, zbrowser_size, css_buffer, zbrowser_css_fetch_size);
-                zbrowser_size = append_text_to_document(buffer, zbrowser_size, "\n</style>\n");
-                if ((uint32_t)zbrowser_size >= ZBROWSER_HTTP_CAPACITY - 1) {
-                    zbrowser_doc_truncated = 1;
-                }
-                build_css_rule_cache(buffer);
-                invalidate_prepared_web_styles();
-                copy_text(zbrowser_status, 96, "css applied");
-            }
-            if (zbrowser_css_links_loaded < ZBROWSER_MAX_EXTERNAL_CSS &&
-                next_external_stylesheet_url(buffer,
-                                             zbrowser_css_scan_pos,
-                                             zbrowser_css_url,
-                                             ZBROWSER_URL_CAPACITY,
-                                             &next_pos) != 0) {
-                zbrowser_css_scan_pos = next_pos;
-                zbrowser_css_load_done = 0;
-            } else {
-                zbrowser_css_url[0] = 0;
-                zbrowser_css_load_done = 1;
-            }
-        } else {
-            zbrowser_css_url[0] = 0;
-            zbrowser_css_load_done = 1;
-        }
-        zbrowser_css_fetch_size = 0;
-        request_asset_redraw(1);
+        zbrowser_complete_css_fetch();
     }
     schedule_css_fetch();
 }
@@ -8884,8 +8953,11 @@ void load_document(void) {
     zbrowser_css_load_done = 0;
     zbrowser_css_scan_pos = 0;
     zbrowser_css_links_loaded = 0;
+    zbrowser_css_prepare_pending = 0;
     zbrowser_css_fetch_size = 0;
     zbrowser_css_fetch_result = 0;
+    zbrowser_css_batch_started_tick = 0;
+    zbrowser_css_fetch_started_tick = 0;
     zbrowser_js_executed = 0;
     zbrowser_js_writes = 0;
     zbrowser_netsurf_dom_used = 0;
@@ -8922,16 +8994,26 @@ void load_document(void) {
             prepare_external_css_queue(buffer);
             build_css_rule_cache(buffer);
             zbrowser_size = size;
-            print("zbrowser load-document prepare-css");
-            style_prepare_result = prepare_web_styles_for_loaded_document(buffer);
-            print("zbrowser load-document prepare-css-result");
-            print(style_prepare_result);
+            style_prepare_result = 0;
+            if (zbrowser_css_load_done == 0) {
+                zbrowser_css_prepare_pending = 1;
+                copy_text(zbrowser_status, 96, "loading css");
+                print("zbrowser load-document prepare-css deferred");
+                print(zbrowser_css_url);
+            } else {
+                print("zbrowser load-document prepare-css");
+                style_prepare_result = prepare_web_styles_for_loaded_document(buffer);
+                print("zbrowser load-document prepare-css-result");
+                print(style_prepare_result);
+            }
             if ((uint32_t)size >= ZBROWSER_HTTP_CAPACITY - 1) {
                 zbrowser_doc_truncated = 1;
             }
             zbrowser_has_document = 1;
             clear_image_cache();
-            if (style_prepare_result >= 0) {
+            if (zbrowser_css_load_done == 0) {
+                copy_text(zbrowser_status, 96, "loading css");
+            } else if (style_prepare_result >= 0) {
                 copy_text(zbrowser_status, 96, "loaded local file");
             }
             zbrowser_loaded = 1;
@@ -8980,16 +9062,26 @@ void load_document(void) {
             prepare_external_css_queue(buffer);
             build_css_rule_cache(buffer);
             zbrowser_size = size;
-            print("zbrowser load-document prepare-css");
-            style_prepare_result = prepare_web_styles_for_loaded_document(buffer);
-            print("zbrowser load-document prepare-css-result");
-            print(style_prepare_result);
+            style_prepare_result = 0;
+            if (zbrowser_css_load_done == 0) {
+                zbrowser_css_prepare_pending = 1;
+                copy_text(zbrowser_status, 96, "loading css");
+                print("zbrowser load-document prepare-css deferred");
+                print(zbrowser_css_url);
+            } else {
+                print("zbrowser load-document prepare-css");
+                style_prepare_result = prepare_web_styles_for_loaded_document(buffer);
+                print("zbrowser load-document prepare-css-result");
+                print(style_prepare_result);
+            }
             if ((uint32_t)size >= ZBROWSER_HTTP_CAPACITY) {
                 zbrowser_doc_truncated = 1;
             }
             zbrowser_has_document = 1;
             clear_image_cache();
-            if (style_prepare_result >= 0 && zb_starts_with(zbrowser_url, "https://")) {
+            if (zbrowser_css_load_done == 0) {
+                copy_text(zbrowser_status, 96, "loading css");
+            } else if (style_prepare_result >= 0 && zb_starts_with(zbrowser_url, "https://")) {
                 copy_text(zbrowser_status, 96, "loaded https");
             } else if (style_prepare_result >= 0) {
                 copy_text(zbrowser_status, 96, "loaded http");
@@ -9019,15 +9111,25 @@ void load_document(void) {
         prepare_external_css_queue(buffer);
         build_css_rule_cache(buffer);
         zbrowser_size = size;
-        print("zbrowser load-document prepare-css");
-        style_prepare_result = prepare_web_styles_for_loaded_document(buffer);
-        print("zbrowser load-document prepare-css-result");
-        print(style_prepare_result);
+        style_prepare_result = 0;
+        if (zbrowser_css_load_done == 0) {
+            zbrowser_css_prepare_pending = 1;
+            copy_text(zbrowser_status, 96, "loading css");
+            print("zbrowser load-document prepare-css deferred");
+            print(zbrowser_css_url);
+        } else {
+            print("zbrowser load-document prepare-css");
+            style_prepare_result = prepare_web_styles_for_loaded_document(buffer);
+            print("zbrowser load-document prepare-css-result");
+            print(style_prepare_result);
+        }
         if ((uint32_t)size >= ZBROWSER_HTTP_CAPACITY - 1) {
             zbrowser_doc_truncated = 1;
         }
         zbrowser_has_document = 1;
-        if (style_prepare_result >= 0) {
+        if (zbrowser_css_load_done == 0) {
+            copy_text(zbrowser_status, 96, "loading css");
+        } else if (style_prepare_result >= 0) {
             copy_text(zbrowser_status, 96, "loaded local file");
         }
     } else {
@@ -9686,8 +9788,11 @@ zbrowser_css_load_in_progress = 0;
 zbrowser_css_load_done = 1;
 zbrowser_css_scan_pos = 0;
 zbrowser_css_links_loaded = 0;
+zbrowser_css_prepare_pending = 0;
 zbrowser_css_fetch_size = 0;
 zbrowser_css_fetch_result = 0;
+zbrowser_css_batch_started_tick = 0;
+zbrowser_css_fetch_started_tick = 0;
 zbrowser_js_executed = 0;
 zbrowser_js_writes = 0;
 zbrowser_netsurf_dom_used = 0;
