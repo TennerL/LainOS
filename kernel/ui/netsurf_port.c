@@ -644,6 +644,9 @@ static uint32_t netsurf_port_hint_display_for_tag(const dom_string *name) {
     if (netsurf_port_dom_string_equals_ci(name, "li")) {
         return NETSURF_PORT_HINT_DISPLAY_LIST_ITEM;
     }
+    if (netsurf_port_dom_string_equals_ci(name, "summary")) {
+        return NETSURF_PORT_HINT_DISPLAY_LIST_ITEM;
+    }
     if (netsurf_port_dom_string_equals_ci(name, "table")) {
         return NETSURF_PORT_HINT_DISPLAY_TABLE;
     }
@@ -691,7 +694,6 @@ static uint32_t netsurf_port_hint_display_for_tag(const dom_string *name) {
         netsurf_port_dom_string_equals_ci(name, "pre") ||
         netsurf_port_dom_string_equals_ci(name, "search") ||
         netsurf_port_dom_string_equals_ci(name, "section") ||
-        netsurf_port_dom_string_equals_ci(name, "summary") ||
         netsurf_port_dom_string_equals_ci(name, "ul")) {
         return NETSURF_PORT_HINT_DISPLAY_BLOCK;
     }
@@ -1328,6 +1330,7 @@ uint32_t netsurf_port_render_smoke(void) {
         "<div role=\"menubar\" id=\"app-menubar\">app menu</div>"
         "<div aria-hidden=\"true\" id=\"aria-hidden-only\">still visible</div>"
         "<span role=\"heading\" aria-level=\"2\">Adapter Heading</span>"
+        "<details id=\"faq\"><summary id=\"faq-summary\">Adapter FAQ</summary><p>detail body</p></details>"
         "<span class=\"sr-only\">assistive only</span>"
         "<span class=\"screen-reader-text\">wordpress helper</span>"
         "<div class=\"navbarish\">content should stay content</div>"
@@ -1356,6 +1359,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t menubar_pos;
     uint32_t aria_hidden_pos;
     uint32_t heading_pos;
+    uint32_t summary_pos;
     uint32_t sr_only_pos;
     uint32_t screen_reader_text_pos;
     uint32_t hidden_input_pos;
@@ -1460,6 +1464,16 @@ uint32_t netsurf_port_render_smoke(void) {
     if (heading_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, heading_pos, &display, &role, &flags) == 0 ||
         role != NETSURF_PORT_HINT_ROLE_HEADING) {
+        return 0u;
+    }
+
+    summary_pos = netsurf_port_find_tag_pos_from_fragment(out, "id=\"faq-summary\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (summary_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, summary_pos, &display, &role, &flags) == 0 ||
+        display != NETSURF_PORT_HINT_DISPLAY_LIST_ITEM) {
         return 0u;
     }
 

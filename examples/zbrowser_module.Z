@@ -6491,6 +6491,7 @@ int tag_may_draw_style_block(const uint8_t *html, uint32_t pos) {
     if (zb_tag_name_is(html, pos, "div") ||
         zb_tag_name_is(html, pos, "section") ||
         zb_tag_name_is(html, pos, "article") ||
+        zb_tag_name_is(html, pos, "details") ||
         zb_tag_name_is(html, pos, "header") ||
         zb_tag_name_is(html, pos, "footer") ||
         zb_tag_name_is(html, pos, "main") ||
@@ -6504,6 +6505,7 @@ int tag_may_draw_style_block(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "blockquote") ||
         zb_tag_name_is(html, pos, "pre") ||
         zb_tag_name_is(html, pos, "p") ||
+        zb_tag_name_is(html, pos, "summary") ||
         zb_tag_name_is(html, pos, "ul") ||
         zb_tag_name_is(html, pos, "ol") ||
         zb_tag_name_is(html, pos, "li") ||
@@ -7060,6 +7062,7 @@ int tag_affects_text_style(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "span") ||
         zb_tag_name_is(html, pos, "section") ||
         zb_tag_name_is(html, pos, "article") ||
+        zb_tag_name_is(html, pos, "details") ||
         zb_tag_name_is(html, pos, "main") ||
         zb_tag_name_is(html, pos, "menu") ||
         zb_tag_name_is(html, pos, "nav") ||
@@ -7083,6 +7086,7 @@ int tag_affects_text_style(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "code") ||
         zb_tag_name_is(html, pos, "pre") ||
         zb_tag_name_is(html, pos, "p") ||
+        zb_tag_name_is(html, pos, "summary") ||
         zb_tag_name_is(html, pos, "table") ||
         zb_tag_name_is(html, pos, "tr") ||
         zb_tag_name_is(html, pos, "ul") ||
@@ -7339,6 +7343,7 @@ int dom_new_tag_closes_p(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "pre") ||
         zb_tag_name_is(html, pos, "search") ||
         zb_tag_name_is(html, pos, "section") ||
+        zb_tag_name_is(html, pos, "summary") ||
         zb_tag_name_is(html, pos, "table") ||
         zb_tag_name_is(html, pos, "ul")) {
         return 1;
@@ -7758,6 +7763,8 @@ void render_html(const uint8_t *html) {
                     finish_table_layout();
                 }
             } else if (zb_tag_name_is(html, pos, "p") ||
+                       zb_tag_name_is(html, pos, "details") ||
+                       zb_tag_name_is(html, pos, "summary") ||
                        zb_tag_name_is(html, pos, "section") ||
                        zb_tag_name_is(html, pos, "article") ||
                        zb_tag_name_is(html, pos, "menu") ||
