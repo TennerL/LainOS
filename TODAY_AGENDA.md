@@ -1,5 +1,17 @@
 # Today Agenda
 
+Date: 2026-05-23
+
+## Current NetSurf Port Blocker
+
+- Branch: `zbrowser-netsurf-port`
+- Automation now bootstraps NetSurf submodules and generated parser files before the browser build gate.
+- `scripts/agent-browser-check.sh` passes `build/kernel.elf`, `zcc-smoke`, and `lainfs-smoke`.
+- Full image/QEMU verification is still skipped because `mkfs.fat` and `sgdisk` are missing from PATH.
+- Next step: install `dosfstools` and `gdisk` so the same gate can run full image/QEMU checks.
+
+## Previous Agenda
+
 Date: 2026-05-21
 
 ## Goal
