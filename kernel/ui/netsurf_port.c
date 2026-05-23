@@ -701,9 +701,9 @@ static uint32_t netsurf_port_hint_flags_for_element(netsurf_port_writer_t *write
     if (scan_attrs != 0 && netsurf_port_hint_should_skip(node)) {
         flags |= NETSURF_PORT_HINT_FLAG_SKIP;
     }
-    if (scan_attrs != 0 &&
-        (netsurf_port_element_has_attr(node, "hidden") ||
-         netsurf_port_element_attr_contains_ci(node, "aria-hidden", "true"))) {
+    /* hidden/aria-hidden are global HTML attributes, not a display-tag special case. */
+    if (netsurf_port_element_has_attr(node, "hidden") ||
+        netsurf_port_element_attr_contains_ci(node, "aria-hidden", "true")) {
         flags |= NETSURF_PORT_HINT_FLAG_HIDDEN;
     }
     if (netsurf_port_dom_string_equals_ci(name, "script") ||
