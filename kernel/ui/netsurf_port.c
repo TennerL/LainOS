@@ -467,6 +467,12 @@ static uint32_t netsurf_port_element_primary_score(dom_node *node, const dom_str
     if (netsurf_port_element_role_is(node, "main")) {
         score = netsurf_port_u32_max(score, 145u);
     }
+    if (netsurf_port_element_attr_has_token_ci(node, "itemprop", "articleBody")) {
+        score = netsurf_port_u32_max(score, 150u);
+    }
+    if (netsurf_port_element_attr_has_token_ci(node, "itemprop", "mainContentOfPage")) {
+        score = netsurf_port_u32_max(score, 148u);
+    }
     if (netsurf_port_element_role_is(node, "article")) {
         score = netsurf_port_u32_max(score, 110u);
     }
@@ -936,6 +942,10 @@ int netsurf_port_style_hint_for_tag(const uint8_t *html,
 }
 
 static int netsurf_port_primary_candidate(dom_node *node, const dom_string *name) {
+    if (netsurf_port_element_attr_has_token_ci(node, "itemprop", "articleBody") ||
+        netsurf_port_element_attr_has_token_ci(node, "itemprop", "mainContentOfPage")) {
+        return 1;
+    }
     if (netsurf_port_element_role_is(node, "main")) {
         return 1;
     }
@@ -1346,8 +1356,14 @@ uint32_t netsurf_port_render_smoke(void) {
         "<div class=\"site-header\">Site navigation</div>"
         "<section class=\"post\"><p>Standalone post body with enough readable text to win primary selection.</p></section>"
         "</body></html>";
+    static const char schema_html[] =
+        "<!doctype html><html><body>"
+        "<div class=\"site-header\">Utility header</div>"
+        "<div itemprop=\"articleBody\"><p>Schema body with enough readable text to become the primary reading region.</p></div>"
+        "</body></html>";
     uint8_t out[2048];
     uint8_t fallback_out[768];
+    uint8_t schema_out[768];
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
     uint32_t flags = 0;
@@ -1369,9 +1385,11 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t noprinter_pos;
     uint32_t site_header_pos;
     uint32_t post_pos;
+    uint32_t schema_body_pos;
     uint32_t required_status;
     int written;
     int fallback_written;
+    int schema_written;
 
     written = netsurf_port_rewrite_render_html((const uint8_t *)html, sizeof(html) - 1u, out, sizeof(out));
     if (written <= 0) {
@@ -1576,6 +1594,29 @@ uint32_t netsurf_port_render_smoke(void) {
     flags = 0;
     if (post_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(fallback_out, post_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
+        (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
+        return 0u;
+    }
+
+    schema_written = netsurf_port_rewrite_render_html((const uint8_t *)schema_html,
+                                                      sizeof(schema_html) - 1u,
+                                                      schema_out,
+                                                      sizeof(schema_out));
+    if (schema_written <= 0) {
+        return 0u;
+    }
+    if ((netsurf_port_last_dom_status & required_status) != required_status) {
+        return 0u;
+    }
+
+    schema_body_pos = netsurf_port_find_tag_pos_from_fragment(schema_out,
+                                                              "itemprop=\"articleBody\" data-zbrowser-primary=\"1\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (schema_body_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(schema_out, schema_body_pos, &display, &role, &flags) == 0 ||
         role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
         (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
         return 0u;
