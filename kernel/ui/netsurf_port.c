@@ -479,6 +479,9 @@ static uint32_t netsurf_port_element_primary_score(dom_node *node, const dom_str
         netsurf_port_dom_string_contains_ci(klass, "article")) {
         score = netsurf_port_u32_max(score, 105u);
     }
+    if (netsurf_port_dom_string_has_token_ci(klass, "post")) {
+        score = netsurf_port_u32_max(score, 100u);
+    }
     if (netsurf_port_dom_string_contains_ci(klass, "entry-content") ||
         netsurf_port_dom_string_contains_ci(klass, "post-content")) {
         score = netsurf_port_u32_max(score, 100u);
@@ -720,6 +723,8 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
          netsurf_port_element_attr_has_token_ci(node, "class", "navigation") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "navbox") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "sidebar") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "site-header") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "site-footer") ||
          netsurf_port_element_attr_has_token_ci(node, "class", "toc") ||
          netsurf_port_element_attr_equals_ci(node, "id", "footer"))) {
         return NETSURF_PORT_HINT_ROLE_CHROME;
@@ -933,6 +938,7 @@ static int netsurf_port_primary_candidate(dom_node *node, const dom_string *name
            netsurf_port_element_attr_has_token_ci(node, "class", "mw-parser-output") ||
            netsurf_port_element_attr_equals_ci(node, "id", "article") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "article") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "post") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "entry-content") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "post-content") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "main-content");
@@ -1316,7 +1322,13 @@ uint32_t netsurf_port_render_smoke(void) {
         "<input type=\"search\" name=\"q\" value=\"LainOS\"></fieldset></form>"
         "<p>NetSurf render smoke</p></div>"
         "<div id=\"catlinks\">categories</div></body></html>";
+    static const char fallback_html[] =
+        "<!doctype html><html><body>"
+        "<div class=\"site-header\">Site navigation</div>"
+        "<section class=\"post\"><p>Standalone post body with enough readable text to win primary selection.</p></section>"
+        "</body></html>";
     uint8_t out[2048];
+    uint8_t fallback_out[768];
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
     uint32_t flags = 0;
@@ -1331,8 +1343,11 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t catlinks_pos;
     uint32_t navbarish_pos;
     uint32_t noprinter_pos;
+    uint32_t site_header_pos;
+    uint32_t post_pos;
     uint32_t required_status;
     int written;
+    int fallback_written;
 
     written = netsurf_port_rewrite_render_html((const uint8_t *)html, sizeof(html) - 1u, out, sizeof(out));
     if (written <= 0) {
@@ -1455,6 +1470,39 @@ uint32_t netsurf_port_render_smoke(void) {
     if (noprinter_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, noprinter_pos, &display, &role, &flags) == 0 ||
         (flags & NETSURF_PORT_HINT_FLAG_SKIP) != 0u) {
+        return 0u;
+    }
+
+    fallback_written = netsurf_port_rewrite_render_html((const uint8_t *)fallback_html,
+                                                        sizeof(fallback_html) - 1u,
+                                                        fallback_out,
+                                                        sizeof(fallback_out));
+    if (fallback_written <= 0) {
+        return 0u;
+    }
+    if ((netsurf_port_last_dom_status & required_status) != required_status) {
+        return 0u;
+    }
+
+    site_header_pos = netsurf_port_find_tag_pos_from_fragment(fallback_out, "class=\"site-header\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (site_header_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(fallback_out, site_header_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
+    post_pos = netsurf_port_find_tag_pos_from_fragment(fallback_out,
+                                                       "class=\"post\" data-zbrowser-primary=\"1\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (post_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(fallback_out, post_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
+        (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
         return 0u;
     }
 
