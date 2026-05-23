@@ -40,7 +40,6 @@ if [ -z "$ovmf_code" ] || [ -z "$ovmf_vars" ]; then
   exit 0
 fi
 
-timeout_seconds="${ZBROWSER_SELFHOST_TIMEOUT_SECONDS:-180}"
 smoke_img="build/zbrowser-selfhost.data.img"
 smoke_vars="build/OVMF_VARS.zbrowser-selfhost.fd"
 serial_log="build/zbrowser-selfhost.serial.log"
@@ -50,17 +49,32 @@ qemu_runtime="tcg"
 qemu_accel_args=()
 default_memory="256M"
 default_smp="1"
+kvm_reason="QEMU binary does not advertise KVM acceleration"
 
-if qemu-system-x86_64 -accel help 2>/dev/null | grep -qx 'kvm' &&
-  [ -r /dev/kvm ] &&
-  [ -w /dev/kvm ]; then
-  qemu_runtime="kvm"
-  qemu_accel_args=(-enable-kvm -cpu host)
-  default_memory="2048M"
-  default_smp="4"
-elif [ "$allow_tcg" != "1" ]; then
-  printf 'Skipping zbrowser self-host smoke; KVM is unavailable for uid=%s gid=%s (set ZBROWSER_SELFHOST_ALLOW_TCG=1 to force slow TCG).\n' "$(id -u)" "$(id -g)" >&2
+if qemu-system-x86_64 -accel help 2>/dev/null | grep -qx 'kvm'; then
+  if [ ! -e /dev/kvm ]; then
+    kvm_reason="/dev/kvm is missing"
+  elif [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+    kvm_reason="/dev/kvm is not accessible for uid=$(id -u) gid=$(id -g); groups=$(id -Gn)"
+  else
+    qemu_runtime="kvm"
+    qemu_accel_args=(-enable-kvm -cpu host)
+    default_memory="2048M"
+    default_smp="4"
+  fi
+fi
+
+if [ "$qemu_runtime" != "kvm" ] && [ "$allow_tcg" != "1" ]; then
+  printf 'Skipping zbrowser self-host smoke; KVM is unavailable (%s). Set ZBROWSER_SELFHOST_ALLOW_TCG=1 to force slow TCG.\n' "$kvm_reason" >&2
   exit 0
+fi
+
+if [ -n "${ZBROWSER_SELFHOST_TIMEOUT_SECONDS:-}" ]; then
+  timeout_seconds="${ZBROWSER_SELFHOST_TIMEOUT_SECONDS}"
+elif [ "$qemu_runtime" = "kvm" ]; then
+  timeout_seconds=180
+else
+  timeout_seconds=420
 fi
 
 qemu_memory="${ZBROWSER_SELFHOST_QEMU_MEMORY:-$default_memory}"
@@ -88,6 +102,9 @@ build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kern
 
 printf 'zbrowser self-host smoke: runtime=%s smp=%s mem=%s timeout=%ss\n' \
   "$qemu_runtime" "$qemu_smp" "$qemu_memory" "$timeout_seconds"
+if [ "$qemu_runtime" != "kvm" ]; then
+  printf 'zbrowser self-host smoke: running without KVM because %s\n' "$kvm_reason"
+fi
 
 set +e
 timeout "${timeout_seconds}s" qemu-system-x86_64 \
