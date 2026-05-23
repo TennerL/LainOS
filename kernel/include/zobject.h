@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define ZOBJECT_SYMBOL_NAME_SIZE 32u
+#define ZOBJECT_SYMBOL_NAME_SIZE 128u
 #define ZOBJECT_MAX_RESOLVED_SYMBOLS 512u
 
 typedef struct {

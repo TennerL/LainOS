@@ -14,8 +14,8 @@ mkdir -p build
 cp "$OVMF_VARS_TEMPLATE" build/OVMF_VARS.run.fd
 
 qemu-system-x86_64 \
-  -m 256M \
-  -smp 4 \
+  -m 8096M \
+  -smp 8 \
   -boot order=d,menu=on \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file=build/OVMF_VARS.run.fd \

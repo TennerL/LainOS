@@ -1,0 +1,18 @@
+#ifndef LONG_IDENTIFIERS_EXAMPLE_Z
+#define LONG_IDENTIFIERS_EXAMPLE_Z
+
+#define WEB_STYLE_TEXT_DECORATION_UNDERLINE 1
+#define WEB_STYLE_FLAG_DISPLAY_TABLE_ROW 4194304
+#define WEB_STYLE_FLAG_HAS_MAX_HEIGHT 1073741824
+
+#endif
+
+global uint32_t zlang_long_identifier_global_for_c_compatibility = WEB_STYLE_FLAG_DISPLAY_TABLE_ROW;
+
+uint32_t zlang_long_identifier_exported_symbol_for_c_compatibility(uint32_t zlang_long_identifier_parameter_for_c_compatibility) {
+    uint32_t zlang_long_identifier_local_for_c_compatibility = zlang_long_identifier_parameter_for_c_compatibility;
+    zlang_long_identifier_local_for_c_compatibility = zlang_long_identifier_local_for_c_compatibility + WEB_STYLE_TEXT_DECORATION_UNDERLINE;
+    return zlang_long_identifier_local_for_c_compatibility + zlang_long_identifier_global_for_c_compatibility;
+}
+
+return (int)(zlang_long_identifier_exported_symbol_for_c_compatibility(0) - WEB_STYLE_FLAG_DISPLAY_TABLE_ROW - WEB_STYLE_TEXT_DECORATION_UNDERLINE);

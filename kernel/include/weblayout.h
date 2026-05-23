@@ -22,6 +22,18 @@
 #define WEB_STYLE_FLAG_HAS_PADDING       (1u << 16)
 #define WEB_STYLE_FLAG_HAS_BORDER        (1u << 17)
 #define WEB_STYLE_FLAG_HAS_BORDER_COLOR  (1u << 18)
+#define WEB_STYLE_FLAG_FLOAT_LEFT        (1u << 19)
+#define WEB_STYLE_FLAG_FLOAT_RIGHT       (1u << 20)
+#define WEB_STYLE_FLAG_DISPLAY_TABLE     (1u << 21)
+#define WEB_STYLE_FLAG_DISPLAY_TABLE_ROW (1u << 22)
+#define WEB_STYLE_FLAG_DISPLAY_TABLE_CELL (1u << 23)
+#define WEB_STYLE_FLAG_FONT_BOLD         (1u << 24)
+#define WEB_STYLE_FLAG_FONT_ITALIC       (1u << 25)
+#define WEB_STYLE_FLAG_TEXT_UNDERLINE    (1u << 26)
+#define WEB_STYLE_FLAG_HAS_MIN_WIDTH     (1u << 27)
+#define WEB_STYLE_FLAG_HAS_MAX_WIDTH     (1u << 28)
+#define WEB_STYLE_FLAG_HAS_MIN_HEIGHT    (1u << 29)
+#define WEB_STYLE_FLAG_HAS_MAX_HEIGHT    (1u << 30)
 
 #define WEB_STYLE_ALIGN_LEFT   0u
 #define WEB_STYLE_ALIGN_CENTER 1u
@@ -31,16 +43,70 @@
 #define WEB_STYLE_POS_ABSOLUTE 1u
 #define WEB_STYLE_POS_FIXED    2u
 
+#define WEB_STYLE_DISPLAY_INLINE     0u
+#define WEB_STYLE_DISPLAY_BLOCK      1u
+#define WEB_STYLE_DISPLAY_FLEX       2u
+#define WEB_STYLE_DISPLAY_TABLE      3u
+#define WEB_STYLE_DISPLAY_TABLE_ROW  4u
+#define WEB_STYLE_DISPLAY_TABLE_CELL 5u
+#define WEB_STYLE_DISPLAY_LIST_ITEM  6u
+
+#define WEB_STYLE_FLOAT_NONE  0u
+#define WEB_STYLE_FLOAT_LEFT  1u
+#define WEB_STYLE_FLOAT_RIGHT 2u
+
+#define WEB_STYLE_FONT_NORMAL 0u
+#define WEB_STYLE_FONT_BOLD   1u
+
+#define WEB_STYLE_FONT_STYLE_NORMAL 0u
+#define WEB_STYLE_FONT_STYLE_ITALIC 1u
+
+#define WEB_STYLE_TEXT_TRANSFORM_NONE       0u
+#define WEB_STYLE_TEXT_TRANSFORM_UPPERCASE  1u
+#define WEB_STYLE_TEXT_TRANSFORM_LOWERCASE  2u
+#define WEB_STYLE_TEXT_TRANSFORM_CAPITALIZE 3u
+
+#define WEB_STYLE_WHITE_SPACE_NORMAL   0u
+#define WEB_STYLE_WHITE_SPACE_PRE      1u
+#define WEB_STYLE_WHITE_SPACE_NOWRAP   2u
+#define WEB_STYLE_WHITE_SPACE_PRE_WRAP 3u
+#define WEB_STYLE_WHITE_SPACE_PRE_LINE 4u
+
+#define WEB_STYLE_LIST_DISC    0u
+#define WEB_STYLE_LIST_CIRCLE  1u
+#define WEB_STYLE_LIST_SQUARE  2u
+#define WEB_STYLE_LIST_DECIMAL 3u
+#define WEB_STYLE_LIST_NONE    4u
+
+#define WEB_STYLE_OVERFLOW_VISIBLE 0u
+#define WEB_STYLE_OVERFLOW_HIDDEN  1u
+#define WEB_STYLE_OVERFLOW_SCROLL  2u
+#define WEB_STYLE_OVERFLOW_AUTO    3u
+
+#define WEB_STYLE_BOX_CONTENT_BOX 0u
+#define WEB_STYLE_BOX_BORDER_BOX  1u
+
+#define WEB_STYLE_BORDER_SEPARATE 0u
+#define WEB_STYLE_BORDER_COLLAPSE 1u
+
 typedef struct {
     uint32_t flags;
     uint32_t text_align;
     uint32_t position;
+    uint32_t display;
+    uint32_t float_side;
+    uint32_t font_weight;
+    uint32_t font_style;
     uint32_t left;
     uint32_t right;
     uint32_t top;
     uint32_t bottom;
     uint32_t width;
     uint32_t height;
+    uint32_t min_width;
+    uint32_t max_width;
+    uint32_t min_height;
+    uint32_t max_height;
     uint32_t color;
     uint32_t background_color;
     uint32_t margin_left;
@@ -56,6 +122,18 @@ typedef struct {
     uint32_t border_top;
     uint32_t border_bottom;
     uint32_t border_color;
+    uint32_t font_size;
+    uint32_t line_height;
+    uint32_t text_transform;
+    uint32_t white_space;
+    uint32_t list_style_type;
+    uint32_t overflow_x;
+    uint32_t overflow_y;
+    uint32_t box_sizing;
+    uint32_t border_collapse;
+    uint32_t border_spacing_h;
+    uint32_t border_spacing_v;
+    uint32_t text_indent;
 } web_style_t;
 
 typedef struct {

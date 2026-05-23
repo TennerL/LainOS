@@ -1,8 +1,8 @@
 #include "zscript.h"
 
-#define Z_MAX_TOKEN_TEXT 32u
+#define Z_MAX_TOKEN_TEXT 128u
 #define Z_MAX_FUNCTIONS 512u
-#define Z_MAX_LABEL_TEXT 32u
+#define Z_MAX_LABEL_TEXT 128u
 #define Z_MAX_LABEL_PREFIX 8u
 #define Z_MAX_LOCALS 64u
 #define Z_MAX_PARAMS 6u
@@ -10,7 +10,7 @@
 #define Z_STRING_POOL_SIZE 65536u
 #define Z_MAX_ARRAY_DIMS 3u
 #define Z_MAX_STRUCTS 32u
-#define Z_MAX_STRUCT_FIELDS 32u
+#define Z_MAX_STRUCT_FIELDS 128u
 #define Z_MAX_GLOBALS 384u
 #define Z_MAX_LOOP_DEPTH 16u
 #define Z_MAX_CONSTANTS 128u

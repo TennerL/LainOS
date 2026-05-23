@@ -2,9 +2,9 @@
 #include "kernel.h"
 #include "kernel_exports.h"
 
-#define ASM_LINE_SIZE 128u
+#define ASM_LINE_SIZE 256u
 #define ASM_MAX_LABELS 8192u
-#define ASM_LABEL_NAME_SIZE 40u
+#define ASM_LABEL_NAME_SIZE ASSEMBLER_SYMBOL_NAME_SIZE
 
 typedef struct {
     char name[ASM_LABEL_NAME_SIZE];

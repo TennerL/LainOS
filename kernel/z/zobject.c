@@ -4,10 +4,12 @@
 #include "kmem.h"
 
 #define ZOBJECT_MAGIC 0x4F5A4E49u
-#define ZOBJECT_VERSION 5u
+#define ZOBJECT_VERSION 6u
+#define ZOBJECT_VERSION_SHORT_SYMBOLS 5u
 #define ZOBJECT_VERSION_RELOC 4u
 #define ZOBJECT_VERSION_ASM 3u
 #define ZOBJECT_VERSION_LEGACY 2u
+#define ZOBJECT_LEGACY_SYMBOL_NAME_SIZE 32u
 #define ZOBJECT_ENTRY_SIZE 32u
 #define ZOBJECT_SYMBOL_RECORD_SIZE (4u + ZOBJECT_SYMBOL_NAME_SIZE)
 #define ZOBJECT_SYMBOL_RECORD_V4_SIZE (12u + ZOBJECT_SYMBOL_NAME_SIZE)
@@ -180,6 +182,32 @@ static void zo_clear_last_error(void) {
     zo_last_error_symbol[0] = '\0';
 }
 
+static int zo_version_has_relocations(uint32_t version) {
+    return version == ZOBJECT_VERSION ||
+           version == ZOBJECT_VERSION_SHORT_SYMBOLS ||
+           version == ZOBJECT_VERSION_RELOC;
+}
+
+static int zo_version_has_sections(uint32_t version) {
+    return version == ZOBJECT_VERSION ||
+           version == ZOBJECT_VERSION_SHORT_SYMBOLS;
+}
+
+static uint32_t zo_symbol_name_size_for_version(uint32_t version) {
+    return version == ZOBJECT_VERSION ? ZOBJECT_SYMBOL_NAME_SIZE : ZOBJECT_LEGACY_SYMBOL_NAME_SIZE;
+}
+
+static uint32_t zo_symbol_record_size_for_version(uint32_t version) {
+    if (zo_version_has_relocations(version)) {
+        return 12u + zo_symbol_name_size_for_version(version);
+    }
+    return 4u + zo_symbol_name_size_for_version(version);
+}
+
+static uint32_t zo_relocation_record_size_for_version(uint32_t version) {
+    return 8u + zo_symbol_name_size_for_version(version);
+}
+
 static void zo_set_last_error(const char *reason, const char *symbol) {
     zo_copy_name(zo_last_error_reason, sizeof(zo_last_error_reason), reason ? reason : "link failed");
     zo_copy_name(zo_last_error_symbol, sizeof(zo_last_error_symbol), symbol ? symbol : "");
@@ -297,7 +325,7 @@ static int zo_find_data_section_source_offset(const char *asm_source,
     }
 
     while (pos < asm_size) {
-        char line[96];
+        char line[256];
         uint32_t line_start = pos;
         uint32_t len = 0;
 
@@ -355,7 +383,7 @@ static int zo_collect_metadata_symbols(const char *asm_source,
 
     *symbol_count = 0;
     while (pos < asm_size) {
-        char line[96];
+        char line[256];
         uint32_t len = 0;
         const char *s;
 
@@ -430,6 +458,7 @@ static int zo_validate_object(const unsigned char *object,
     version = zo_read_u32(object + 4);
     if (zo_read_u32(object + 0) != ZOBJECT_MAGIC ||
         (version != ZOBJECT_VERSION &&
+         version != ZOBJECT_VERSION_SHORT_SYMBOLS &&
          version != ZOBJECT_VERSION_RELOC &&
          version != ZOBJECT_VERSION_ASM &&
          version != ZOBJECT_VERSION_LEGACY)) {
@@ -450,8 +479,10 @@ static int zo_validate_object(const unsigned char *object,
     info->relocations = 0;
     info->sections = 0;
 
-    if (version == ZOBJECT_VERSION || version == ZOBJECT_VERSION_RELOC) {
-        uint32_t header_size = (version == ZOBJECT_VERSION) ? ZOBJECT_V5_HEADER_SIZE : ZOBJECT_V4_HEADER_SIZE;
+    if (zo_version_has_relocations(version)) {
+        uint32_t header_size = zo_version_has_sections(version) ? ZOBJECT_V5_HEADER_SIZE : ZOBJECT_V4_HEADER_SIZE;
+        uint32_t symbol_record_size = zo_symbol_record_size_for_version(version);
+        uint32_t relocation_record_size = zo_relocation_record_size_for_version(version);
         uint32_t relocation_bytes;
         uint32_t section_bytes = 0;
 
@@ -463,7 +494,7 @@ static int zo_validate_object(const unsigned char *object,
         info->symbol_count = zo_read_u32(object + 12);
         info->reloc_count = zo_read_u32(object + 16);
         info->entry_offset = zo_read_u32(object + 20);
-        info->section_count = (version == ZOBJECT_VERSION) ? zo_read_u32(object + 24) : 0;
+        info->section_count = zo_version_has_sections(version) ? zo_read_u32(object + 24) : 0;
 
         if (info->symbol_count > ZOBJECT_MAX_SYMBOLS ||
             info->reloc_count > ZOBJECT_MAX_RELOCATIONS ||
@@ -472,11 +503,11 @@ static int zo_validate_object(const unsigned char *object,
             return -1;
         }
 
-        symbol_bytes = info->symbol_count * ZOBJECT_SYMBOL_RECORD_V4_SIZE;
-        relocation_bytes = info->reloc_count * ZOBJECT_RELOCATION_RECORD_SIZE;
+        symbol_bytes = info->symbol_count * symbol_record_size;
+        relocation_bytes = info->reloc_count * relocation_record_size;
         section_bytes = info->section_count * ZOBJECT_SECTION_RECORD_SIZE;
-        if (symbol_bytes / ZOBJECT_SYMBOL_RECORD_V4_SIZE != info->symbol_count ||
-            relocation_bytes / ZOBJECT_RELOCATION_RECORD_SIZE != info->reloc_count ||
+        if (symbol_bytes / symbol_record_size != info->symbol_count ||
+            relocation_bytes / relocation_record_size != info->reloc_count ||
             (info->section_count != 0 && section_bytes / ZOBJECT_SECTION_RECORD_SIZE != info->section_count) ||
             symbol_bytes > object_size ||
             relocation_bytes > object_size - symbol_bytes ||
@@ -502,8 +533,8 @@ static int zo_validate_object(const unsigned char *object,
         return -1;
     }
 
-    symbol_bytes = info->symbol_count * ZOBJECT_SYMBOL_RECORD_SIZE;
-    if (symbol_bytes / ZOBJECT_SYMBOL_RECORD_SIZE != info->symbol_count ||
+    symbol_bytes = info->symbol_count * zo_symbol_record_size_for_version(version);
+    if (symbol_bytes / zo_symbol_record_size_for_version(version) != info->symbol_count ||
         symbol_bytes > object_size ||
         ZOBJECT_HEADER_SIZE > object_size - symbol_bytes) {
         return -1;
@@ -526,12 +557,12 @@ static int zo_symbol_at(const zo_object_info_t *info, uint32_t index, uint32_t *
         return -1;
     }
 
-    if (info->version == ZOBJECT_VERSION || info->version == ZOBJECT_VERSION_RELOC) {
-        record = info->symbols + index * ZOBJECT_SYMBOL_RECORD_V4_SIZE;
+    if (zo_version_has_relocations(info->version)) {
+        record = info->symbols + index * zo_symbol_record_size_for_version(info->version);
         *type = zo_read_u32(record);
         *name = (const char *)(record + 12u);
     } else {
-        record = info->symbols + index * ZOBJECT_SYMBOL_RECORD_SIZE;
+        record = info->symbols + index * zo_symbol_record_size_for_version(info->version);
         *type = zo_read_u32(record);
         *name = (const char *)(record + 4u);
     }
@@ -548,12 +579,12 @@ static int zo_symbol_value_at(const zo_object_info_t *info, uint32_t index, uint
         return -1;
     }
 
-    if (info->version != ZOBJECT_VERSION && info->version != ZOBJECT_VERSION_RELOC) {
+    if (!zo_version_has_relocations(info->version)) {
         *value = 0;
         return 0;
     }
 
-    *value = zo_read_u64(info->symbols + index * ZOBJECT_SYMBOL_RECORD_V4_SIZE + 4u);
+    *value = zo_read_u64(info->symbols + index * zo_symbol_record_size_for_version(info->version) + 4u);
     return 0;
 }
 
@@ -565,12 +596,12 @@ static int zo_relocation_at(const zo_object_info_t *info,
     const unsigned char *record;
 
     if (info == 0 ||
-        (info->version != ZOBJECT_VERSION && info->version != ZOBJECT_VERSION_RELOC) ||
+        !zo_version_has_relocations(info->version) ||
         index >= info->reloc_count || type == 0 || offset == 0 || name == 0) {
         return -1;
     }
 
-    record = info->relocations + index * ZOBJECT_RELOCATION_RECORD_SIZE;
+    record = info->relocations + index * zo_relocation_record_size_for_version(info->version);
     *type = zo_read_u32(record);
     *offset = zo_read_u32(record + 4u);
     *name = (const char *)(record + 8u);
@@ -1075,7 +1106,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
         if (zo_validate_object(objects[i], object_sizes[i], &infos[i]) != 0) {
             return -1;
         }
-        if (infos[i].version == ZOBJECT_VERSION) {
+        if (zo_version_has_sections(infos[i].version)) {
             have_v5 = 1;
         } else if (infos[i].version == ZOBJECT_VERSION_RELOC) {
             have_v4_reloc = 1;

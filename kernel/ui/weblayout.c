@@ -24,6 +24,10 @@ enum {
     WEB_PROP_BOTTOM,
     WEB_PROP_WIDTH,
     WEB_PROP_HEIGHT,
+    WEB_PROP_MIN_WIDTH,
+    WEB_PROP_MAX_WIDTH,
+    WEB_PROP_MIN_HEIGHT,
+    WEB_PROP_MAX_HEIGHT,
     WEB_PROP_MARGIN_AUTO_X,
     WEB_PROP_CENTER_X,
     WEB_PROP_BACKGROUND_COLOR,
@@ -40,6 +44,21 @@ enum {
     WEB_PROP_BORDER_TOP,
     WEB_PROP_BORDER_BOTTOM,
     WEB_PROP_BORDER_COLOR,
+    WEB_PROP_FLOAT,
+    WEB_PROP_FONT_WEIGHT,
+    WEB_PROP_FONT_STYLE,
+    WEB_PROP_TEXT_DECORATION,
+    WEB_PROP_FONT_SIZE,
+    WEB_PROP_LINE_HEIGHT,
+    WEB_PROP_TEXT_TRANSFORM,
+    WEB_PROP_WHITE_SPACE,
+    WEB_PROP_LIST_STYLE_TYPE,
+    WEB_PROP_OVERFLOW_X,
+    WEB_PROP_OVERFLOW_Y,
+    WEB_PROP_BOX_SIZING,
+    WEB_PROP_BORDER_COLLAPSE,
+    WEB_PROP_BORDER_SPACING,
+    WEB_PROP_TEXT_INDENT,
     WEB_PROP_COUNT
 };
 
@@ -50,9 +69,9 @@ typedef struct {
 } web_style_state_t;
 
 #define WEB_STYLE_MAX_CACHED_RULES 1024u
-#define WEB_CSS_MAX_NODES 2048u
+#define WEB_CSS_MAX_NODES 8192u
 #define WEB_CSS_MAX_STACK 96u
-#define WEB_CSS_MAX_CLASSES 8u
+#define WEB_CSS_MAX_CLASSES 16u
 
 typedef struct {
     uint32_t selector_start;
@@ -73,11 +92,17 @@ typedef struct {
     int32_t parent;
     int32_t prev_sibling;
     uint32_t child_count;
+    uint32_t style_cached;
+    uint32_t style_viewport_width;
+    uint32_t style_viewport_height;
+    web_style_t cached_style;
     lwc_string *name;
     lwc_string *id;
     lwc_string *classes[WEB_CSS_MAX_CLASSES];
     lwc_string *class_refs[WEB_CSS_MAX_CLASSES];
     uint32_t class_count;
+    css_stylesheet *inline_style;
+    void *libcss_node_data;
 } web_css_node_t;
 
 static css_stylesheet *web_css_sheet;
@@ -1032,24 +1057,29 @@ static css_error web_css_ua_default_for_property(void *pw, uint32_t property, cs
 }
 
 static css_error web_css_set_node_data(void *pw, void *node, void *libcss_node_data) {
-    if (libcss_node_data != NULL) {
+    web_css_node_t *n = web_css_node(node);
+    if (n == NULL) {
+        return CSS_BADPARM;
+    }
+    if (n->libcss_node_data != NULL && n->libcss_node_data != libcss_node_data) {
         css_libcss_node_data_handler(&web_css_select_handler,
                                      CSS_NODE_DELETED,
                                      pw,
                                      node,
                                      NULL,
-                                     libcss_node_data);
+                                     n->libcss_node_data);
     }
+    n->libcss_node_data = libcss_node_data;
     return CSS_OK;
 }
 
 static css_error web_css_get_node_data(void *pw, void *node, void **libcss_node_data) {
+    web_css_node_t *n = web_css_node(node);
     (void)pw;
-    (void)node;
     if (libcss_node_data == NULL) {
         return CSS_BADPARM;
     }
-    *libcss_node_data = NULL;
+    *libcss_node_data = n != NULL ? n->libcss_node_data : NULL;
     return CSS_OK;
 }
 
@@ -1116,11 +1146,45 @@ static void web_set_display(web_style_state_t *state, const uint8_t *value, uint
     if (!web_cascade_allows(state, WEB_PROP_DISPLAY, specificity, important)) {
         return;
     }
-    state->style.flags &= ~(WEB_STYLE_FLAG_DISPLAY_NONE | WEB_STYLE_FLAG_DISPLAY_FLEX);
+    state->style.display = WEB_STYLE_DISPLAY_INLINE;
+    state->style.flags &= ~(WEB_STYLE_FLAG_DISPLAY_NONE |
+                            WEB_STYLE_FLAG_DISPLAY_FLEX |
+                            WEB_STYLE_FLAG_DISPLAY_TABLE |
+                            WEB_STYLE_FLAG_DISPLAY_TABLE_ROW |
+                            WEB_STYLE_FLAG_DISPLAY_TABLE_CELL);
     if (web_range_contains_cstr_ci(value, start, end, "none")) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_NONE;
     } else if (web_range_contains_cstr_ci(value, start, end, "flex")) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_FLEX;
+        state->style.display = WEB_STYLE_DISPLAY_FLEX;
+    } else if (web_range_contains_cstr_ci(value, start, end, "table-cell")) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_CELL;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE_CELL;
+    } else if (web_range_contains_cstr_ci(value, start, end, "table-row")) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_ROW;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE_ROW;
+    } else if (web_range_contains_cstr_ci(value, start, end, "table")) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE;
+    } else if (web_range_contains_cstr_ci(value, start, end, "list-item")) {
+        state->style.display = WEB_STYLE_DISPLAY_LIST_ITEM;
+    } else if (web_range_contains_cstr_ci(value, start, end, "block")) {
+        state->style.display = WEB_STYLE_DISPLAY_BLOCK;
+    }
+}
+
+static void web_set_float(web_style_state_t *state, const uint8_t *value, uint32_t start, uint32_t end, uint32_t specificity, int important) {
+    if (!web_cascade_allows(state, WEB_PROP_FLOAT, specificity, important)) {
+        return;
+    }
+    state->style.flags &= ~(WEB_STYLE_FLAG_FLOAT_LEFT | WEB_STYLE_FLAG_FLOAT_RIGHT);
+    state->style.float_side = WEB_STYLE_FLOAT_NONE;
+    if (web_range_contains_cstr_ci(value, start, end, "left")) {
+        state->style.flags |= WEB_STYLE_FLAG_FLOAT_LEFT;
+        state->style.float_side = WEB_STYLE_FLOAT_LEFT;
+    } else if (web_range_contains_cstr_ci(value, start, end, "right")) {
+        state->style.flags |= WEB_STYLE_FLAG_FLOAT_RIGHT;
+        state->style.float_side = WEB_STYLE_FLOAT_RIGHT;
     }
 }
 
@@ -1665,6 +1729,8 @@ static void web_apply_declarations(const uint8_t *css,
 
         if (web_range_equal_cstr_ci(css, prop_start, prop_end, "display")) {
             web_set_display(state, css, value_start, value_end, specificity, important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "float")) {
+            web_set_float(state, css, value_start, value_end, specificity, important);
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "visibility")) {
             web_set_visibility(state, css, value_start, value_end, specificity, important);
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "text-align")) {
@@ -1724,6 +1790,34 @@ static void web_apply_declarations(const uint8_t *css,
                 web_set_length_property(state, WEB_PROP_HEIGHT, WEB_STYLE_FLAG_HAS_HEIGHT, &state->style.height, px, specificity, important);
             } else {
                 web_clear_length_property(state, WEB_PROP_HEIGHT, WEB_STYLE_FLAG_HAS_HEIGHT, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "min-width")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_MIN_WIDTH, WEB_STYLE_FLAG_HAS_MIN_WIDTH, &state->style.min_width, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_MIN_WIDTH, WEB_STYLE_FLAG_HAS_MIN_WIDTH, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "max-width")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_MAX_WIDTH, WEB_STYLE_FLAG_HAS_MAX_WIDTH, &state->style.max_width, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_MAX_WIDTH, WEB_STYLE_FLAG_HAS_MAX_WIDTH, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "min-height")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_height, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_MIN_HEIGHT, WEB_STYLE_FLAG_HAS_MIN_HEIGHT, &state->style.min_height, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_MIN_HEIGHT, WEB_STYLE_FLAG_HAS_MIN_HEIGHT, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "max-height")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_height, viewport_width, viewport_height, &px)) {
+                web_set_length_property(state, WEB_PROP_MAX_HEIGHT, WEB_STYLE_FLAG_HAS_MAX_HEIGHT, &state->style.max_height, px, specificity, important);
+            } else {
+                web_clear_length_property(state, WEB_PROP_MAX_HEIGHT, WEB_STYLE_FLAG_HAS_MAX_HEIGHT, specificity, important);
             }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "inset")) {
             uint32_t px = 0;
@@ -1896,6 +1990,140 @@ static void web_apply_declarations(const uint8_t *css,
             if (web_range_contains_cstr_ci(css, value_start, value_end, "translate") &&
                 web_range_contains_cstr_ci(css, value_start, value_end, "-50")) {
                 web_set_flag_property(state, WEB_PROP_CENTER_X, WEB_STYLE_FLAG_CENTER_X, 1, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "font-weight")) {
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "bold") ||
+                web_range_contains_cstr_ci(css, value_start, value_end, "600") ||
+                web_range_contains_cstr_ci(css, value_start, value_end, "700") ||
+                web_range_contains_cstr_ci(css, value_start, value_end, "800") ||
+                web_range_contains_cstr_ci(css, value_start, value_end, "900")) {
+                state->style.font_weight = WEB_STYLE_FONT_BOLD;
+            } else {
+                state->style.font_weight = WEB_STYLE_FONT_NORMAL;
+            }
+            web_set_flag_property(state,
+                                  WEB_PROP_FONT_WEIGHT,
+                                  WEB_STYLE_FLAG_FONT_BOLD,
+                                  web_range_contains_cstr_ci(css, value_start, value_end, "bold") ||
+                                      web_range_contains_cstr_ci(css, value_start, value_end, "600") ||
+                                      web_range_contains_cstr_ci(css, value_start, value_end, "700") ||
+                                      web_range_contains_cstr_ci(css, value_start, value_end, "800") ||
+                                      web_range_contains_cstr_ci(css, value_start, value_end, "900"),
+                                  specificity,
+                                  important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "font-style")) {
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "italic") ||
+                web_range_contains_cstr_ci(css, value_start, value_end, "oblique")) {
+                state->style.font_style = WEB_STYLE_FONT_STYLE_ITALIC;
+            } else {
+                state->style.font_style = WEB_STYLE_FONT_STYLE_NORMAL;
+            }
+            web_set_flag_property(state,
+                                  WEB_PROP_FONT_STYLE,
+                                  WEB_STYLE_FLAG_FONT_ITALIC,
+                                  web_range_contains_cstr_ci(css, value_start, value_end, "italic") ||
+                                      web_range_contains_cstr_ci(css, value_start, value_end, "oblique"),
+                                  specificity,
+                                  important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "text-decoration") ||
+                   web_range_equal_cstr_ci(css, prop_start, prop_end, "text-decoration-line")) {
+            web_set_flag_property(state,
+                                  WEB_PROP_TEXT_DECORATION,
+                                  WEB_STYLE_FLAG_TEXT_UNDERLINE,
+                                  web_range_contains_cstr_ci(css, value_start, value_end, "underline"),
+                                  specificity,
+                                  important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "font-size")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, 16, viewport_width, viewport_height, &px) &&
+                web_cascade_allows(state, WEB_PROP_FONT_SIZE, specificity, important)) {
+                if (px < 6) {
+                    px = 6;
+                }
+                if (px > 72) {
+                    px = 72;
+                }
+                state->style.font_size = px;
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "line-height")) {
+            uint32_t px = 0;
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "normal")) {
+                px = (state->style.font_size * 6u) / 5u;
+            } else {
+                (void)web_parse_length_px(css, value_start, value_end, state->style.font_size, viewport_width, viewport_height, &px);
+            }
+            if (px != 0 && web_cascade_allows(state, WEB_PROP_LINE_HEIGHT, specificity, important)) {
+                state->style.line_height = px;
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "text-transform")) {
+            if (web_cascade_allows(state, WEB_PROP_TEXT_TRANSFORM, specificity, important)) {
+                if (web_range_contains_cstr_ci(css, value_start, value_end, "uppercase")) {
+                    state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_UPPERCASE;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "lowercase")) {
+                    state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_LOWERCASE;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "capitalize")) {
+                    state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_CAPITALIZE;
+                } else {
+                    state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_NONE;
+                }
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "white-space")) {
+            if (web_cascade_allows(state, WEB_PROP_WHITE_SPACE, specificity, important)) {
+                if (web_range_contains_cstr_ci(css, value_start, value_end, "pre-wrap")) {
+                    state->style.white_space = WEB_STYLE_WHITE_SPACE_PRE_WRAP;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "pre-line")) {
+                    state->style.white_space = WEB_STYLE_WHITE_SPACE_PRE_LINE;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "nowrap")) {
+                    state->style.white_space = WEB_STYLE_WHITE_SPACE_NOWRAP;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "pre")) {
+                    state->style.white_space = WEB_STYLE_WHITE_SPACE_PRE;
+                } else {
+                    state->style.white_space = WEB_STYLE_WHITE_SPACE_NORMAL;
+                }
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "list-style-type") ||
+                   web_range_equal_cstr_ci(css, prop_start, prop_end, "list-style")) {
+            if (web_cascade_allows(state, WEB_PROP_LIST_STYLE_TYPE, specificity, important)) {
+                if (web_range_contains_cstr_ci(css, value_start, value_end, "none")) {
+                    state->style.list_style_type = WEB_STYLE_LIST_NONE;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "circle")) {
+                    state->style.list_style_type = WEB_STYLE_LIST_CIRCLE;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "square")) {
+                    state->style.list_style_type = WEB_STYLE_LIST_SQUARE;
+                } else if (web_range_contains_cstr_ci(css, value_start, value_end, "decimal") ||
+                           web_range_contains_cstr_ci(css, value_start, value_end, "roman") ||
+                           web_range_contains_cstr_ci(css, value_start, value_end, "alpha")) {
+                    state->style.list_style_type = WEB_STYLE_LIST_DECIMAL;
+                } else {
+                    state->style.list_style_type = WEB_STYLE_LIST_DISC;
+                }
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "overflow") ||
+                   web_range_equal_cstr_ci(css, prop_start, prop_end, "overflow-x") ||
+                   web_range_equal_cstr_ci(css, prop_start, prop_end, "overflow-y")) {
+            uint32_t overflow = WEB_STYLE_OVERFLOW_VISIBLE;
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "hidden")) {
+                overflow = WEB_STYLE_OVERFLOW_HIDDEN;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "scroll")) {
+                overflow = WEB_STYLE_OVERFLOW_SCROLL;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "auto")) {
+                overflow = WEB_STYLE_OVERFLOW_AUTO;
+            }
+            if ((web_range_equal_cstr_ci(css, prop_start, prop_end, "overflow") ||
+                 web_range_equal_cstr_ci(css, prop_start, prop_end, "overflow-x")) &&
+                web_cascade_allows(state, WEB_PROP_OVERFLOW_X, specificity, important)) {
+                state->style.overflow_x = overflow;
+            }
+            if ((web_range_equal_cstr_ci(css, prop_start, prop_end, "overflow") ||
+                 web_range_equal_cstr_ci(css, prop_start, prop_end, "overflow-y")) &&
+                web_cascade_allows(state, WEB_PROP_OVERFLOW_Y, specificity, important)) {
+                state->style.overflow_y = overflow;
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "text-indent")) {
+            uint32_t px = 0;
+            if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px) &&
+                web_cascade_allows(state, WEB_PROP_TEXT_INDENT, specificity, important)) {
+                state->style.text_indent = px;
             }
         }
 
@@ -2491,6 +2719,19 @@ static int web_css_void_tag(const uint8_t *html, uint32_t pos) {
 
 static void web_css_release_nodes(void) {
     for (uint32_t i = 0; i < web_css_node_count; ++i) {
+        if (web_css_nodes[i].libcss_node_data != NULL) {
+            css_libcss_node_data_handler(&web_css_select_handler,
+                                         CSS_NODE_DELETED,
+                                         NULL,
+                                         &web_css_nodes[i],
+                                         NULL,
+                                         web_css_nodes[i].libcss_node_data);
+            web_css_nodes[i].libcss_node_data = NULL;
+        }
+        if (web_css_nodes[i].inline_style != NULL) {
+            css_stylesheet_destroy(web_css_nodes[i].inline_style);
+            web_css_nodes[i].inline_style = NULL;
+        }
         if (web_css_nodes[i].name != NULL) {
             lwc_string_unref(web_css_nodes[i].name);
             web_css_nodes[i].name = NULL;
@@ -2513,6 +2754,7 @@ static void web_css_release_nodes(void) {
 }
 
 static void web_css_reset(void) {
+    web_css_release_nodes();
     if (web_css_select_ctx != NULL) {
         css_select_ctx_destroy(web_css_select_ctx);
         web_css_select_ctx = NULL;
@@ -2525,12 +2767,11 @@ static void web_css_reset(void) {
         css_stylesheet_destroy(web_css_ua_sheet);
         web_css_ua_sheet = NULL;
     }
-    web_css_release_nodes();
     web_css_ready = 0;
     web_css_rule_blocks = 0;
 }
 
-static int web_css_create_sheet(css_stylesheet **sheet, const char *url) {
+static int web_css_create_sheet_ex(css_stylesheet **sheet, const char *url, bool inline_style) {
     css_stylesheet_params params;
 
     if (sheet == NULL) {
@@ -2544,10 +2785,18 @@ static int web_css_create_sheet(css_stylesheet **sheet, const char *url) {
     params.url = url;
     params.title = "zbrowser";
     params.allow_quirks = true;
-    params.inline_style = false;
+    params.inline_style = inline_style;
     params.resolve = web_css_resolve_url;
 
     return css_stylesheet_create(&params, sheet) == CSS_OK && *sheet != NULL ? 0 : -1;
+}
+
+static int web_css_create_sheet(css_stylesheet **sheet, const char *url) {
+    return web_css_create_sheet_ex(sheet, url, false);
+}
+
+static int web_css_create_inline_sheet(css_stylesheet **sheet) {
+    return web_css_create_sheet_ex(sheet, "zbrowser:inline", true);
 }
 
 static int web_css_append_sheet_data(css_stylesheet *sheet, const uint8_t *data, uint32_t len) {
@@ -2599,6 +2848,22 @@ static void web_css_intern_classes(const uint8_t *html, web_css_node_t *node) {
     }
 }
 
+static void web_css_parse_inline_style(const uint8_t *html, web_css_node_t *node) {
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if (node == NULL || !web_attr_value_range_cstr(html, node->tag_pos, "style", &start, &end) || end <= start) {
+        return;
+    }
+    if (web_css_create_inline_sheet(&node->inline_style) != 0) {
+        node->inline_style = NULL;
+        return;
+    }
+    if (web_css_append_sheet_data(node->inline_style, html + start, end - start) != 0) {
+        css_stylesheet_destroy(node->inline_style);
+        node->inline_style = NULL;
+    }
+}
+
 static int32_t web_css_add_node(const uint8_t *html,
                                 uint32_t tag_pos,
                                 int32_t parent,
@@ -2623,6 +2888,7 @@ static int32_t web_css_add_node(const uint8_t *html,
     }
     web_css_intern_id(html, node);
     web_css_intern_classes(html, node);
+    web_css_parse_inline_style(html, node);
     if (parent >= 0) {
         ++web_css_nodes[(uint32_t)parent].child_count;
     }
@@ -2698,9 +2964,17 @@ static void web_css_build_nodes(const uint8_t *html) {
 }
 
 static web_css_node_t *web_css_find_node(uint32_t tag_pos) {
-    for (uint32_t i = 0; i < web_css_node_count; ++i) {
-        if (web_css_nodes[i].tag_pos == tag_pos) {
-            return &web_css_nodes[i];
+    uint32_t lo = 0;
+    uint32_t hi = web_css_node_count;
+    while (lo < hi) {
+        uint32_t mid = lo + ((hi - lo) / 2u);
+        if (web_css_nodes[mid].tag_pos == tag_pos) {
+            return &web_css_nodes[mid];
+        }
+        if (web_css_nodes[mid].tag_pos < tag_pos) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
         }
     }
     return NULL;
@@ -2710,7 +2984,16 @@ static int web_css_prepare_document(const uint8_t *html) {
     css_error error;
     uint32_t pos = 0;
     static const uint8_t ua_css[] =
-        "a:link,a:visited{color:#3366cc}";
+        "html,body{display:block;color:#202122;background:#fff}"
+        "article,aside,div,footer,form,header,main,nav,section,p,blockquote,ul,ol,li,dl,dt,dd,table,tr,h1,h2,h3,h4,h5,h6{display:block}"
+        "table{display:table;border-collapse:separate;border-spacing:2px}"
+        "tr{display:table-row}"
+        "td,th{display:table-cell}"
+        "a:link,a:visited{color:#3366cc;text-decoration:underline}"
+        "b,strong,th{font-weight:bold}"
+        "i,em,cite{font-style:italic}"
+        "h1,h2,h3{font-weight:bold}"
+        "[hidden],template{display:none}";
 
     web_css_reset();
     web_css_build_nodes(html);
@@ -2939,12 +3222,20 @@ static void web_state_init(web_style_state_t *state) {
     state->style.flags = 0;
     state->style.text_align = WEB_STYLE_ALIGN_LEFT;
     state->style.position = WEB_STYLE_POS_STATIC;
+    state->style.display = WEB_STYLE_DISPLAY_INLINE;
+    state->style.float_side = WEB_STYLE_FLOAT_NONE;
+    state->style.font_weight = WEB_STYLE_FONT_NORMAL;
+    state->style.font_style = WEB_STYLE_FONT_STYLE_NORMAL;
     state->style.left = 0;
     state->style.right = 0;
     state->style.top = 0;
     state->style.bottom = 0;
     state->style.width = 0;
     state->style.height = 0;
+    state->style.min_width = 0;
+    state->style.max_width = 0;
+    state->style.min_height = 0;
+    state->style.max_height = 0;
     state->style.color = 0;
     state->style.background_color = 0;
     state->style.margin_left = 0;
@@ -2960,6 +3251,18 @@ static void web_state_init(web_style_state_t *state) {
     state->style.border_top = 0;
     state->style.border_bottom = 0;
     state->style.border_color = 0;
+    state->style.font_size = 16;
+    state->style.line_height = 19;
+    state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_NONE;
+    state->style.white_space = WEB_STYLE_WHITE_SPACE_NORMAL;
+    state->style.list_style_type = WEB_STYLE_LIST_DISC;
+    state->style.overflow_x = WEB_STYLE_OVERFLOW_VISIBLE;
+    state->style.overflow_y = WEB_STYLE_OVERFLOW_VISIBLE;
+    state->style.box_sizing = WEB_STYLE_BOX_CONTENT_BOX;
+    state->style.border_collapse = WEB_STYLE_BORDER_SEPARATE;
+    state->style.border_spacing_h = 2;
+    state->style.border_spacing_v = 2;
+    state->style.text_indent = 0;
     for (uint32_t i = 0; i < WEB_PROP_COUNT; ++i) {
         state->score[i] = 0;
     }
@@ -3028,6 +3331,81 @@ static uint32_t web_css_border_width_to_px(const css_computed_style *computed,
     return 0;
 }
 
+static uint32_t web_css_font_size_to_px(uint8_t type,
+                                        const css_computed_style *computed,
+                                        const css_unit_ctx *unit_ctx,
+                                        css_fixed length,
+                                        css_unit unit) {
+    if (type == CSS_FONT_SIZE_XX_SMALL) {
+        return 9;
+    }
+    if (type == CSS_FONT_SIZE_X_SMALL) {
+        return 10;
+    }
+    if (type == CSS_FONT_SIZE_SMALL) {
+        return 13;
+    }
+    if (type == CSS_FONT_SIZE_MEDIUM) {
+        return 16;
+    }
+    if (type == CSS_FONT_SIZE_LARGE) {
+        return 18;
+    }
+    if (type == CSS_FONT_SIZE_X_LARGE) {
+        return 24;
+    }
+    if (type == CSS_FONT_SIZE_XX_LARGE) {
+        return 32;
+    }
+    if (type == CSS_FONT_SIZE_DIMENSION) {
+        uint32_t px = web_css_length_to_px(computed, unit_ctx, length, unit, 16);
+        if (px < 6) {
+            return 6;
+        }
+        if (px > 72) {
+            return 72;
+        }
+        return px;
+    }
+    return 16;
+}
+
+static uint32_t web_css_overflow_value(uint8_t type) {
+    if (type == CSS_OVERFLOW_HIDDEN) {
+        return WEB_STYLE_OVERFLOW_HIDDEN;
+    }
+    if (type == CSS_OVERFLOW_SCROLL) {
+        return WEB_STYLE_OVERFLOW_SCROLL;
+    }
+    if (type == CSS_OVERFLOW_AUTO) {
+        return WEB_STYLE_OVERFLOW_AUTO;
+    }
+    return WEB_STYLE_OVERFLOW_VISIBLE;
+}
+
+static uint32_t web_css_list_style_value(uint8_t type) {
+    if (type == CSS_LIST_STYLE_TYPE_NONE) {
+        return WEB_STYLE_LIST_NONE;
+    }
+    if (type == CSS_LIST_STYLE_TYPE_CIRCLE) {
+        return WEB_STYLE_LIST_CIRCLE;
+    }
+    if (type == CSS_LIST_STYLE_TYPE_SQUARE) {
+        return WEB_STYLE_LIST_SQUARE;
+    }
+    if (type == CSS_LIST_STYLE_TYPE_DECIMAL ||
+        type == CSS_LIST_STYLE_TYPE_DECIMAL_LEADING_ZERO ||
+        type == CSS_LIST_STYLE_TYPE_LOWER_ROMAN ||
+        type == CSS_LIST_STYLE_TYPE_UPPER_ROMAN ||
+        type == CSS_LIST_STYLE_TYPE_LOWER_ALPHA ||
+        type == CSS_LIST_STYLE_TYPE_UPPER_ALPHA ||
+        type == CSS_LIST_STYLE_TYPE_LOWER_LATIN ||
+        type == CSS_LIST_STYLE_TYPE_UPPER_LATIN) {
+        return WEB_STYLE_LIST_DECIMAL;
+    }
+    return WEB_STYLE_LIST_DISC;
+}
+
 static void web_css_set_computed_length(web_style_state_t *state,
                                         uint32_t property,
                                         uint32_t flag,
@@ -3081,7 +3459,11 @@ static void web_css_apply_computed_style(web_style_state_t *state,
     css_color color = 0;
     css_color border_color = 0;
     css_fixed length = 0;
+    css_fixed hlength = 0;
+    css_fixed vlength = 0;
     css_unit unit = CSS_UNIT_PX;
+    css_unit hunit = CSS_UNIT_PX;
+    css_unit vunit = CSS_UNIT_PX;
     int px = 0;
     uint32_t current_color = 0x000000u;
     int have_current_color = 1;
@@ -3090,12 +3472,48 @@ static void web_css_apply_computed_style(web_style_state_t *state,
     uint8_t type;
 
     type = css_computed_display(computed, false);
+    state->style.display = WEB_STYLE_DISPLAY_INLINE;
     if (type == CSS_DISPLAY_NONE) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_NONE;
         web_css_set_score(state, WEB_PROP_DISPLAY);
+    } else if (type == CSS_DISPLAY_LIST_ITEM) {
+        state->style.display = WEB_STYLE_DISPLAY_LIST_ITEM;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
+    } else if (type == CSS_DISPLAY_BLOCK) {
+        state->style.display = WEB_STYLE_DISPLAY_BLOCK;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
     } else if (type == CSS_DISPLAY_FLEX || type == CSS_DISPLAY_INLINE_FLEX) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_FLEX;
+        state->style.display = WEB_STYLE_DISPLAY_FLEX;
         web_css_set_score(state, WEB_PROP_DISPLAY);
+    } else if (type == CSS_DISPLAY_TABLE) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
+    } else if (type == CSS_DISPLAY_TABLE_ROW ||
+               type == CSS_DISPLAY_TABLE_ROW_GROUP ||
+               type == CSS_DISPLAY_TABLE_HEADER_GROUP ||
+               type == CSS_DISPLAY_TABLE_FOOTER_GROUP) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_ROW;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE_ROW;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
+    } else if (type == CSS_DISPLAY_TABLE_CELL ||
+               type == CSS_DISPLAY_TABLE_CAPTION) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_CELL;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE_CELL;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
+    }
+
+    type = css_computed_float(computed);
+    state->style.float_side = WEB_STYLE_FLOAT_NONE;
+    if (type == CSS_FLOAT_LEFT) {
+        state->style.flags |= WEB_STYLE_FLAG_FLOAT_LEFT;
+        state->style.float_side = WEB_STYLE_FLOAT_LEFT;
+        web_css_set_score(state, WEB_PROP_FLOAT);
+    } else if (type == CSS_FLOAT_RIGHT) {
+        state->style.flags |= WEB_STYLE_FLAG_FLOAT_RIGHT;
+        state->style.float_side = WEB_STYLE_FLOAT_RIGHT;
+        web_css_set_score(state, WEB_PROP_FLOAT);
     }
 
     type = css_computed_visibility(computed);
@@ -3170,6 +3588,34 @@ static void web_css_apply_computed_style(web_style_state_t *state,
         state->style.flags |= WEB_STYLE_FLAG_HAS_HEIGHT;
         state->style.height = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_height);
         web_css_set_score(state, WEB_PROP_HEIGHT);
+    }
+    if (css_computed_min_width(computed, &length, &unit) == CSS_MIN_WIDTH_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MIN_WIDTH,
+                                    WEB_STYLE_FLAG_HAS_MIN_WIDTH,
+                                    &state->style.min_width,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+    if (css_computed_max_width(computed, &length, &unit) == CSS_MAX_WIDTH_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MAX_WIDTH,
+                                    WEB_STYLE_FLAG_HAS_MAX_WIDTH,
+                                    &state->style.max_width,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width));
+    }
+    if (css_computed_min_height(computed, &length, &unit) == CSS_MIN_HEIGHT_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MIN_HEIGHT,
+                                    WEB_STYLE_FLAG_HAS_MIN_HEIGHT,
+                                    &state->style.min_height,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_height));
+    }
+    if (css_computed_max_height(computed, &length, &unit) == CSS_MAX_HEIGHT_SET) {
+        web_css_set_computed_length(state,
+                                    WEB_PROP_MAX_HEIGHT,
+                                    WEB_STYLE_FLAG_HAS_MAX_HEIGHT,
+                                    &state->style.max_height,
+                                    web_css_length_to_px(computed, unit_ctx, length, unit, viewport_height));
     }
 
     type = css_computed_margin_left(computed, &length, &unit);
@@ -3305,14 +3751,112 @@ static void web_css_apply_computed_style(web_style_state_t *state,
         type = css_computed_border_left_color(computed, &border_color);
         web_css_apply_computed_border_color(state, type, border_color, current_color, have_current_color);
     }
+
+    type = css_computed_font_weight(computed);
+    if (type == CSS_FONT_WEIGHT_BOLD ||
+        type == CSS_FONT_WEIGHT_BOLDER ||
+        type == CSS_FONT_WEIGHT_600 ||
+        type == CSS_FONT_WEIGHT_700 ||
+        type == CSS_FONT_WEIGHT_800 ||
+        type == CSS_FONT_WEIGHT_900) {
+        state->style.flags |= WEB_STYLE_FLAG_FONT_BOLD;
+        state->style.font_weight = WEB_STYLE_FONT_BOLD;
+        web_css_set_score(state, WEB_PROP_FONT_WEIGHT);
+    }
+
+    type = css_computed_font_style(computed);
+    if (type == CSS_FONT_STYLE_ITALIC || type == CSS_FONT_STYLE_OBLIQUE) {
+        state->style.flags |= WEB_STYLE_FLAG_FONT_ITALIC;
+        state->style.font_style = WEB_STYLE_FONT_STYLE_ITALIC;
+        web_css_set_score(state, WEB_PROP_FONT_STYLE);
+    }
+
+    type = css_computed_text_decoration(computed);
+    if ((type & CSS_TEXT_DECORATION_UNDERLINE) != 0) {
+        state->style.flags |= WEB_STYLE_FLAG_TEXT_UNDERLINE;
+        web_css_set_score(state, WEB_PROP_TEXT_DECORATION);
+    }
+
+    type = css_computed_font_size(computed, &length, &unit);
+    state->style.font_size = web_css_font_size_to_px(type, computed, unit_ctx, length, unit);
+    web_css_set_score(state, WEB_PROP_FONT_SIZE);
+
+    type = css_computed_line_height(computed, &length, &unit);
+    if (type == CSS_LINE_HEIGHT_NORMAL) {
+        state->style.line_height = (state->style.font_size * 6u) / 5u;
+    } else if (type == CSS_LINE_HEIGHT_NUMBER) {
+        uint64_t scaled = (uint64_t)state->style.font_size * (uint64_t)length;
+        state->style.line_height = (uint32_t)(scaled >> CSS_RADIX_POINT);
+    } else if (type == CSS_LINE_HEIGHT_DIMENSION) {
+        state->style.line_height = web_css_length_to_px(computed, unit_ctx, length, unit, state->style.font_size);
+    }
+    if (state->style.line_height < 10) {
+        state->style.line_height = 10;
+    }
+    if (state->style.line_height > 72) {
+        state->style.line_height = 72;
+    }
+    web_css_set_score(state, WEB_PROP_LINE_HEIGHT);
+
+    type = css_computed_text_transform(computed);
+    if (type == CSS_TEXT_TRANSFORM_UPPERCASE) {
+        state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_UPPERCASE;
+    } else if (type == CSS_TEXT_TRANSFORM_LOWERCASE) {
+        state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_LOWERCASE;
+    } else if (type == CSS_TEXT_TRANSFORM_CAPITALIZE) {
+        state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_CAPITALIZE;
+    } else {
+        state->style.text_transform = WEB_STYLE_TEXT_TRANSFORM_NONE;
+    }
+    web_css_set_score(state, WEB_PROP_TEXT_TRANSFORM);
+
+    type = css_computed_white_space(computed);
+    if (type == CSS_WHITE_SPACE_PRE) {
+        state->style.white_space = WEB_STYLE_WHITE_SPACE_PRE;
+    } else if (type == CSS_WHITE_SPACE_NOWRAP) {
+        state->style.white_space = WEB_STYLE_WHITE_SPACE_NOWRAP;
+    } else if (type == CSS_WHITE_SPACE_PRE_WRAP) {
+        state->style.white_space = WEB_STYLE_WHITE_SPACE_PRE_WRAP;
+    } else if (type == CSS_WHITE_SPACE_PRE_LINE) {
+        state->style.white_space = WEB_STYLE_WHITE_SPACE_PRE_LINE;
+    } else {
+        state->style.white_space = WEB_STYLE_WHITE_SPACE_NORMAL;
+    }
+    web_css_set_score(state, WEB_PROP_WHITE_SPACE);
+
+    state->style.list_style_type = web_css_list_style_value(css_computed_list_style_type(computed));
+    web_css_set_score(state, WEB_PROP_LIST_STYLE_TYPE);
+
+    state->style.overflow_x = web_css_overflow_value(css_computed_overflow_x(computed));
+    state->style.overflow_y = web_css_overflow_value(css_computed_overflow_y(computed));
+    web_css_set_score(state, WEB_PROP_OVERFLOW_X);
+    web_css_set_score(state, WEB_PROP_OVERFLOW_Y);
+
+    type = css_computed_box_sizing(computed);
+    state->style.box_sizing = type == CSS_BOX_SIZING_BORDER_BOX ? WEB_STYLE_BOX_BORDER_BOX : WEB_STYLE_BOX_CONTENT_BOX;
+    web_css_set_score(state, WEB_PROP_BOX_SIZING);
+
+    type = css_computed_border_collapse(computed);
+    state->style.border_collapse = type == CSS_BORDER_COLLAPSE_COLLAPSE ? WEB_STYLE_BORDER_COLLAPSE : WEB_STYLE_BORDER_SEPARATE;
+    web_css_set_score(state, WEB_PROP_BORDER_COLLAPSE);
+
+    type = css_computed_border_spacing(computed, &hlength, &hunit, &vlength, &vunit);
+    if (type == CSS_BORDER_SPACING_SET) {
+        state->style.border_spacing_h = web_css_length_to_px(computed, unit_ctx, hlength, hunit, viewport_width);
+        state->style.border_spacing_v = web_css_length_to_px(computed, unit_ctx, vlength, vunit, viewport_height);
+        web_css_set_score(state, WEB_PROP_BORDER_SPACING);
+    }
+
+    if (css_computed_text_indent(computed, &length, &unit) == CSS_TEXT_INDENT_SET) {
+        state->style.text_indent = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width);
+        web_css_set_score(state, WEB_PROP_TEXT_INDENT);
+    }
 }
 
-static int web_css_style_for_tag(const uint8_t *html,
-                                 uint32_t tag_pos,
-                                 uint32_t viewport_width,
-                                 uint32_t viewport_height,
-                                 web_style_state_t *state) {
-    web_css_node_t *node;
+static int web_css_style_for_node(web_css_node_t *node,
+                                  uint32_t viewport_width,
+                                  uint32_t viewport_height,
+                                  web_style_state_t *state) {
     css_select_results *results = NULL;
     css_media media;
     css_unit_ctx unit_ctx = {
@@ -3327,10 +3871,6 @@ static int web_css_style_for_tag(const uint8_t *html,
     };
     css_error error;
 
-    if (web_css_ready == 0 || web_css_select_ctx == NULL || web_cached_html != html) {
-        return -1;
-    }
-    node = web_css_find_node(tag_pos);
     if (node == NULL) {
         return -1;
     }
@@ -3346,7 +3886,7 @@ static int web_css_style_for_tag(const uint8_t *html,
                              node,
                              &unit_ctx,
                              &media,
-                             NULL,
+                             node->inline_style,
                              &web_css_select_handler,
                              NULL,
                              &results);
@@ -3461,16 +4001,30 @@ int web_style_for_tag(const uint8_t *html,
                       uint32_t viewport_width,
                       uint32_t viewport_height,
                       web_style_t *out_style) {
+    web_css_node_t *node = NULL;
     if (html == NULL || out_style == NULL || html[tag_pos] != '<' || web_is_closing_tag(html, tag_pos)) {
         return -1;
     }
+    if (web_css_ready != 0 && web_css_select_ctx != NULL && web_cached_html == html) {
+        node = web_css_find_node(tag_pos);
+        if (node != NULL &&
+            node->style_cached != 0 &&
+            node->style_viewport_width == viewport_width &&
+            node->style_viewport_height == viewport_height) {
+            *out_style = node->cached_style;
+            return 0;
+        }
+    }
     web_style_state_t state;
     web_state_init(&state);
-    if (web_css_style_for_tag(html, tag_pos, viewport_width, viewport_height, &state) == 0) {
+    if (node != NULL && web_css_style_for_node(node, viewport_width, viewport_height, &state) == 0) {
         web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
-        web_apply_inline_style(html, tag_pos, &state, viewport_width, viewport_height);
         web_apply_hidden_attrs(html, tag_pos, &state);
         *out_style = state.style;
+        node->cached_style = state.style;
+        node->style_cached = 1;
+        node->style_viewport_width = viewport_width;
+        node->style_viewport_height = viewport_height;
         return 0;
     }
     web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);

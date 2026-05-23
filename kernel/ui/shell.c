@@ -96,6 +96,8 @@ typedef struct {
 } zmodule_slot_t;
 
 static zmodule_slot_t zmodule_slots[ZMODULE_MAX_MODULES];
+static zobject_resolved_symbol_t zmodule_resident_symbol_work[ZOBJECT_MAX_RESOLVED_SYMBOLS];
+static zobject_resolved_symbol_t zmodule_export_symbol_work[ZMODULE_MAX_EXPORTS];
 static unsigned long long zmodule_last_tick;
 
 typedef void (*command_handler_t)(const char *args, const boot_info_t *info);
@@ -8034,8 +8036,8 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
     int slot_index = -1;
     int drive = active_drive();
     int status = 0;
-    zobject_resolved_symbol_t resident_symbols[ZOBJECT_MAX_RESOLVED_SYMBOLS];
-    zobject_resolved_symbol_t export_symbols[ZMODULE_MAX_EXPORTS];
+    zobject_resolved_symbol_t *resident_symbols = zmodule_resident_symbol_work;
+    zobject_resolved_symbol_t *export_symbols = zmodule_export_symbol_work;
 
     static const exec_api_t api = {
         EXEC_API_MAGIC,

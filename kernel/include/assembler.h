@@ -8,6 +8,8 @@ typedef struct {
     uint64_t value;
 } assembler_symbol_t;
 
+#define ASSEMBLER_SYMBOL_NAME_SIZE 128u
+
 #define ASSEMBLER_RELOC_ABS64 1u
 #define ASSEMBLER_RELOC_RELATIVE64 2u
 #define ASSEMBLER_RELOC_RIP32 3u
@@ -15,7 +17,7 @@ typedef struct {
 typedef struct {
     uint32_t offset;
     uint32_t type;
-    char name[32];
+    char name[ASSEMBLER_SYMBOL_NAME_SIZE];
 } assembler_relocation_t;
 
 int assembler_assemble_source(const char *source,

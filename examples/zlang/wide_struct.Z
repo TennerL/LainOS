@@ -1,0 +1,50 @@
+struct WideStructForCCompatibility {
+    uint32_t f00;
+    uint32_t f01;
+    uint32_t f02;
+    uint32_t f03;
+    uint32_t f04;
+    uint32_t f05;
+    uint32_t f06;
+    uint32_t f07;
+    uint32_t f08;
+    uint32_t f09;
+    uint32_t f10;
+    uint32_t f11;
+    uint32_t f12;
+    uint32_t f13;
+    uint32_t f14;
+    uint32_t f15;
+    uint32_t f16;
+    uint32_t f17;
+    uint32_t f18;
+    uint32_t f19;
+    uint32_t f20;
+    uint32_t f21;
+    uint32_t f22;
+    uint32_t f23;
+    uint32_t f24;
+    uint32_t f25;
+    uint32_t f26;
+    uint32_t f27;
+    uint32_t f28;
+    uint32_t f29;
+    uint32_t f30;
+    uint32_t f31;
+    uint32_t f32;
+    uint32_t f33;
+    uint32_t f34;
+    uint32_t f35;
+    uint32_t f36;
+    uint32_t f37;
+    uint32_t f38;
+    uint32_t f39;
+};
+
+struct WideStructForCCompatibility value;
+
+value.f00 = 1;
+value.f31 = 31;
+value.f39 = 39;
+
+return (int)(value.f00 + value.f31 + value.f39);
