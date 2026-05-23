@@ -3593,7 +3593,8 @@ uint32_t find_primary_content_start(const uint8_t *html) {
     while (html[pos] != 0) {
         if (html[pos] == 60) {
             if (zb_is_closing_tag(html, pos) == 0) {
-                if ((zb_tag_name_is(html, pos, "div") ||
+                if ((zb_tag_name_is(html, pos, "body") ||
+                     zb_tag_name_is(html, pos, "div") ||
                      zb_tag_name_is(html, pos, "main") ||
                      zb_tag_name_is(html, pos, "article") ||
                      zb_tag_name_is(html, pos, "section")) &&
