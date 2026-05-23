@@ -424,6 +424,10 @@ static int netsurf_port_primary_attr_is_content_region(const dom_string *value) 
            netsurf_port_dom_string_contains_ci(value, "story-content");
 }
 
+static int netsurf_port_primary_attr_is_main_region(const dom_string *value) {
+    return netsurf_port_dom_string_has_token_ci(value, "main");
+}
+
 static int netsurf_port_primary_attr_is_article_region(const dom_string *value) {
     return netsurf_port_dom_string_contains_ci(value, "article") ||
            netsurf_port_dom_string_has_token_ci(value, "post") ||
@@ -516,6 +520,10 @@ static uint32_t netsurf_port_element_primary_score(dom_node *node, const dom_str
     }
     if (netsurf_port_dom_string_contains_ci(klass, "mw-body-content")) {
         score = netsurf_port_u32_max(score, 130u);
+    }
+    if (netsurf_port_primary_attr_is_main_region(id) ||
+        netsurf_port_primary_attr_is_main_region(klass)) {
+        score = netsurf_port_u32_max(score, 125u);
     }
     if (netsurf_port_primary_attr_is_article_region(id) ||
         netsurf_port_primary_attr_is_article_region(klass)) {
@@ -1001,7 +1009,9 @@ static int netsurf_port_primary_candidate(dom_node *node, const dom_string *name
     }
     id = netsurf_port_element_attr(node, "id");
     klass = netsurf_port_element_attr(node, "class");
-    match = netsurf_port_primary_attr_is_content_region(id) ||
+    match = netsurf_port_primary_attr_is_main_region(id) ||
+            netsurf_port_primary_attr_is_main_region(klass) ||
+            netsurf_port_primary_attr_is_content_region(id) ||
             netsurf_port_primary_attr_is_content_region(klass) ||
             netsurf_port_primary_attr_is_article_region(id) ||
             netsurf_port_primary_attr_is_article_region(klass);
@@ -1422,6 +1432,11 @@ uint32_t netsurf_port_render_smoke(void) {
         "<div class=\"site-header\">Utility header</div>"
         "<section class=\"article__content\"><p>Article wrapper content with enough readable text to become the primary reading region.</p></section>"
         "</body></html>";
+    static const char main_id_html[] =
+        "<!doctype html><html><body>"
+        "<div class=\"site-header\">Utility header</div>"
+        "<div id=\"main\"><p>Main wrapper content with enough readable text to become the primary reading region.</p></div>"
+        "</body></html>";
     static const char body_html[] =
         "<!doctype html><html><body>"
         "<p>Plain document body content with enough readable text to become the primary fallback region.</p>"
@@ -1432,6 +1447,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint8_t schema_main_out[768];
     uint8_t story_out[768];
     uint8_t article_content_out[768];
+    uint8_t main_id_out[768];
     uint8_t body_out[384];
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
@@ -1458,6 +1474,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t schema_main_body_pos;
     uint32_t story_body_pos;
     uint32_t article_content_pos;
+    uint32_t main_id_pos;
     uint32_t body_pos;
     uint32_t required_status;
     int written;
@@ -1466,6 +1483,7 @@ uint32_t netsurf_port_render_smoke(void) {
     int schema_main_written;
     int story_written;
     int article_content_written;
+    int main_id_written;
     int body_written;
 
     written = netsurf_port_rewrite_render_html((const uint8_t *)html, sizeof(html) - 1u, out, sizeof(out));
@@ -1765,6 +1783,28 @@ uint32_t netsurf_port_render_smoke(void) {
     flags = 0;
     if (article_content_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(article_content_out, article_content_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
+        (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
+        return 0u;
+    }
+
+    main_id_written = netsurf_port_rewrite_render_html((const uint8_t *)main_id_html,
+                                                       sizeof(main_id_html) - 1u,
+                                                       main_id_out,
+                                                       sizeof(main_id_out));
+    if (main_id_written <= 0) {
+        return 0u;
+    }
+    if ((netsurf_port_last_dom_status & required_status) != required_status) {
+        return 0u;
+    }
+
+    main_id_pos = netsurf_port_find_tag_pos_from_fragment(main_id_out, "id=\"main\" data-zbrowser-primary=\"1\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (main_id_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(main_id_out, main_id_pos, &display, &role, &flags) == 0 ||
         role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
         (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
         return 0u;
