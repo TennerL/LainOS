@@ -7,8 +7,8 @@ Date: 2026-05-23
 - Branch: `zbrowser-netsurf-port`
 - Automation now bootstraps NetSurf submodules and generated parser files before the browser build gate.
 - `scripts/agent-browser-check.sh` passes `build/kernel.elf`, `zcc-smoke`, and `lainfs-smoke`.
-- Full image/QEMU verification is still skipped because `mkfs.fat` and `sgdisk` are missing from PATH.
-- Next step: install `dosfstools` and `gdisk` so the same gate can run full image/QEMU checks.
+- Full image/QEMU verification needed PATH normalization because OpenClaw/Codex did not include `/usr/sbin`.
+- After PATH normalization, `scripts/agent-browser-check.sh` also builds `boot.iso`, MBR disk image, and GPT disk image with `mkfs.fat`, `sgdisk`, `mtools`, and `xorriso`.
 
 ## Previous Agenda
 

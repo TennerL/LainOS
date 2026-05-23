@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+
 scripts/bootstrap-browser-deps.sh
 make build/kernel.elf zcc-smoke lainfs-smoke
 
