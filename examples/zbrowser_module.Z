@@ -3583,11 +3583,13 @@ uint32_t find_primary_content_start(const uint8_t *html) {
     uint32_t main_pos;
     uint32_t article_pos;
     uint32_t body_pos;
+    uint32_t schema_pos;
 
     pos = 0;
     main_pos = 0;
     article_pos = 0;
     body_pos = 0;
+    schema_pos = 0;
     while (html[pos] != 0) {
         if (html[pos] == 60) {
             if (zb_is_closing_tag(html, pos) == 0) {
@@ -3622,6 +3624,12 @@ uint32_t find_primary_content_start(const uint8_t *html) {
                      tag_class_contains(html, pos, "entry-content") != 0)) {
                     article_pos = pos;
                 }
+                if (schema_pos == 0 &&
+                    (zb_attr_value(html, pos, "itemprop", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 &&
+                     (text_contains_ci(zbrowser_attr, "articleBody") != 0 ||
+                      text_contains_ci(zbrowser_attr, "mainContentOfPage") != 0))) {
+                    schema_pos = pos;
+                }
                 if (body_pos == 0 && zb_tag_name_is(html, pos, "body") != 0) {
                     body_pos = pos;
                 }
@@ -3636,6 +3644,9 @@ uint32_t find_primary_content_start(const uint8_t *html) {
     }
     if (article_pos != 0) {
         return article_pos;
+    }
+    if (schema_pos != 0) {
+        return schema_pos;
     }
     if (body_pos != 0) {
         return body_pos;
