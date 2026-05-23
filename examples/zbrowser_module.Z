@@ -3094,6 +3094,38 @@ int netsurf_tag_has_flags(const uint8_t *html, uint32_t pos, uint32_t wanted_fla
     return 0;
 }
 
+int tag_is_native_heading(const uint8_t *html, uint32_t pos) {
+    if (zb_tag_name_is(html, pos, "h1") ||
+        zb_tag_name_is(html, pos, "h2") ||
+        zb_tag_name_is(html, pos, "h3") ||
+        zb_tag_name_is(html, pos, "h4") ||
+        zb_tag_name_is(html, pos, "h5") ||
+        zb_tag_name_is(html, pos, "h6")) {
+        return 1;
+    }
+    return 0;
+}
+
+int tag_has_heading_role(const uint8_t *html, uint32_t pos) {
+    if (netsurf_tag_role_is(html, pos, NETSURF_PORT_HINT_ROLE_HEADING) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+int tag_is_prominent_heading(const uint8_t *html, uint32_t pos) {
+    if (zb_tag_name_is(html, pos, "h1") ||
+        zb_tag_name_is(html, pos, "h2") ||
+        zb_tag_name_is(html, pos, "h3")) {
+        return 1;
+    }
+    if (tag_is_native_heading(html, pos) == 0 &&
+        tag_has_heading_role(html, pos) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
 int tag_is_site_chrome(const uint8_t *html, uint32_t pos) {
     if (netsurf_tag_role_is(html, pos, NETSURF_PORT_HINT_ROLE_CHROME) != 0) {
         return 1;
@@ -3210,6 +3242,17 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xf8f9fa;
         activate_background_band();
+        return;
+    }
+    if (tag_is_native_heading(html, pos) == 0 &&
+        tag_has_heading_role(html, pos) != 0) {
+        zbrowser_text_fg = 0x000000;
+        if (zbrowser_font_scale < 2) {
+            zbrowser_font_scale = 2;
+        }
+        if (zbrowser_line_stride < zbrowser_font_scale) {
+            zbrowser_line_stride = zbrowser_font_scale;
+        }
         return;
     }
     if (zb_tag_name_is(html, pos, "th")) {
@@ -6948,12 +6991,8 @@ int tag_affects_text_style(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "dd") ||
         zb_tag_name_is(html, pos, "figcaption") ||
         zb_tag_name_is(html, pos, "caption") ||
-        zb_tag_name_is(html, pos, "h1") ||
-        zb_tag_name_is(html, pos, "h2") ||
-        zb_tag_name_is(html, pos, "h3") ||
-        zb_tag_name_is(html, pos, "h4") ||
-        zb_tag_name_is(html, pos, "h5") ||
-        zb_tag_name_is(html, pos, "h6")) {
+        tag_is_native_heading(html, pos) != 0 ||
+        tag_has_heading_role(html, pos) != 0) {
         return 1;
     }
     if (computed_style_affects_text_scope(html, pos) != 0) {
@@ -6998,12 +7037,8 @@ int tag_is_block_flow(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "figure") ||
         zb_tag_name_is(html, pos, "footer") ||
         zb_tag_name_is(html, pos, "form") ||
-        zb_tag_name_is(html, pos, "h1") ||
-        zb_tag_name_is(html, pos, "h2") ||
-        zb_tag_name_is(html, pos, "h3") ||
-        zb_tag_name_is(html, pos, "h4") ||
-        zb_tag_name_is(html, pos, "h5") ||
-        zb_tag_name_is(html, pos, "h6") ||
+        tag_is_native_heading(html, pos) != 0 ||
+        tag_has_heading_role(html, pos) != 0 ||
         zb_tag_name_is(html, pos, "header") ||
         zb_tag_name_is(html, pos, "hr") ||
         zb_tag_name_is(html, pos, "li") ||
@@ -7189,12 +7224,8 @@ int dom_new_tag_closes_p(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "figure") ||
         zb_tag_name_is(html, pos, "footer") ||
         zb_tag_name_is(html, pos, "form") ||
-        zb_tag_name_is(html, pos, "h1") ||
-        zb_tag_name_is(html, pos, "h2") ||
-        zb_tag_name_is(html, pos, "h3") ||
-        zb_tag_name_is(html, pos, "h4") ||
-        zb_tag_name_is(html, pos, "h5") ||
-        zb_tag_name_is(html, pos, "h6") ||
+        tag_is_native_heading(html, pos) != 0 ||
+        tag_has_heading_role(html, pos) != 0 ||
         zb_tag_name_is(html, pos, "header") ||
         zb_tag_name_is(html, pos, "hr") ||
         zb_tag_name_is(html, pos, "main") ||
@@ -7692,9 +7723,7 @@ void render_html(const uint8_t *html) {
                     flush_line();
                     emit_text("  - ");
                 }
-            } else if (zb_tag_name_is(html, pos, "h1") ||
-                       zb_tag_name_is(html, pos, "h2") ||
-                       zb_tag_name_is(html, pos, "h3")) {
+            } else if (tag_is_prominent_heading(html, pos) != 0) {
                 blank_line();
                 if (!zb_is_closing_tag(html, pos)) {
                     zbrowser_text_fg = 0x000000;

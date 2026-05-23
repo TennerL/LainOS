@@ -726,6 +726,9 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
     if (scan_attrs != 0 && netsurf_port_element_role_is(node, "main")) {
         return NETSURF_PORT_HINT_ROLE_PRIMARY;
     }
+    if (scan_attrs != 0 && netsurf_port_element_role_is(node, "heading")) {
+        return NETSURF_PORT_HINT_ROLE_HEADING;
+    }
     if (scan_attrs != 0 && netsurf_port_element_role_is_chrome(node)) {
         return NETSURF_PORT_HINT_ROLE_CHROME;
     }
@@ -1321,6 +1324,7 @@ uint32_t netsurf_port_render_smoke(void) {
         "<script>console.log('skip');</script></head>"
         "<body><search><form><input type=\"search\" name=\"site\" value=\"docs\"></form></search>"
         "<div role=\"navigation\" class=\"toc\">chrome</div>"
+        "<span role=\"heading\" aria-level=\"2\">Adapter Heading</span>"
         "<span class=\"sr-only\">assistive only</span>"
         "<div role=\"main\"><form><fieldset><legend>Search</legend>"
         "<input type=\"hidden\" name=\"source\" value=\"smoke\">"
@@ -1335,6 +1339,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t main_pos;
     uint32_t nav_pos;
     uint32_t search_pos;
+    uint32_t heading_pos;
     uint32_t sr_only_pos;
     uint32_t hidden_input_pos;
     uint32_t catlinks_pos;
@@ -1392,6 +1397,16 @@ uint32_t netsurf_port_render_smoke(void) {
         netsurf_port_style_hint_for_tag(out, search_pos, &display, &role, &flags) == 0 ||
         display != NETSURF_PORT_HINT_DISPLAY_BLOCK ||
         role != NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
+    heading_pos = netsurf_port_find_tag_pos_from_fragment(out, "role=\"heading\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (heading_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, heading_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_HEADING) {
         return 0u;
     }
 
