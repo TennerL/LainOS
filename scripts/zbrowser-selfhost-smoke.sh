@@ -45,6 +45,26 @@ smoke_img="build/zbrowser-selfhost.data.img"
 smoke_vars="build/OVMF_VARS.zbrowser-selfhost.fd"
 serial_log="build/zbrowser-selfhost.serial.log"
 seed_root="build/zbrowser-selfhost.seed"
+allow_tcg="${ZBROWSER_SELFHOST_ALLOW_TCG:-0}"
+qemu_runtime="tcg"
+qemu_accel_args=()
+default_memory="256M"
+default_smp="1"
+
+if qemu-system-x86_64 -accel help 2>/dev/null | grep -qx 'kvm' &&
+  [ -r /dev/kvm ] &&
+  [ -w /dev/kvm ]; then
+  qemu_runtime="kvm"
+  qemu_accel_args=(-enable-kvm -cpu host)
+  default_memory="2048M"
+  default_smp="4"
+elif [ "$allow_tcg" != "1" ]; then
+  printf 'Skipping zbrowser self-host smoke; KVM is unavailable for uid=%s gid=%s (set ZBROWSER_SELFHOST_ALLOW_TCG=1 to force slow TCG).\n' "$(id -u)" "$(id -g)" >&2
+  exit 0
+fi
+
+qemu_memory="${ZBROWSER_SELFHOST_QEMU_MEMORY:-$default_memory}"
+qemu_smp="${ZBROWSER_SELFHOST_QEMU_SMP:-$default_smp}"
 
 make build/tools/lainfs_check_host build/tools/lainfs_seed build/esp.img reseed-data
 cp build/data.img "$smoke_img"
@@ -66,9 +86,14 @@ EOF
 build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kernel examples "$seed_root/autoexec" >/dev/null
 : >"$serial_log"
 
-qemu_status=0
-if ! timeout "${timeout_seconds}s" qemu-system-x86_64 \
-  -m 256M \
+printf 'zbrowser self-host smoke: runtime=%s smp=%s mem=%s timeout=%ss\n' \
+  "$qemu_runtime" "$qemu_smp" "$qemu_memory" "$timeout_seconds"
+
+set +e
+timeout "${timeout_seconds}s" qemu-system-x86_64 \
+  "${qemu_accel_args[@]}" \
+  -smp "$qemu_smp" \
+  -m "$qemu_memory" \
   -drive if=pflash,format=raw,readonly=on,file="$ovmf_code" \
   -drive if=pflash,format=raw,file="$smoke_vars" \
   -drive format=raw,file=build/esp.img,if=ide,index=0 \
@@ -76,9 +101,8 @@ if ! timeout "${timeout_seconds}s" qemu-system-x86_64 \
   -display none \
   -serial "file:$serial_log" \
   -monitor none
-then
-  qemu_status=$?
-fi
+qemu_status=$?
+set -e
 
 if [ "$qemu_status" -ne 0 ] && [ "$qemu_status" -ne 124 ]; then
   printf 'zbrowser self-host smoke: QEMU exited with status %s\n' "$qemu_status" >&2
