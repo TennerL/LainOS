@@ -2720,18 +2720,133 @@ static int web_css_void_tag(const uint8_t *html, uint32_t pos) {
     return web_tag_self_closes(html, pos) ||
            web_tag_name_is(html, pos, "area") ||
            web_tag_name_is(html, pos, "base") ||
+           web_tag_name_is(html, pos, "basefont") ||
+           web_tag_name_is(html, pos, "bgsound") ||
            web_tag_name_is(html, pos, "br") ||
            web_tag_name_is(html, pos, "col") ||
+           web_tag_name_is(html, pos, "command") ||
            web_tag_name_is(html, pos, "embed") ||
+           web_tag_name_is(html, pos, "frame") ||
            web_tag_name_is(html, pos, "hr") ||
            web_tag_name_is(html, pos, "img") ||
            web_tag_name_is(html, pos, "input") ||
+           web_tag_name_is(html, pos, "keygen") ||
            web_tag_name_is(html, pos, "link") ||
+           web_tag_name_is(html, pos, "menuitem") ||
            web_tag_name_is(html, pos, "meta") ||
            web_tag_name_is(html, pos, "param") ||
            web_tag_name_is(html, pos, "source") ||
            web_tag_name_is(html, pos, "track") ||
            web_tag_name_is(html, pos, "wbr");
+}
+
+static int web_css_stack_top_is(const uint8_t *html, const int32_t *stack, uint32_t depth, const char *name) {
+    if (depth == 0u || stack[depth - 1u] < 0) {
+        return 0;
+    }
+    return web_tag_name_is(html, web_css_nodes[(uint32_t)stack[depth - 1u]].tag_pos, name);
+}
+
+static int web_css_stack_top_is_cell(const uint8_t *html, const int32_t *stack, uint32_t depth) {
+    return web_css_stack_top_is(html, stack, depth, "td") ||
+           web_css_stack_top_is(html, stack, depth, "th");
+}
+
+static int web_css_stack_top_is_dtdd(const uint8_t *html, const int32_t *stack, uint32_t depth) {
+    return web_css_stack_top_is(html, stack, depth, "dt") ||
+           web_css_stack_top_is(html, stack, depth, "dd");
+}
+
+static int web_css_new_tag_closes_p(const uint8_t *html, uint32_t pos) {
+    return web_tag_name_is(html, pos, "address") ||
+           web_tag_name_is(html, pos, "article") ||
+           web_tag_name_is(html, pos, "aside") ||
+           web_tag_name_is(html, pos, "blockquote") ||
+           web_tag_name_is(html, pos, "details") ||
+           web_tag_name_is(html, pos, "div") ||
+           web_tag_name_is(html, pos, "dl") ||
+           web_tag_name_is(html, pos, "fieldset") ||
+           web_tag_name_is(html, pos, "figcaption") ||
+           web_tag_name_is(html, pos, "figure") ||
+           web_tag_name_is(html, pos, "footer") ||
+           web_tag_name_is(html, pos, "form") ||
+           web_tag_name_is(html, pos, "h1") ||
+           web_tag_name_is(html, pos, "h2") ||
+           web_tag_name_is(html, pos, "h3") ||
+           web_tag_name_is(html, pos, "h4") ||
+           web_tag_name_is(html, pos, "h5") ||
+           web_tag_name_is(html, pos, "h6") ||
+           web_tag_name_is(html, pos, "header") ||
+           web_tag_name_is(html, pos, "hr") ||
+           web_tag_name_is(html, pos, "main") ||
+           web_tag_name_is(html, pos, "nav") ||
+           web_tag_name_is(html, pos, "ol") ||
+           web_tag_name_is(html, pos, "p") ||
+           web_tag_name_is(html, pos, "pre") ||
+           web_tag_name_is(html, pos, "section") ||
+           web_tag_name_is(html, pos, "table") ||
+           web_tag_name_is(html, pos, "ul");
+}
+
+static void web_css_apply_implicit_closes(const uint8_t *html, uint32_t pos, const int32_t *stack, uint32_t *depth) {
+    int changed;
+
+    if (depth == NULL) {
+        return;
+    }
+    do {
+        changed = 0;
+        if (*depth == 0u) {
+            return;
+        }
+        if (web_css_stack_top_is(html, stack, *depth, "p") && web_css_new_tag_closes_p(html, pos)) {
+            --*depth;
+            changed = 1;
+        } else if (web_css_stack_top_is(html, stack, *depth, "li") && web_tag_name_is(html, pos, "li")) {
+            --*depth;
+            changed = 1;
+        } else if (web_css_stack_top_is_dtdd(html, stack, *depth) &&
+                   (web_tag_name_is(html, pos, "dt") || web_tag_name_is(html, pos, "dd"))) {
+            --*depth;
+            changed = 1;
+        } else if (web_css_stack_top_is(html, stack, *depth, "option") &&
+                   (web_tag_name_is(html, pos, "option") || web_tag_name_is(html, pos, "optgroup"))) {
+            --*depth;
+            changed = 1;
+        } else if (web_css_stack_top_is_cell(html, stack, *depth) &&
+                   (web_tag_name_is(html, pos, "td") ||
+                    web_tag_name_is(html, pos, "th") ||
+                    web_tag_name_is(html, pos, "tr") ||
+                    web_tag_name_is(html, pos, "tbody") ||
+                    web_tag_name_is(html, pos, "thead") ||
+                    web_tag_name_is(html, pos, "tfoot"))) {
+            --*depth;
+            changed = 1;
+        } else if (web_css_stack_top_is(html, stack, *depth, "tr") &&
+                   (web_tag_name_is(html, pos, "tr") ||
+                    web_tag_name_is(html, pos, "tbody") ||
+                    web_tag_name_is(html, pos, "thead") ||
+                    web_tag_name_is(html, pos, "tfoot"))) {
+            --*depth;
+            changed = 1;
+        }
+    } while (changed != 0);
+}
+
+static void web_css_pop_to_matching_close(const uint8_t *html, uint32_t close_pos, const int32_t *stack, uint32_t *depth) {
+    uint32_t close_start = 0;
+    uint32_t close_end = 0;
+
+    if (depth == NULL || *depth == 0u || !web_tag_name_range(html, close_pos, &close_start, &close_end)) {
+        return;
+    }
+    for (uint32_t i = *depth; i > 0u; --i) {
+        uint32_t open_pos = web_css_nodes[(uint32_t)stack[i - 1u]].tag_pos;
+        if (web_tag_name_matches_range(html, open_pos, html, close_start, close_end)) {
+            *depth = i - 1u;
+            return;
+        }
+    }
 }
 
 static void web_css_release_nodes(void) {
@@ -2946,15 +3061,14 @@ static void web_css_build_nodes(const uint8_t *html) {
             continue;
         }
         if (web_is_closing_tag(html, pos)) {
-            if (depth > 0) {
-                --depth;
-            }
+            web_css_pop_to_matching_close(html, pos, stack, &depth);
             pos = web_skip_tag(html, pos);
             continue;
         }
         uint32_t name_start = 0;
         uint32_t name_end = 0;
         if (web_tag_name_range(html, pos, &name_start, &name_end)) {
+            web_css_apply_implicit_closes(html, pos, stack, &depth);
             int32_t parent = depth > 0 ? stack[depth - 1u] : -1;
             int32_t index = web_css_add_node(html, pos, parent, last_child[depth]);
             int raw_text = web_tag_name_is(html, pos, "style") || web_tag_name_is(html, pos, "script");

@@ -34,6 +34,12 @@ int image_decode_to_screen_scaled(const uint8_t *data,
                                   uint32_t origin_y,
                                   uint32_t max_width,
                                   uint32_t max_height);
+int image_decode_scaled_to_packed(const uint8_t *data,
+                                  uint32_t size,
+                                  uint32_t target_width,
+                                  uint32_t target_height,
+                                  uint32_t bg_rgb_color,
+                                  uint32_t *pixels);
 int image_decode_to_screen_tiled(const uint8_t *data,
                                  uint32_t size,
                                  uint32_t origin_x,

@@ -395,6 +395,82 @@ int image_decode_to_screen_scaled(const uint8_t *data,
     return rc;
 }
 
+int image_decode_scaled_to_packed(const uint8_t *data,
+                                  uint32_t size,
+                                  uint32_t target_width,
+                                  uint32_t target_height,
+                                  uint32_t bg_rgb_color,
+                                  uint32_t *pixels) {
+    image_info_t info;
+    image_rgba_frame_t decoded;
+    uint32_t x;
+    uint32_t y;
+    uint32_t src_x;
+    uint32_t src_y;
+    uint32_t index;
+    uint32_t color;
+    uint32_t alpha;
+    int width = 0;
+    int height = 0;
+    int components = 0;
+    int rc;
+
+    if (target_width == 0u || target_height == 0u || pixels == 0) {
+        return IMAGE_ERR_OUTPUT;
+    }
+    if (target_width > 0xffffffffu / target_height ||
+        target_width > IMAGE_SCREEN_MAX_TARGET_PIXELS / target_height) {
+        return IMAGE_ERR_OUTPUT;
+    }
+
+    rc = image_probe(data, size, &info);
+    if (rc != IMAGE_OK) {
+        return rc;
+    }
+    if (info.width > IMAGE_SCREEN_MAX_DECODE_PIXELS / info.height) {
+        return IMAGE_ERR_UNSUPPORTED;
+    }
+
+    rc = image_load_rgba_frame(data, size, &decoded);
+    if (rc != IMAGE_OK) {
+        return rc;
+    }
+    width = decoded.width;
+    height = decoded.height;
+    components = decoded.components;
+
+    rc = image_fill_info(width, height, components, &info);
+    if (rc == IMAGE_OK && info.width > IMAGE_SCREEN_MAX_DECODE_PIXELS / info.height) {
+        rc = IMAGE_ERR_UNSUPPORTED;
+    }
+    if (rc == IMAGE_OK) {
+        for (y = 0; y < target_height; ++y) {
+            src_y = (uint32_t)(((uint64_t)y * info.height) / target_height);
+            if (src_y >= info.height) {
+                src_y = info.height - 1u;
+            }
+            for (x = 0; x < target_width; ++x) {
+                src_x = (uint32_t)(((uint64_t)x * info.width) / target_width);
+                if (src_x >= info.width) {
+                    src_x = info.width - 1u;
+                }
+                index = (src_y * info.width + src_x) * 4u;
+                color = ((uint32_t)decoded.pixels[index] << 16) |
+                        ((uint32_t)decoded.pixels[index + 1u] << 8) |
+                        (uint32_t)decoded.pixels[index + 2u];
+                alpha = (uint32_t)decoded.pixels[index + 3u];
+                if (alpha != 255u) {
+                    color = image_blend_rgb(bg_rgb_color, color, alpha);
+                }
+                pixels[(uint64_t)y * target_width + x] = graphics_pack_color(color);
+            }
+        }
+    }
+
+    image_free_rgba_frame(&decoded);
+    return rc;
+}
+
 int image_decode_to_screen_tiled(const uint8_t *data,
                                  uint32_t size,
                                  uint32_t origin_x,

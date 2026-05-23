@@ -37,6 +37,10 @@
 #define ZBROWSER_LINE_CACHE_COLS 160
 #define ZBROWSER_LINE_CACHE_BYTES 327680
 #define ZBROWSER_LINE_CACHE_FG_BYTES 1310720
+#define ZBROWSER_DECODED_IMAGE_BYTES 4194304
+#define ZBROWSER_DECODED_IMAGE_PIXELS 1048576
+#define ZBROWSER_DECODED_IMAGE_SLOT_COUNT 16
+#define ZBROWSER_IMAGE_RECORD_COUNT 128
 #define ZBROWSER_MAX_CSS_RULES 1024
 #define ZBROWSER_CSS_SELECTOR_CAPACITY 64
 #define ZBROWSER_CSS_DECL_CAPACITY 192
@@ -142,12 +146,53 @@
 #define WEB_STYLE_BG_REPEAT_Y 2
 #define WEB_STYLE_BG_NO_REPEAT 3
 #define ZBROWSER_STYLE_STACK_MAX 64
+#define ZBROWSER_DOM_TAG_P 1
+#define ZBROWSER_DOM_TAG_LI 2
+#define ZBROWSER_DOM_TAG_DT 3
+#define ZBROWSER_DOM_TAG_DD 4
+#define ZBROWSER_DOM_TAG_TR 5
+#define ZBROWSER_DOM_TAG_TD 6
+#define ZBROWSER_DOM_TAG_TH 7
+#define ZBROWSER_DOM_TAG_TABLE 8
+#define ZBROWSER_DOM_TAG_UL 9
+#define ZBROWSER_DOM_TAG_OL 10
+#define ZBROWSER_DOM_TAG_DIV 11
+#define ZBROWSER_DOM_TAG_SECTION 12
+#define ZBROWSER_DOM_TAG_ARTICLE 13
+#define ZBROWSER_DOM_TAG_MAIN 14
+#define ZBROWSER_DOM_TAG_NAV 15
+#define ZBROWSER_DOM_TAG_HEADER 16
+#define ZBROWSER_DOM_TAG_FOOTER 17
+#define ZBROWSER_DOM_TAG_ASIDE 18
+#define ZBROWSER_DOM_TAG_FORM 19
+#define ZBROWSER_DOM_TAG_A 20
+#define ZBROWSER_DOM_TAG_SPAN 21
+#define ZBROWSER_DOM_TAG_H1 22
+#define ZBROWSER_DOM_TAG_H2 23
+#define ZBROWSER_DOM_TAG_H3 24
+#define ZBROWSER_DOM_TAG_H4 25
+#define ZBROWSER_DOM_TAG_H5 26
+#define ZBROWSER_DOM_TAG_H6 27
+#define ZBROWSER_DOM_TAG_BLOCKQUOTE 28
+#define ZBROWSER_DOM_TAG_PRE 29
+#define ZBROWSER_DOM_TAG_B 30
+#define ZBROWSER_DOM_TAG_STRONG 31
+#define ZBROWSER_DOM_TAG_I 32
+#define ZBROWSER_DOM_TAG_EM 33
+#define ZBROWSER_DOM_TAG_SMALL 34
+#define ZBROWSER_DOM_TAG_MARK 35
+#define ZBROWSER_DOM_TAG_CODE 36
+#define ZBROWSER_DOM_TAG_CENTER 37
+#define ZBROWSER_DOM_TAG_FONT 38
+#define ZBROWSER_DOM_TAG_FIGCAPTION 39
+#define ZBROWSER_DOM_TAG_CAPTION 40
 
 #include "zbrowser_html_api.Z"
 
 extern uint32_t gfx_width(void);
 extern uint32_t gfx_height(void);
 extern uint32_t gfx_viewport_active(void);
+extern int gfx_draw_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint8_t *pixels, uint32_t pixel_count);
 extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg);
@@ -265,6 +310,7 @@ extern int web_style_for_cached_rules(const uint8_t *html,
 
 extern int image_probe(const uint8_t *data, uint32_t size, struct ImageInfo *out_image);
 extern int image_decode_to_screen_scaled(const uint8_t *data, uint32_t size, uint32_t origin_x, uint32_t origin_y, uint32_t max_width, uint32_t max_height);
+extern int image_decode_scaled_to_packed(const uint8_t *data, uint32_t size, uint32_t target_width, uint32_t target_height, uint32_t bg_rgb_color, uint8_t *pixels);
 extern int image_decode_to_screen_tiled(const uint8_t *data, uint32_t size, uint32_t origin_x, uint32_t origin_y, uint32_t width, uint32_t height);
 global uint32_t zbrowser_enabled;
 global uint32_t zbrowser_loaded;
@@ -300,6 +346,7 @@ global uint64_t zbrowser_css_decl_addr;
 global uint64_t zbrowser_doc_buffer_addr;
 global uint64_t zbrowser_css_buffer_addr;
 global uint64_t zbrowser_image_buffer_addr;
+global uint64_t zbrowser_decoded_image_buffer_addr;
 global uint64_t zbrowser_links_addr;
 global uint64_t zbrowser_line_cache_addr;
 global uint64_t zbrowser_line_cache_fg_addr;
@@ -340,6 +387,22 @@ global uint8_t zbrowser_form_action[256];
 global uint8_t zbrowser_cached_image_urls[3584];
 global int zbrowser_cached_image_sizes[14];
 global uint32_t zbrowser_cached_image_valids[14];
+global uint32_t zbrowser_decoded_image_valids[16];
+global uint32_t zbrowser_decoded_image_raw_slots[16];
+global uint32_t zbrowser_decoded_image_widths[16];
+global uint32_t zbrowser_decoded_image_heights[16];
+global uint32_t zbrowser_decoded_image_bgs[16];
+global uint32_t zbrowser_decoded_image_offsets[16];
+global uint32_t zbrowser_decoded_image_pixel_counts[16];
+global uint32_t zbrowser_decoded_image_next_pixel;
+global uint32_t zbrowser_image_record_lines[128];
+global uint32_t zbrowser_image_record_x[128];
+global uint32_t zbrowser_image_record_w[128];
+global uint32_t zbrowser_image_record_h[128];
+global uint32_t zbrowser_image_record_raw_slots[128];
+global uint32_t zbrowser_image_record_bgs[128];
+global uint32_t zbrowser_image_record_links[128];
+global uint32_t zbrowser_image_record_count;
 global uint8_t zbrowser_input_names[768];
 global uint8_t zbrowser_input_values[1536];
 global uint32_t zbrowser_input_lines[16];
@@ -515,6 +578,8 @@ global uint32_t zbrowser_style_stack_line_stride[64];
 global uint32_t zbrowser_style_stack_transform[64];
 global uint32_t zbrowser_style_stack_white_space[64];
 global uint32_t zbrowser_style_stack_depth;
+global uint32_t zbrowser_dom_stack_tags[64];
+global uint32_t zbrowser_dom_stack_depth;
 global uint32_t zbrowser_column_mode;
 global uint32_t zbrowser_column_start_line;
 global uint32_t zbrowser_content_indent_cols;
@@ -625,6 +690,209 @@ uint8_t *image_url_slot(uint32_t index) {
 
 uint8_t *image_buffer_slot(uint32_t index) {
     return (uint8_t *)zbrowser_image_buffer_addr + index * ZBROWSER_IMAGE_CAPACITY;
+}
+
+uint8_t *decoded_image_pixels(uint32_t slot) {
+    return (uint8_t *)zbrowser_decoded_image_buffer_addr + zbrowser_decoded_image_offsets[slot] * 4;
+}
+
+uint32_t decoded_image_pixel_count(uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0) {
+        return 0;
+    }
+    if (width > ZBROWSER_DECODED_IMAGE_PIXELS / height) {
+        return 0;
+    }
+    return width * height;
+}
+
+void clear_decoded_image_cache(void) {
+    uint32_t slot;
+
+    slot = 0;
+    while (slot < ZBROWSER_DECODED_IMAGE_SLOT_COUNT) {
+        zbrowser_decoded_image_valids[slot] = 0;
+        zbrowser_decoded_image_raw_slots[slot] = 9999;
+        zbrowser_decoded_image_widths[slot] = 0;
+        zbrowser_decoded_image_heights[slot] = 0;
+        zbrowser_decoded_image_bgs[slot] = 0;
+        zbrowser_decoded_image_offsets[slot] = 0;
+        zbrowser_decoded_image_pixel_counts[slot] = 0;
+        slot = slot + 1;
+    }
+    zbrowser_decoded_image_next_pixel = 0;
+}
+
+uint32_t find_decoded_image_slot(uint32_t raw_slot,
+                                 uint32_t width,
+                                 uint32_t height,
+                                 uint32_t bg) {
+    uint32_t slot;
+
+    slot = 0;
+    while (slot < ZBROWSER_DECODED_IMAGE_SLOT_COUNT) {
+        if (zbrowser_decoded_image_valids[slot] != 0 &&
+            zbrowser_decoded_image_raw_slots[slot] == raw_slot &&
+            zbrowser_decoded_image_widths[slot] == width &&
+            zbrowser_decoded_image_heights[slot] == height &&
+            zbrowser_decoded_image_bgs[slot] == bg) {
+            return slot;
+        }
+        slot = slot + 1;
+    }
+    return 9999;
+}
+
+uint32_t alloc_decoded_image_slot(uint32_t raw_slot,
+                                  uint32_t width,
+                                  uint32_t height,
+                                  uint32_t bg,
+                                  uint32_t pixels) {
+    uint32_t slot;
+
+    if (zbrowser_decoded_image_buffer_addr == 0 || pixels == 0 || pixels > ZBROWSER_DECODED_IMAGE_PIXELS) {
+        return 9999;
+    }
+    if (zbrowser_decoded_image_next_pixel + pixels > ZBROWSER_DECODED_IMAGE_PIXELS) {
+        clear_decoded_image_cache();
+    }
+    slot = 0;
+    while (slot < ZBROWSER_DECODED_IMAGE_SLOT_COUNT) {
+        if (zbrowser_decoded_image_valids[slot] == 0) {
+            zbrowser_decoded_image_valids[slot] = 1;
+            zbrowser_decoded_image_raw_slots[slot] = raw_slot;
+            zbrowser_decoded_image_widths[slot] = width;
+            zbrowser_decoded_image_heights[slot] = height;
+            zbrowser_decoded_image_bgs[slot] = bg;
+            zbrowser_decoded_image_offsets[slot] = zbrowser_decoded_image_next_pixel;
+            zbrowser_decoded_image_pixel_counts[slot] = pixels;
+            zbrowser_decoded_image_next_pixel = zbrowser_decoded_image_next_pixel + pixels;
+            return slot;
+        }
+        slot = slot + 1;
+    }
+
+    clear_decoded_image_cache();
+    zbrowser_decoded_image_valids[0] = 1;
+    zbrowser_decoded_image_raw_slots[0] = raw_slot;
+    zbrowser_decoded_image_widths[0] = width;
+    zbrowser_decoded_image_heights[0] = height;
+    zbrowser_decoded_image_bgs[0] = bg;
+    zbrowser_decoded_image_offsets[0] = 0;
+    zbrowser_decoded_image_pixel_counts[0] = pixels;
+    zbrowser_decoded_image_next_pixel = pixels;
+    return 0;
+}
+
+uint32_t ensure_decoded_image_slot(uint32_t raw_slot,
+                                   uint32_t width,
+                                   uint32_t height,
+                                   uint32_t bg) {
+    uint32_t slot;
+    uint32_t pixels;
+
+    slot = find_decoded_image_slot(raw_slot, width, height, bg);
+    if (slot != 9999) {
+        return slot;
+    }
+    if (raw_slot >= ZBROWSER_IMAGE_SLOT_COUNT ||
+        zbrowser_cached_image_valids[raw_slot] != 1 ||
+        zbrowser_cached_image_sizes[raw_slot] <= 0) {
+        return 9999;
+    }
+    pixels = decoded_image_pixel_count(width, height);
+    slot = alloc_decoded_image_slot(raw_slot, width, height, bg, pixels);
+    if (slot == 9999) {
+        return 9999;
+    }
+    zbrowser_image_draw_result = image_decode_scaled_to_packed(image_buffer_slot(raw_slot),
+                                                               (uint32_t)zbrowser_cached_image_sizes[raw_slot],
+                                                               width,
+                                                               height,
+                                                               bg,
+                                                               decoded_image_pixels(slot));
+    if (zbrowser_image_draw_result != 0) {
+        zbrowser_decoded_image_valids[slot] = 0;
+        return 9999;
+    }
+    return slot;
+}
+
+int draw_decoded_image_slot(uint32_t slot,
+                            uint32_t x,
+                            uint32_t y,
+                            uint32_t width,
+                            uint32_t height,
+                            uint32_t y_offset) {
+    uint8_t *pixels;
+    uint32_t pixel_count;
+
+    if (slot >= ZBROWSER_DECODED_IMAGE_SLOT_COUNT ||
+        zbrowser_decoded_image_valids[slot] == 0 ||
+        width == 0 ||
+        height == 0 ||
+        y_offset >= zbrowser_decoded_image_heights[slot]) {
+        return 0;
+    }
+    pixel_count = decoded_image_pixel_count(width, height);
+    if (pixel_count == 0) {
+        return 0;
+    }
+    pixels = decoded_image_pixels(slot) + y_offset * zbrowser_decoded_image_widths[slot] * 4;
+    if (gfx_draw_rect_packed(x, y, width, height, pixels, pixel_count) == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+void remember_image_line_cache(uint32_t start_line, uint32_t line_count) {
+    uint32_t line;
+    uint32_t end_line;
+
+    line = start_line;
+    end_line = start_line + line_count;
+    while (line < end_line && line < ZBROWSER_LINE_CACHE_LINES) {
+        remember_blank_line_cache(line);
+        line = line + 1;
+    }
+}
+
+void remember_rendered_image_record(uint32_t line,
+                                    uint32_t x,
+                                    uint32_t width,
+                                    uint32_t height,
+                                    uint32_t raw_slot,
+                                    uint32_t link_index) {
+    uint32_t index;
+
+    if (width == 0 || height == 0 || raw_slot >= ZBROWSER_IMAGE_SLOT_COUNT) {
+        return;
+    }
+    index = 0;
+    while (index < zbrowser_image_record_count) {
+        if (zbrowser_image_record_lines[index] == line &&
+            zbrowser_image_record_x[index] == x &&
+            zbrowser_image_record_w[index] == width &&
+            zbrowser_image_record_h[index] == height &&
+            zbrowser_image_record_raw_slots[index] == raw_slot &&
+            zbrowser_image_record_bgs[index] == zbrowser_text_bg) {
+            zbrowser_image_record_links[index] = link_index;
+            return;
+        }
+        index = index + 1;
+    }
+    if (zbrowser_image_record_count >= ZBROWSER_IMAGE_RECORD_COUNT) {
+        return;
+    }
+    index = zbrowser_image_record_count;
+    zbrowser_image_record_lines[index] = line;
+    zbrowser_image_record_x[index] = x;
+    zbrowser_image_record_w[index] = width;
+    zbrowser_image_record_h[index] = height;
+    zbrowser_image_record_raw_slots[index] = raw_slot;
+    zbrowser_image_record_bgs[index] = zbrowser_text_bg;
+    zbrowser_image_record_links[index] = link_index;
+    zbrowser_image_record_count = index + 1;
 }
 
 uint8_t *css_rule_selector_slot(uint32_t index) {
@@ -872,6 +1140,8 @@ void clear_image_cache(void) {
     uint32_t slot;
     uint8_t *slot_url;
 
+    clear_decoded_image_cache();
+    zbrowser_image_record_count = 0;
     zbrowser_image_fetch_result = 0;
     zbrowser_image_probe_result = 0;
     zbrowser_image_draw_result = 0;
@@ -3798,6 +4068,7 @@ int restore_render_checkpoint(uint32_t *pos) {
             zbrowser_white_space = zbrowser_render_checkpoint_white_space[index];
             zbrowser_list_depth = zbrowser_render_checkpoint_list_depth[index];
             zbrowser_style_stack_depth = 0;
+            zbrowser_dom_stack_depth = 0;
             zbrowser_table_depth = 0;
             zbrowser_table_row_active = 0;
             zbrowser_table_cell_open = 0;
@@ -5918,6 +6189,248 @@ int tag_is_block_flow(const uint8_t *html, uint32_t pos) {
     return 0;
 }
 
+uint32_t dom_tag_id(const uint8_t *html, uint32_t pos) {
+    if (zb_tag_name_is(html, pos, "p")) {
+        return ZBROWSER_DOM_TAG_P;
+    }
+    if (zb_tag_name_is(html, pos, "li")) {
+        return ZBROWSER_DOM_TAG_LI;
+    }
+    if (zb_tag_name_is(html, pos, "dt")) {
+        return ZBROWSER_DOM_TAG_DT;
+    }
+    if (zb_tag_name_is(html, pos, "dd")) {
+        return ZBROWSER_DOM_TAG_DD;
+    }
+    if (zb_tag_name_is(html, pos, "tr")) {
+        return ZBROWSER_DOM_TAG_TR;
+    }
+    if (zb_tag_name_is(html, pos, "td")) {
+        return ZBROWSER_DOM_TAG_TD;
+    }
+    if (zb_tag_name_is(html, pos, "th")) {
+        return ZBROWSER_DOM_TAG_TH;
+    }
+    if (zb_tag_name_is(html, pos, "table")) {
+        return ZBROWSER_DOM_TAG_TABLE;
+    }
+    if (zb_tag_name_is(html, pos, "ul")) {
+        return ZBROWSER_DOM_TAG_UL;
+    }
+    if (zb_tag_name_is(html, pos, "ol")) {
+        return ZBROWSER_DOM_TAG_OL;
+    }
+    if (zb_tag_name_is(html, pos, "div")) {
+        return ZBROWSER_DOM_TAG_DIV;
+    }
+    if (zb_tag_name_is(html, pos, "section")) {
+        return ZBROWSER_DOM_TAG_SECTION;
+    }
+    if (zb_tag_name_is(html, pos, "article")) {
+        return ZBROWSER_DOM_TAG_ARTICLE;
+    }
+    if (zb_tag_name_is(html, pos, "main")) {
+        return ZBROWSER_DOM_TAG_MAIN;
+    }
+    if (zb_tag_name_is(html, pos, "nav")) {
+        return ZBROWSER_DOM_TAG_NAV;
+    }
+    if (zb_tag_name_is(html, pos, "header")) {
+        return ZBROWSER_DOM_TAG_HEADER;
+    }
+    if (zb_tag_name_is(html, pos, "footer")) {
+        return ZBROWSER_DOM_TAG_FOOTER;
+    }
+    if (zb_tag_name_is(html, pos, "aside")) {
+        return ZBROWSER_DOM_TAG_ASIDE;
+    }
+    if (zb_tag_name_is(html, pos, "form")) {
+        return ZBROWSER_DOM_TAG_FORM;
+    }
+    if (zb_tag_name_is(html, pos, "a")) {
+        return ZBROWSER_DOM_TAG_A;
+    }
+    if (zb_tag_name_is(html, pos, "span")) {
+        return ZBROWSER_DOM_TAG_SPAN;
+    }
+    if (zb_tag_name_is(html, pos, "h1")) {
+        return ZBROWSER_DOM_TAG_H1;
+    }
+    if (zb_tag_name_is(html, pos, "h2")) {
+        return ZBROWSER_DOM_TAG_H2;
+    }
+    if (zb_tag_name_is(html, pos, "h3")) {
+        return ZBROWSER_DOM_TAG_H3;
+    }
+    if (zb_tag_name_is(html, pos, "h4")) {
+        return ZBROWSER_DOM_TAG_H4;
+    }
+    if (zb_tag_name_is(html, pos, "h5")) {
+        return ZBROWSER_DOM_TAG_H5;
+    }
+    if (zb_tag_name_is(html, pos, "h6")) {
+        return ZBROWSER_DOM_TAG_H6;
+    }
+    if (zb_tag_name_is(html, pos, "blockquote")) {
+        return ZBROWSER_DOM_TAG_BLOCKQUOTE;
+    }
+    if (zb_tag_name_is(html, pos, "pre")) {
+        return ZBROWSER_DOM_TAG_PRE;
+    }
+    if (zb_tag_name_is(html, pos, "b")) {
+        return ZBROWSER_DOM_TAG_B;
+    }
+    if (zb_tag_name_is(html, pos, "strong")) {
+        return ZBROWSER_DOM_TAG_STRONG;
+    }
+    if (zb_tag_name_is(html, pos, "i")) {
+        return ZBROWSER_DOM_TAG_I;
+    }
+    if (zb_tag_name_is(html, pos, "em")) {
+        return ZBROWSER_DOM_TAG_EM;
+    }
+    if (zb_tag_name_is(html, pos, "small")) {
+        return ZBROWSER_DOM_TAG_SMALL;
+    }
+    if (zb_tag_name_is(html, pos, "mark")) {
+        return ZBROWSER_DOM_TAG_MARK;
+    }
+    if (zb_tag_name_is(html, pos, "code")) {
+        return ZBROWSER_DOM_TAG_CODE;
+    }
+    if (zb_tag_name_is(html, pos, "center")) {
+        return ZBROWSER_DOM_TAG_CENTER;
+    }
+    if (zb_tag_name_is(html, pos, "font")) {
+        return ZBROWSER_DOM_TAG_FONT;
+    }
+    if (zb_tag_name_is(html, pos, "figcaption")) {
+        return ZBROWSER_DOM_TAG_FIGCAPTION;
+    }
+    if (zb_tag_name_is(html, pos, "caption")) {
+        return ZBROWSER_DOM_TAG_CAPTION;
+    }
+    return 0;
+}
+
+int dom_new_tag_closes_p(const uint8_t *html, uint32_t pos) {
+    if (zb_tag_name_is(html, pos, "address") ||
+        zb_tag_name_is(html, pos, "article") ||
+        zb_tag_name_is(html, pos, "aside") ||
+        zb_tag_name_is(html, pos, "blockquote") ||
+        zb_tag_name_is(html, pos, "details") ||
+        zb_tag_name_is(html, pos, "div") ||
+        zb_tag_name_is(html, pos, "dl") ||
+        zb_tag_name_is(html, pos, "fieldset") ||
+        zb_tag_name_is(html, pos, "figcaption") ||
+        zb_tag_name_is(html, pos, "figure") ||
+        zb_tag_name_is(html, pos, "footer") ||
+        zb_tag_name_is(html, pos, "form") ||
+        zb_tag_name_is(html, pos, "h1") ||
+        zb_tag_name_is(html, pos, "h2") ||
+        zb_tag_name_is(html, pos, "h3") ||
+        zb_tag_name_is(html, pos, "h4") ||
+        zb_tag_name_is(html, pos, "h5") ||
+        zb_tag_name_is(html, pos, "h6") ||
+        zb_tag_name_is(html, pos, "header") ||
+        zb_tag_name_is(html, pos, "hr") ||
+        zb_tag_name_is(html, pos, "main") ||
+        zb_tag_name_is(html, pos, "nav") ||
+        zb_tag_name_is(html, pos, "ol") ||
+        zb_tag_name_is(html, pos, "p") ||
+        zb_tag_name_is(html, pos, "pre") ||
+        zb_tag_name_is(html, pos, "section") ||
+        zb_tag_name_is(html, pos, "table") ||
+        zb_tag_name_is(html, pos, "ul")) {
+        return 1;
+    }
+    return 0;
+}
+
+int dom_open_closes_top(uint32_t top, uint32_t new_tag, const uint8_t *html, uint32_t pos) {
+    if (top == ZBROWSER_DOM_TAG_P && dom_new_tag_closes_p(html, pos) != 0) {
+        return 1;
+    }
+    if (top == ZBROWSER_DOM_TAG_LI && new_tag == ZBROWSER_DOM_TAG_LI) {
+        return 1;
+    }
+    if ((top == ZBROWSER_DOM_TAG_DT || top == ZBROWSER_DOM_TAG_DD) &&
+        (new_tag == ZBROWSER_DOM_TAG_DT || new_tag == ZBROWSER_DOM_TAG_DD)) {
+        return 1;
+    }
+    if ((top == ZBROWSER_DOM_TAG_TD || top == ZBROWSER_DOM_TAG_TH) &&
+        (new_tag == ZBROWSER_DOM_TAG_TD ||
+         new_tag == ZBROWSER_DOM_TAG_TH ||
+         new_tag == ZBROWSER_DOM_TAG_TR)) {
+        return 1;
+    }
+    if (top == ZBROWSER_DOM_TAG_TR && new_tag == ZBROWSER_DOM_TAG_TR) {
+        return 1;
+    }
+    return 0;
+}
+
+void dom_pop_implicit(void) {
+    if (zbrowser_dom_stack_depth == 0) {
+        return;
+    }
+    flush_line();
+    pop_text_style();
+    zbrowser_dom_stack_depth = zbrowser_dom_stack_depth - 1;
+}
+
+void apply_implicit_dom_closes(const uint8_t *html, uint32_t pos) {
+    uint32_t new_tag;
+    uint32_t top;
+
+    if (zb_is_closing_tag(html, pos) != 0) {
+        return;
+    }
+    new_tag = dom_tag_id(html, pos);
+    if (new_tag == 0) {
+        return;
+    }
+    while (zbrowser_dom_stack_depth > 0) {
+        top = zbrowser_dom_stack_tags[zbrowser_dom_stack_depth - 1];
+        if (dom_open_closes_top(top, new_tag, html, pos) == 0) {
+            return;
+        }
+        dom_pop_implicit();
+    }
+}
+
+void dom_push_tag(const uint8_t *html, uint32_t pos) {
+    uint32_t tag;
+
+    tag = dom_tag_id(html, pos);
+    if (tag == 0 || zbrowser_dom_stack_depth >= ZBROWSER_STYLE_STACK_MAX) {
+        return;
+    }
+    zbrowser_dom_stack_tags[zbrowser_dom_stack_depth] = tag;
+    zbrowser_dom_stack_depth = zbrowser_dom_stack_depth + 1;
+}
+
+void dom_close_tag(const uint8_t *html, uint32_t pos) {
+    uint32_t tag;
+    uint32_t match;
+
+    tag = dom_tag_id(html, pos);
+    if (tag == 0) {
+        return;
+    }
+    match = zbrowser_dom_stack_depth;
+    while (match > 0) {
+        if (zbrowser_dom_stack_tags[match - 1] == tag) {
+            while (zbrowser_dom_stack_depth >= match) {
+                pop_text_style();
+                zbrowser_dom_stack_depth = zbrowser_dom_stack_depth - 1;
+            }
+            return;
+        }
+        match = match - 1;
+    }
+}
+
 void render_html(const uint8_t *html) {
     uint32_t pos;
     uint32_t advance;
@@ -5948,6 +6461,7 @@ void render_html(const uint8_t *html) {
     zbrowser_right_line_no = 0;
     if (zbrowser_scroll_band_render == 0) {
         zbrowser_link_count = 0;
+        zbrowser_image_record_count = 0;
     }
     zbrowser_images_loaded = 0;
     if (zbrowser_scroll_band_render == 0) {
@@ -5979,6 +6493,7 @@ void render_html(const uint8_t *html) {
     zbrowser_link_text = zbrowser_page_link_fg;
     zbrowser_text_align = zbrowser_page_text_align;
     zbrowser_style_stack_depth = 0;
+    zbrowser_dom_stack_depth = 0;
     zbrowser_column_mode = 0;
     zbrowser_column_start_line = 0;
     zbrowser_list_depth = 0;
@@ -6061,6 +6576,9 @@ void render_html(const uint8_t *html) {
                 }
                 continue;
             }
+            if (zb_is_closing_tag(html, pos) == 0) {
+                apply_implicit_dom_closes(html, pos);
+            }
             if (zb_is_closing_tag(html, pos) != 0 &&
                 tag_is_block_flow(html, pos) != 0) {
                 flush_line();
@@ -6071,13 +6589,14 @@ void render_html(const uint8_t *html) {
             }
             if (zb_is_closing_tag(html, pos) != 0 &&
                 tag_affects_text_style(html, pos) != 0) {
-                pop_text_style();
+                dom_close_tag(html, pos);
                 reset_layout(html, pos);
                 close_css_position_box(html, pos);
             }
             if (zb_is_closing_tag(html, pos) == 0 &&
                 tag_affects_text_style(html, pos) != 0) {
                 push_text_style();
+                dom_push_tag(html, pos);
             }
             if (zb_is_closing_tag(html, pos) == 0) {
                 apply_layout(html, pos);
@@ -6637,6 +7156,10 @@ int render_background_image(const uint8_t *src) {
     uint32_t band_h;
     uint32_t slot;
     uint32_t line_count;
+    uint32_t drawn_w;
+    uint32_t drawn_h;
+    uint32_t decoded_slot;
+    uint32_t image_drawn;
 
     if (zbrowser_image_buffer_addr == 0 || zbrowser_images_loaded >= ZBROWSER_MAX_IMAGES) {
         return 0;
@@ -6680,18 +7203,57 @@ int render_background_image(const uint8_t *src) {
         if (zbrowser_cached_image_valids[slot] == 1 &&
             text_equal(zbrowser_url_tmp, image_url_slot(slot)) != 0 &&
             image_probe(image_buffer_slot(slot), (uint32_t)zbrowser_cached_image_sizes[slot], &image) == 0) {
-            if (zbrowser_image_decode_budget != 0) {
-                zbrowser_image_decode_budget = zbrowser_image_decode_budget - 1;
-                zbrowser_image_draw_result = image_decode_to_screen_scaled(image_buffer_slot(slot),
-                                                                           (uint32_t)zbrowser_cached_image_sizes[slot],
-                                                                           band_x,
-                                                                           draw_y,
-                                                                           band_w,
-                                                                           band_h);
-            } else {
-                draw_text_at_pixel(band_x + 8, draw_y + 10, "background ready", 0x54595d, zbrowser_text_bg);
+            drawn_w = image.width;
+            drawn_h = image.height;
+            if (drawn_w > band_w) {
+                drawn_h = (uint32_t)(((uint64_t)drawn_h * band_w) / drawn_w);
+                drawn_w = band_w;
+            }
+            if (drawn_h > band_h) {
+                drawn_w = (uint32_t)(((uint64_t)drawn_w * band_h) / drawn_h);
+                drawn_h = band_h;
+            }
+            if (drawn_w == 0) {
+                drawn_w = 1;
+            }
+            if (drawn_h == 0) {
+                drawn_h = 1;
+            }
+            image_drawn = 0;
+            decoded_slot = find_decoded_image_slot(slot, drawn_w, drawn_h, zbrowser_text_bg);
+            if (decoded_slot != 9999 &&
+                draw_decoded_image_slot(decoded_slot, band_x, draw_y, drawn_w, drawn_h, 0) != 0) {
+                image_drawn = 1;
+            }
+            if (image_drawn == 0) {
+                if (zbrowser_image_decode_budget != 0) {
+                    zbrowser_image_decode_budget = zbrowser_image_decode_budget - 1;
+                    decoded_slot = ensure_decoded_image_slot(slot, drawn_w, drawn_h, zbrowser_text_bg);
+                    if (decoded_slot != 9999 &&
+                        draw_decoded_image_slot(decoded_slot, band_x, draw_y, drawn_w, drawn_h, 0) != 0) {
+                        image_drawn = 1;
+                    } else {
+                        zbrowser_image_draw_result = image_decode_to_screen_scaled(image_buffer_slot(slot),
+                                                                                   (uint32_t)zbrowser_cached_image_sizes[slot],
+                                                                                   band_x,
+                                                                                   draw_y,
+                                                                                   band_w,
+                                                                                   band_h);
+                    }
+                } else {
+                    draw_text_at_pixel(band_x + 8, draw_y + 10, "background ready", 0x54595d, zbrowser_text_bg);
+                }
             }
             line_count = (band_h / 12) + 1;
+            if (decoded_slot != 9999 && image_drawn != 0) {
+                remember_image_line_cache(zbrowser_line_no, line_count);
+                remember_rendered_image_record(zbrowser_line_no,
+                                               band_x,
+                                               drawn_w,
+                                               drawn_h,
+                                               slot,
+                                               9999);
+            }
             zbrowser_line_no = zbrowser_line_no + line_count;
             zbrowser_images_loaded = zbrowser_images_loaded + 1;
             return 1;
@@ -6726,6 +7288,7 @@ int render_inline_image(const uint8_t *html, uint32_t tag_pos, const uint8_t *sr
     uint32_t image_drawn;
     uint32_t link_h;
     uint32_t should_decode;
+    uint32_t decoded_slot;
 
     if (zbrowser_image_buffer_addr == 0 || zbrowser_images_loaded >= ZBROWSER_MAX_IMAGES) {
         return 0;
@@ -6888,34 +7451,55 @@ int render_inline_image(const uint8_t *html, uint32_t tag_pos, const uint8_t *sr
                 }
                 zbrowser_image_draw_result = 0;
                 image_drawn = 0;
-                should_decode = 0;
-                if (is_positioned == 0) {
-                    should_decode = 1;
-                    if (zbrowser_image_decode_budget != 0) {
+                decoded_slot = find_decoded_image_slot(slot, drawn_w, drawn_h, zbrowser_text_bg);
+                if (decoded_slot != 9999 &&
+                    draw_decoded_image_slot(decoded_slot, draw_x, draw_y, drawn_w, drawn_h, 0) != 0) {
+                    image_drawn = 1;
+                } else {
+                    should_decode = 0;
+                    if (is_positioned == 0) {
+                        should_decode = 1;
+                        if (zbrowser_image_decode_budget != 0) {
+                            zbrowser_image_decode_budget = zbrowser_image_decode_budget - 1;
+                        }
+                    } else if (zbrowser_image_decode_budget != 0) {
+                        should_decode = 1;
                         zbrowser_image_decode_budget = zbrowser_image_decode_budget - 1;
                     }
-                } else if (zbrowser_image_decode_budget != 0) {
-                    should_decode = 1;
-                    zbrowser_image_decode_budget = zbrowser_image_decode_budget - 1;
-                }
-                if (should_decode != 0) {
-                    zbrowser_image_draw_result = image_decode_to_screen_scaled(image_buffer_slot(slot),
-                                                                               (uint32_t)zbrowser_cached_image_sizes[slot],
-                                                                               draw_x,
-                                                                               draw_y,
-                                                                               drawn_w,
-                                                                               drawn_h);
-                    if (zbrowser_image_draw_result != 0) {
-                        draw_text_at_pixel(draw_x, draw_y, "image decode failed", 0x54595d, zbrowser_text_bg);
+                    if (should_decode != 0) {
+                        decoded_slot = ensure_decoded_image_slot(slot, drawn_w, drawn_h, zbrowser_text_bg);
+                        if (decoded_slot != 9999 &&
+                            draw_decoded_image_slot(decoded_slot, draw_x, draw_y, drawn_w, drawn_h, 0) != 0) {
+                            image_drawn = 1;
+                        } else {
+                            zbrowser_image_draw_result = image_decode_to_screen_scaled(image_buffer_slot(slot),
+                                                                                       (uint32_t)zbrowser_cached_image_sizes[slot],
+                                                                                       draw_x,
+                                                                                       draw_y,
+                                                                                       drawn_w,
+                                                                                       drawn_h);
+                            if (zbrowser_image_draw_result != 0) {
+                                draw_text_at_pixel(draw_x, draw_y, "image decode failed", 0x54595d, zbrowser_text_bg);
+                            } else {
+                                image_drawn = 1;
+                            }
+                        }
                     } else {
-                        image_drawn = 1;
+                        draw_text_at_pixel(draw_x, draw_y, "image ready", 0x54595d, zbrowser_text_bg);
                     }
-                } else {
-                    draw_text_at_pixel(draw_x, draw_y, "image ready", 0x54595d, zbrowser_text_bg);
                 }
                 line_count = ((drawn_h + 6) / 12) + 1;
                 if (line_count == 0) {
                     line_count = 1;
+                }
+                if (image_drawn != 0 && is_positioned == 0 && decoded_slot != 9999) {
+                    remember_image_line_cache(zbrowser_line_no, line_count);
+                    remember_rendered_image_record(zbrowser_line_no,
+                                                   draw_x,
+                                                   drawn_w,
+                                                   drawn_h,
+                                                   slot,
+                                                   link_index);
                 }
                 if (link_index != 9999) {
                     link_h = drawn_h;
@@ -7330,6 +7914,82 @@ void finish_url_editing(void) {
     }
 }
 
+int draw_cached_image_records(uint32_t first_line, uint32_t last_line) {
+    uint32_t index;
+    uint32_t line;
+    uint32_t record_end;
+    uint32_t cache_slot;
+    uint32_t draw_y;
+    uint32_t draw_h;
+    uint32_t y_offset;
+    uint32_t bottom;
+    uint32_t link_index;
+    uint32_t missed;
+
+    missed = 0;
+    index = 0;
+    while (index < zbrowser_image_record_count) {
+        line = zbrowser_image_record_lines[index];
+        record_end = line + ((zbrowser_image_record_h[index] + 11) / 12) + 1;
+        if (record_end >= first_line && line <= last_line) {
+            cache_slot = find_decoded_image_slot(zbrowser_image_record_raw_slots[index],
+                                                 zbrowser_image_record_w[index],
+                                                 zbrowser_image_record_h[index],
+                                                 zbrowser_image_record_bgs[index]);
+            if (cache_slot == 9999) {
+                missed = 1;
+            } else {
+                y_offset = 0;
+                draw_h = zbrowser_image_record_h[index];
+                if (line < zbrowser_scroll) {
+                    y_offset = (zbrowser_scroll - line) * 12;
+                    if (y_offset >= draw_h) {
+                        index = index + 1;
+                        continue;
+                    }
+                    draw_h = draw_h - y_offset;
+                    draw_y = zbrowser_y;
+                } else {
+                    draw_y = zbrowser_y + (line - zbrowser_scroll) * 12;
+                }
+                bottom = gfx_height();
+                if (bottom > 18) {
+                    bottom = bottom - 18;
+                }
+                if (draw_y < bottom) {
+                    if (draw_y + draw_h > bottom) {
+                        draw_h = bottom - draw_y;
+                    }
+                    if (draw_h != 0) {
+                        if (draw_decoded_image_slot(cache_slot,
+                                                    zbrowser_image_record_x[index],
+                                                    draw_y,
+                                                    zbrowser_image_record_w[index],
+                                                    draw_h,
+                                                    y_offset) == 0) {
+                            missed = 1;
+                        } else {
+                            link_index = zbrowser_image_record_links[index];
+                            if (link_index != 9999) {
+                                set_link_rect_exact(link_index,
+                                                    zbrowser_image_record_x[index],
+                                                    draw_y,
+                                                    zbrowser_image_record_w[index],
+                                                    draw_h);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        index = index + 1;
+    }
+    if (missed != 0) {
+        return 0;
+    }
+    return 1;
+}
+
 int zbrowser_draw_cached_viewport(void) {
     uint32_t w;
     uint32_t h;
@@ -7363,6 +8023,9 @@ int zbrowser_draw_cached_viewport(void) {
     line = zbrowser_scroll;
     end_line = zbrowser_scroll + visible_lines + 2;
     missed = 0;
+    if (draw_cached_image_records(line, end_line) == 0) {
+        missed = 1;
+    }
     while (line <= end_line) {
         if (draw_cached_line(line) == 0) {
             missed = 1;
@@ -7730,6 +8393,10 @@ export void zmodule_unload(void) {
         kfree((uint8_t *)zbrowser_image_buffer_addr);
         zbrowser_image_buffer_addr = 0;
     }
+    if (zbrowser_decoded_image_buffer_addr != 0) {
+        kfree((uint8_t *)zbrowser_decoded_image_buffer_addr);
+        zbrowser_decoded_image_buffer_addr = 0;
+    }
     if (zbrowser_links_addr != 0) {
         kfree((uint8_t *)zbrowser_links_addr);
         zbrowser_links_addr = 0;
@@ -7750,6 +8417,7 @@ zbrowser_css_buffer_addr = (uint64_t)kmalloc(ZBROWSER_CSS_CAPACITY);
 zbrowser_css_sel_addr = (uint64_t)kmalloc(ZBROWSER_CSS_SELECTOR_BYTES);
 zbrowser_css_decl_addr = (uint64_t)kmalloc(ZBROWSER_CSS_DECL_BYTES);
 zbrowser_image_buffer_addr = (uint64_t)kmalloc(ZBROWSER_IMAGE_CAPACITY * ZBROWSER_IMAGE_SLOT_COUNT);
+zbrowser_decoded_image_buffer_addr = (uint64_t)kmalloc(ZBROWSER_DECODED_IMAGE_BYTES);
 zbrowser_links_addr = (uint64_t)kmalloc(ZBROWSER_MAX_LINKS * ZBROWSER_LINK_CAPACITY);
 zbrowser_line_cache_addr = (uint64_t)kmalloc(ZBROWSER_LINE_CACHE_BYTES);
 zbrowser_line_cache_fg_addr = (uint64_t)kmalloc(ZBROWSER_LINE_CACHE_FG_BYTES);
@@ -7828,6 +8496,7 @@ zbrowser_line[0] = 0;
 zbrowser_line_segment[0] = 0;
 zbrowser_line_fg[0] = zbrowser_text_fg;
 zbrowser_style_stack_depth = 0;
+zbrowser_dom_stack_depth = 0;
 zbrowser_column_mode = 0;
 zbrowser_column_start_line = 0;
 zbrowser_page_bg_color = 0xffffff;
@@ -7869,6 +8538,10 @@ if (zbrowser_doc_buffer_addr == 0 || zbrowser_css_buffer_addr == 0 ||
     if (zbrowser_image_buffer_addr != 0) {
         kfree((uint8_t *)zbrowser_image_buffer_addr);
         zbrowser_image_buffer_addr = 0;
+    }
+    if (zbrowser_decoded_image_buffer_addr != 0) {
+        kfree((uint8_t *)zbrowser_decoded_image_buffer_addr);
+        zbrowser_decoded_image_buffer_addr = 0;
     }
     if (zbrowser_links_addr != 0) {
         kfree((uint8_t *)zbrowser_links_addr);

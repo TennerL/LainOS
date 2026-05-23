@@ -102,6 +102,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("gfx_smp_ops", graphics_smp_ops),
     KERNEL_EXPORT("gfx_smp_pixels", graphics_smp_pixels),
     KERNEL_EXPORT("gfx_get_pixel", graphics_get_pixel),
+    KERNEL_EXPORT("gfx_draw_rect_packed", graphics_draw_rect_packed),
     KERNEL_EXPORT("gfx_fill_rect", graphics_fill_rect),
     KERNEL_EXPORT("gfx_scroll_rect", graphics_scroll_rect),
     KERNEL_EXPORT("gfx_draw_rect", graphics_draw_rect),
@@ -111,6 +112,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("image_decode_rgb24", image_decode_rgb24),
     KERNEL_EXPORT("image_decode_to_screen", image_decode_to_screen),
     KERNEL_EXPORT("image_decode_to_screen_scaled", image_decode_to_screen_scaled),
+    KERNEL_EXPORT("image_decode_scaled_to_packed", image_decode_scaled_to_packed),
     KERNEL_EXPORT("image_decode_to_screen_tiled", image_decode_to_screen_tiled),
     KERNEL_EXPORT("image_supported_formats", image_supported_formats),
     KERNEL_EXPORT("web_style_prepare_document", web_style_prepare_document),
@@ -232,6 +234,14 @@ int kernel_export_value(const char *name, uint64_t *out) {
     }
     if (kernel_export_streq(name, "image_decode_to_screen_scaled")) {
         *out = (uint64_t)(uintptr_t)image_decode_to_screen_scaled;
+        return 0;
+    }
+    if (kernel_export_streq(name, "gfx_draw_rect_packed")) {
+        *out = (uint64_t)(uintptr_t)graphics_draw_rect_packed;
+        return 0;
+    }
+    if (kernel_export_streq(name, "image_decode_scaled_to_packed")) {
+        *out = (uint64_t)(uintptr_t)image_decode_scaled_to_packed;
         return 0;
     }
     if (kernel_export_streq(name, "image_decode_to_screen_tiled")) {

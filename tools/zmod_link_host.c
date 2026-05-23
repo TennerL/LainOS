@@ -68,6 +68,7 @@ static const char *const host_kernel_exports[] = {
     "gfx_width",
     "gfx_height",
     "gfx_viewport_active",
+    "gfx_draw_rect_packed",
     "gfx_fill_rect",
     "gfx_scroll_rect",
     "gfx_draw_rect",
@@ -84,6 +85,7 @@ static const char *const host_kernel_exports[] = {
     "image_decode_rgb24",
     "image_decode_to_screen",
     "image_decode_to_screen_scaled",
+    "image_decode_scaled_to_packed",
     "image_decode_to_screen_tiled",
     "web_style_prepare_document",
     "web_style_for_tag",
@@ -120,6 +122,7 @@ int kernel_export_value(const char *name, uint64_t *out) {
         host_streq(name, "image_decode_rgb24") ||
         host_streq(name, "image_decode_to_screen") ||
         host_streq(name, "image_decode_to_screen_scaled") ||
+        host_streq(name, "image_decode_scaled_to_packed") ||
         host_streq(name, "image_decode_to_screen_tiled") ||
         host_streq(name, "web_style_prepare_document") ||
         host_streq(name, "web_style_for_tag") ||
