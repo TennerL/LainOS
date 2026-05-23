@@ -328,23 +328,6 @@ static dom_string *netsurf_port_element_attr(dom_node *node, const char *attr_na
     return value;
 }
 
-static int netsurf_port_element_attr_contains_ci(dom_node *node,
-                                                 const char *attr_name,
-                                                 const char *needle) {
-    dom_string *value = 0;
-    int match = 0;
-
-    if (node == 0 || attr_name == 0 || needle == 0) {
-        return 0;
-    }
-    value = netsurf_port_element_attr(node, attr_name);
-    if (value != 0) {
-        match = netsurf_port_dom_string_contains_ci(value, needle);
-        dom_string_unref(value);
-    }
-    return match;
-}
-
 static int netsurf_port_element_attr_equals_ci(dom_node *node,
                                                const char *attr_name,
                                                const char *value_name) {
@@ -817,9 +800,8 @@ static uint32_t netsurf_port_hint_flags_for_element(netsurf_port_writer_t *write
     if (netsurf_port_hint_should_skip(node)) {
         flags |= NETSURF_PORT_HINT_FLAG_SKIP;
     }
-    /* hidden/aria-hidden are global HTML attributes, not a display-tag special case. */
-    if (netsurf_port_element_has_attr(node, "hidden") ||
-        netsurf_port_element_attr_contains_ci(node, "aria-hidden", "true")) {
+    /* Only HTML hidden state should affect visual layout hints here. */
+    if (netsurf_port_element_has_attr(node, "hidden")) {
         flags |= NETSURF_PORT_HINT_FLAG_HIDDEN;
     }
     if (netsurf_port_dom_string_equals_ci(name, "input") &&
@@ -1324,6 +1306,7 @@ uint32_t netsurf_port_render_smoke(void) {
         "<script>console.log('skip');</script></head>"
         "<body><search><form><input type=\"search\" name=\"site\" value=\"docs\"></form></search>"
         "<div role=\"navigation\" class=\"toc\">chrome</div>"
+        "<div aria-hidden=\"true\" id=\"aria-hidden-only\">still visible</div>"
         "<span role=\"heading\" aria-level=\"2\">Adapter Heading</span>"
         "<span class=\"sr-only\">assistive only</span>"
         "<div class=\"navbarish\">content should stay content</div>"
@@ -1341,6 +1324,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t main_pos;
     uint32_t nav_pos;
     uint32_t search_pos;
+    uint32_t aria_hidden_pos;
     uint32_t heading_pos;
     uint32_t sr_only_pos;
     uint32_t hidden_input_pos;
@@ -1401,6 +1385,16 @@ uint32_t netsurf_port_render_smoke(void) {
         netsurf_port_style_hint_for_tag(out, search_pos, &display, &role, &flags) == 0 ||
         display != NETSURF_PORT_HINT_DISPLAY_BLOCK ||
         role != NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
+    aria_hidden_pos = netsurf_port_find_tag_pos_from_fragment(out, "id=\"aria-hidden-only\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (aria_hidden_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, aria_hidden_pos, &display, &role, &flags) == 0 ||
+        (flags & NETSURF_PORT_HINT_FLAG_HIDDEN) != 0u) {
         return 0u;
     }
 
