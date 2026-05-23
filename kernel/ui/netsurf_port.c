@@ -780,7 +780,9 @@ static int netsurf_port_hint_should_skip(dom_node *node) {
     return netsurf_port_element_attr_has_token_ci(node, "class", "printfooter") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "metadata") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "noprint") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "screen-reader-text") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "visually-hidden") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "visuallyhidden") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "sr-only") ||
            netsurf_port_element_attr_has_token_ci(node, "class", "mw-editsection") ||
            netsurf_port_element_attr_equals_ci(node, "id", "catlinks");
@@ -1315,6 +1317,7 @@ uint32_t netsurf_port_render_smoke(void) {
         "<div aria-hidden=\"true\" id=\"aria-hidden-only\">still visible</div>"
         "<span role=\"heading\" aria-level=\"2\">Adapter Heading</span>"
         "<span class=\"sr-only\">assistive only</span>"
+        "<span class=\"screen-reader-text\">wordpress helper</span>"
         "<div class=\"navbarish\">content should stay content</div>"
         "<div class=\"noprinter\">also content</div>"
         "<div role=\"main\"><form><fieldset><legend>Search</legend>"
@@ -1339,6 +1342,7 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t aria_hidden_pos;
     uint32_t heading_pos;
     uint32_t sr_only_pos;
+    uint32_t screen_reader_text_pos;
     uint32_t hidden_input_pos;
     uint32_t catlinks_pos;
     uint32_t navbarish_pos;
@@ -1429,6 +1433,16 @@ uint32_t netsurf_port_render_smoke(void) {
     flags = 0;
     if (sr_only_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, sr_only_pos, &display, &role, &flags) == 0 ||
+        (flags & NETSURF_PORT_HINT_FLAG_SKIP) == 0u) {
+        return 0u;
+    }
+
+    screen_reader_text_pos = netsurf_port_find_tag_pos_from_fragment(out, "class=\"screen-reader-text\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (screen_reader_text_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, screen_reader_text_pos, &display, &role, &flags) == 0 ||
         (flags & NETSURF_PORT_HINT_FLAG_SKIP) == 0u) {
         return 0u;
     }
