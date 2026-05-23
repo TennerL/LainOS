@@ -3532,10 +3532,7 @@ int tag_hidden_from_style(const uint8_t *html, uint32_t pos) {
     if (zb_attr_value(html, pos, "hidden", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
         return 1;
     }
-    if (zb_attr_value(html, pos, "aria-hidden", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 &&
-        text_contains_ci(zbrowser_attr, "true") != 0) {
-        return 1;
-    }
+    /* aria-hidden guides assistive output, not whether visual content should render. */
     if (load_web_style(html, pos) != 0 &&
         (web_style_has_flag(WEB_STYLE_FLAG_DISPLAY_NONE) != 0 ||
          web_style_has_flag(WEB_STYLE_FLAG_VIS_HIDDEN) != 0 ||
