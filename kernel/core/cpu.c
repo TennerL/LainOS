@@ -1333,6 +1333,70 @@ unsigned int kernel_task_submit_named(kernel_task_fn_t fn, void *arg, const char
     return id;
 }
 
+unsigned int kernel_task_submit_async_named(kernel_task_fn_t fn, void *arg, const char *name) {
+    kernel_task_slot_t *slot = 0;
+    unsigned int id = 0;
+    unsigned int smp_id;
+
+    if (fn == 0 || online_core_count <= 1u) {
+        return 0u;
+    }
+
+    task_lock();
+    for (unsigned int i = 0; i < CPU_TASK_SLOTS; ++i) {
+        if (kernel_task_slots[i].state == CPU_TASK_FREE) {
+            id = kernel_task_next_id++;
+            if (id == 0u) {
+                id = kernel_task_next_id++;
+            }
+            kernel_task_slots[i].id = id;
+            kernel_task_slots[i].fn = fn;
+            kernel_task_slots[i].arg = arg;
+            kernel_task_slots[i].smp_id = 0u;
+            kernel_task_slots[i].submitted_ticks = timer_ticks();
+            kernel_task_slots[i].started_ticks = 0u;
+            kernel_task_slots[i].finished_ticks = 0u;
+            cpu_copy_task_name(kernel_task_slots[i].name,
+                               sizeof(kernel_task_slots[i].name),
+                               name && name[0] ? name : "task");
+            kernel_task_slots[i].state = CPU_TASK_RUNNING;
+            slot = &kernel_task_slots[i];
+            break;
+        }
+    }
+    task_unlock();
+
+    if (slot == 0) {
+        return 0u;
+    }
+
+    smp_id = smp_submit_work(kernel_task_worker, slot);
+    if (smp_id != 0u) {
+        task_lock();
+        if (slot->id == id) {
+            slot->smp_id = smp_id;
+        }
+        task_unlock();
+        return id;
+    }
+
+    task_lock();
+    if (slot->id == id && slot->state == CPU_TASK_RUNNING) {
+        slot->fn = 0;
+        slot->arg = 0;
+        slot->id = 0u;
+        slot->smp_id = 0u;
+        slot->submitted_ticks = 0u;
+        slot->started_ticks = 0u;
+        slot->finished_ticks = 0u;
+        slot->name[0] = '\0';
+        __sync_synchronize();
+        slot->state = CPU_TASK_FREE;
+    }
+    task_unlock();
+    return 0u;
+}
+
 unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg) {
     return kernel_task_submit_named(fn, arg, "task");
 }

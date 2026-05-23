@@ -89,6 +89,38 @@
 #define WEB_STYLE_BORDER_SEPARATE 0u
 #define WEB_STYLE_BORDER_COLLAPSE 1u
 
+#define WEB_STYLE_CLEAR_NONE  0u
+#define WEB_STYLE_CLEAR_LEFT  1u
+#define WEB_STYLE_CLEAR_RIGHT 2u
+#define WEB_STYLE_CLEAR_BOTH  3u
+
+#define WEB_STYLE_VERTICAL_BASELINE 0u
+#define WEB_STYLE_VERTICAL_SUB      1u
+#define WEB_STYLE_VERTICAL_SUPER    2u
+#define WEB_STYLE_VERTICAL_TOP      3u
+#define WEB_STYLE_VERTICAL_MIDDLE   4u
+#define WEB_STYLE_VERTICAL_BOTTOM   5u
+
+#define WEB_STYLE_LIST_POSITION_OUTSIDE 0u
+#define WEB_STYLE_LIST_POSITION_INSIDE  1u
+
+#define WEB_STYLE_CAPTION_TOP    0u
+#define WEB_STYLE_CAPTION_BOTTOM 1u
+
+#define WEB_STYLE_DIRECTION_LTR 0u
+#define WEB_STYLE_DIRECTION_RTL 1u
+
+#define WEB_STYLE_TABLE_LAYOUT_AUTO  0u
+#define WEB_STYLE_TABLE_LAYOUT_FIXED 1u
+
+#define WEB_STYLE_EMPTY_CELLS_SHOW 0u
+#define WEB_STYLE_EMPTY_CELLS_HIDE 1u
+
+#define WEB_STYLE_BG_REPEAT      0u
+#define WEB_STYLE_BG_REPEAT_X    1u
+#define WEB_STYLE_BG_REPEAT_Y    2u
+#define WEB_STYLE_BG_NO_REPEAT   3u
+
 typedef struct {
     uint32_t flags;
     uint32_t text_align;
@@ -134,6 +166,20 @@ typedef struct {
     uint32_t border_spacing_h;
     uint32_t border_spacing_v;
     uint32_t text_indent;
+    uint32_t clear_side;
+    uint32_t vertical_align;
+    uint32_t list_style_position;
+    uint32_t caption_side;
+    uint32_t direction;
+    uint32_t table_layout;
+    uint32_t empty_cells;
+    uint32_t opacity;
+    uint32_t z_index;
+    uint32_t letter_spacing;
+    uint32_t word_spacing;
+    uint32_t background_repeat;
+    uint32_t background_position_x;
+    uint32_t background_position_y;
 } web_style_t;
 
 typedef struct {

@@ -81,6 +81,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("smp_pending_work_count", smp_pending_work_count),
     KERNEL_EXPORT("kernel_task_submit", kernel_task_submit),
     KERNEL_EXPORT("kernel_task_submit_named", kernel_task_submit_named),
+    KERNEL_EXPORT("kernel_task_submit_async_named", kernel_task_submit_async_named),
     KERNEL_EXPORT("kernel_task_async_supported", kernel_task_async_supported),
     KERNEL_EXPORT("kernel_task_done", kernel_task_done),
     KERNEL_EXPORT("kernel_task_release", kernel_task_release),

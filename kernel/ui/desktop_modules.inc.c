@@ -110,7 +110,7 @@ static int desktop_module_app_send_mouse(desktop_module_window_t *slot,
     graphics_viewport_pop();
     if (rc == 0) {
         if (wheel == 0) {
-            desktop_damage_full();
+            desktop_damage_window(&slot->window);
         }
         return 1;
     }
@@ -121,6 +121,12 @@ static void desktop_draw_modules(void) {
     uint32_t ui_count;
 
     if (!modules_open) {
+        return;
+    }
+    if (!desktop_damage_intersects_rect(modules_window.x,
+                                        modules_window.y,
+                                        modules_window.w + 6u,
+                                        modules_window.h + 6u)) {
         return;
     }
 
@@ -255,7 +261,9 @@ static int desktop_tick_module_app(desktop_module_window_t *slot, int force) {
 
     if (desktop_deferred_redraw) {
         desktop_deferred_redraw = 0;
-        desktop_damage_full();
+        if (desktop_damage_count == 0u) {
+            desktop_damage_full();
+        }
         desktop_redraw_all();
     }
     return 1;

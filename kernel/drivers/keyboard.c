@@ -392,6 +392,7 @@ key_event_t keyboard_read_key(void) {
             statusbar_update_if_due();
             shell_modules_tick();
             usb_poll();
+            (void)kernel_task_poll();
             status_cpu_enter_idle();
             __asm__ __volatile__("sti; hlt");
             status_cpu_leave_idle();

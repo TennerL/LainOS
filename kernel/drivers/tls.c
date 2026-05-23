@@ -355,7 +355,6 @@ int net_tls_http_get(uint32_t index,
 
         if (progressed) {
             last_progress = timer_ticks();
-            statusbar_update_if_due();
         } else if (timer_ticks() - last_progress > TLS_TIMEOUT_TICKS) {
             net_tls_debug_set(state,
                               br_ssl_engine_last_error(&cc->eng),

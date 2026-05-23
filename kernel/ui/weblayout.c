@@ -59,6 +59,19 @@ enum {
     WEB_PROP_BORDER_COLLAPSE,
     WEB_PROP_BORDER_SPACING,
     WEB_PROP_TEXT_INDENT,
+    WEB_PROP_CLEAR,
+    WEB_PROP_VERTICAL_ALIGN,
+    WEB_PROP_LIST_STYLE_POSITION,
+    WEB_PROP_CAPTION_SIDE,
+    WEB_PROP_DIRECTION,
+    WEB_PROP_TABLE_LAYOUT,
+    WEB_PROP_EMPTY_CELLS,
+    WEB_PROP_OPACITY,
+    WEB_PROP_Z_INDEX,
+    WEB_PROP_LETTER_SPACING,
+    WEB_PROP_WORD_SPACING,
+    WEB_PROP_BACKGROUND_REPEAT,
+    WEB_PROP_BACKGROUND_POSITION,
     WEB_PROP_COUNT
 };
 
@@ -113,6 +126,10 @@ static uint32_t web_css_rule_blocks;
 static uint32_t web_css_node_count;
 static uint32_t web_css_node_saturated;
 static web_css_node_t web_css_nodes[WEB_CSS_MAX_NODES];
+
+static void web_css_precompute_styles(const uint8_t *html,
+                                      uint32_t viewport_width,
+                                      uint32_t viewport_height);
 
 static uint8_t web_lower(uint8_t ch) {
     if (ch >= 'A' && ch <= 'Z') {
@@ -3186,6 +3203,7 @@ int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uin
     }
     web_prepared_cache_reset(html, viewport_width, viewport_height);
     web_css_prepare_document(html);
+    web_css_precompute_styles(html, viewport_width, viewport_height);
     uint32_t pos = 0;
     while (html[pos] != 0) {
         if (html[pos] == '<' && !web_is_closing_tag(html, pos) && web_tag_name_is(html, pos, "style")) {
@@ -3263,6 +3281,20 @@ static void web_state_init(web_style_state_t *state) {
     state->style.border_spacing_h = 2;
     state->style.border_spacing_v = 2;
     state->style.text_indent = 0;
+    state->style.clear_side = WEB_STYLE_CLEAR_NONE;
+    state->style.vertical_align = WEB_STYLE_VERTICAL_BASELINE;
+    state->style.list_style_position = WEB_STYLE_LIST_POSITION_OUTSIDE;
+    state->style.caption_side = WEB_STYLE_CAPTION_TOP;
+    state->style.direction = WEB_STYLE_DIRECTION_LTR;
+    state->style.table_layout = WEB_STYLE_TABLE_LAYOUT_AUTO;
+    state->style.empty_cells = WEB_STYLE_EMPTY_CELLS_SHOW;
+    state->style.opacity = 255;
+    state->style.z_index = 0;
+    state->style.letter_spacing = 0;
+    state->style.word_spacing = 0;
+    state->style.background_repeat = WEB_STYLE_BG_REPEAT;
+    state->style.background_position_x = 0;
+    state->style.background_position_y = 0;
     for (uint32_t i = 0; i < WEB_PROP_COUNT; ++i) {
         state->score[i] = 0;
     }
@@ -3406,6 +3438,62 @@ static uint32_t web_css_list_style_value(uint8_t type) {
     return WEB_STYLE_LIST_DISC;
 }
 
+static uint32_t web_css_clear_value(uint8_t type) {
+    if (type == CSS_CLEAR_LEFT) {
+        return WEB_STYLE_CLEAR_LEFT;
+    }
+    if (type == CSS_CLEAR_RIGHT) {
+        return WEB_STYLE_CLEAR_RIGHT;
+    }
+    if (type == CSS_CLEAR_BOTH) {
+        return WEB_STYLE_CLEAR_BOTH;
+    }
+    return WEB_STYLE_CLEAR_NONE;
+}
+
+static uint32_t web_css_vertical_align_value(uint8_t type) {
+    if (type == CSS_VERTICAL_ALIGN_SUB) {
+        return WEB_STYLE_VERTICAL_SUB;
+    }
+    if (type == CSS_VERTICAL_ALIGN_SUPER) {
+        return WEB_STYLE_VERTICAL_SUPER;
+    }
+    if (type == CSS_VERTICAL_ALIGN_TOP || type == CSS_VERTICAL_ALIGN_TEXT_TOP) {
+        return WEB_STYLE_VERTICAL_TOP;
+    }
+    if (type == CSS_VERTICAL_ALIGN_MIDDLE) {
+        return WEB_STYLE_VERTICAL_MIDDLE;
+    }
+    if (type == CSS_VERTICAL_ALIGN_BOTTOM || type == CSS_VERTICAL_ALIGN_TEXT_BOTTOM) {
+        return WEB_STYLE_VERTICAL_BOTTOM;
+    }
+    return WEB_STYLE_VERTICAL_BASELINE;
+}
+
+static uint32_t web_css_background_repeat_value(uint8_t type) {
+    if (type == CSS_BACKGROUND_REPEAT_REPEAT_X) {
+        return WEB_STYLE_BG_REPEAT_X;
+    }
+    if (type == CSS_BACKGROUND_REPEAT_REPEAT_Y) {
+        return WEB_STYLE_BG_REPEAT_Y;
+    }
+    if (type == CSS_BACKGROUND_REPEAT_NO_REPEAT) {
+        return WEB_STYLE_BG_NO_REPEAT;
+    }
+    return WEB_STYLE_BG_REPEAT;
+}
+
+static uint32_t web_css_fixed_unit_to_byte(css_fixed value) {
+    int64_t scaled = ((int64_t)value * 255ll) >> CSS_RADIX_POINT;
+    if (scaled < 0) {
+        return 0;
+    }
+    if (scaled > 255) {
+        return 255;
+    }
+    return (uint32_t)scaled;
+}
+
 static void web_css_set_computed_length(web_style_state_t *state,
                                         uint32_t property,
                                         uint32_t flag,
@@ -3461,10 +3549,12 @@ static void web_css_apply_computed_style(web_style_state_t *state,
     css_fixed length = 0;
     css_fixed hlength = 0;
     css_fixed vlength = 0;
+    css_fixed fixed_value = 0;
     css_unit unit = CSS_UNIT_PX;
     css_unit hunit = CSS_UNIT_PX;
     css_unit vunit = CSS_UNIT_PX;
     int px = 0;
+    int32_t z_index = 0;
     uint32_t current_color = 0x000000u;
     int have_current_color = 1;
     int margin_left_auto = 0;
@@ -3851,6 +3941,64 @@ static void web_css_apply_computed_style(web_style_state_t *state,
         state->style.text_indent = web_css_length_to_px(computed, unit_ctx, length, unit, viewport_width);
         web_css_set_score(state, WEB_PROP_TEXT_INDENT);
     }
+
+    state->style.clear_side = web_css_clear_value(css_computed_clear(computed));
+    web_css_set_score(state, WEB_PROP_CLEAR);
+
+    type = css_computed_vertical_align(computed, &length, &unit);
+    state->style.vertical_align = web_css_vertical_align_value(type);
+    web_css_set_score(state, WEB_PROP_VERTICAL_ALIGN);
+
+    type = css_computed_list_style_position(computed);
+    state->style.list_style_position = type == CSS_LIST_STYLE_POSITION_INSIDE ?
+        WEB_STYLE_LIST_POSITION_INSIDE : WEB_STYLE_LIST_POSITION_OUTSIDE;
+    web_css_set_score(state, WEB_PROP_LIST_STYLE_POSITION);
+
+    type = css_computed_caption_side(computed);
+    state->style.caption_side = type == CSS_CAPTION_SIDE_BOTTOM ? WEB_STYLE_CAPTION_BOTTOM : WEB_STYLE_CAPTION_TOP;
+    web_css_set_score(state, WEB_PROP_CAPTION_SIDE);
+
+    type = css_computed_direction(computed);
+    state->style.direction = type == CSS_DIRECTION_RTL ? WEB_STYLE_DIRECTION_RTL : WEB_STYLE_DIRECTION_LTR;
+    web_css_set_score(state, WEB_PROP_DIRECTION);
+
+    type = css_computed_table_layout(computed);
+    state->style.table_layout = type == CSS_TABLE_LAYOUT_FIXED ? WEB_STYLE_TABLE_LAYOUT_FIXED : WEB_STYLE_TABLE_LAYOUT_AUTO;
+    web_css_set_score(state, WEB_PROP_TABLE_LAYOUT);
+
+    type = css_computed_empty_cells(computed);
+    state->style.empty_cells = type == CSS_EMPTY_CELLS_HIDE ? WEB_STYLE_EMPTY_CELLS_HIDE : WEB_STYLE_EMPTY_CELLS_SHOW;
+    web_css_set_score(state, WEB_PROP_EMPTY_CELLS);
+
+    if (css_computed_opacity(computed, &fixed_value) == CSS_OPACITY_SET) {
+        state->style.opacity = web_css_fixed_unit_to_byte(fixed_value);
+        web_css_set_score(state, WEB_PROP_OPACITY);
+    }
+
+    if (css_computed_z_index(computed, &z_index) == CSS_Z_INDEX_SET) {
+        state->style.z_index = z_index > 0 ? (uint32_t)z_index : 0;
+        web_css_set_score(state, WEB_PROP_Z_INDEX);
+    }
+
+    if (css_computed_letter_spacing(computed, &length, &unit) == CSS_LETTER_SPACING_SET) {
+        state->style.letter_spacing = web_css_length_to_px(computed, unit_ctx, length, unit, state->style.font_size);
+        web_css_set_score(state, WEB_PROP_LETTER_SPACING);
+    }
+
+    if (css_computed_word_spacing(computed, &length, &unit) == CSS_WORD_SPACING_SET) {
+        state->style.word_spacing = web_css_length_to_px(computed, unit_ctx, length, unit, state->style.font_size);
+        web_css_set_score(state, WEB_PROP_WORD_SPACING);
+    }
+
+    state->style.background_repeat = web_css_background_repeat_value(css_computed_background_repeat(computed));
+    web_css_set_score(state, WEB_PROP_BACKGROUND_REPEAT);
+
+    type = css_computed_background_position(computed, &hlength, &hunit, &vlength, &vunit);
+    if (type != CSS_BACKGROUND_POSITION_INHERIT) {
+        state->style.background_position_x = web_css_length_to_px(computed, unit_ctx, hlength, hunit, viewport_width);
+        state->style.background_position_y = web_css_length_to_px(computed, unit_ctx, vlength, vunit, viewport_height);
+        web_css_set_score(state, WEB_PROP_BACKGROUND_POSITION);
+    }
 }
 
 static int web_css_style_for_node(web_css_node_t *node,
@@ -3956,6 +4104,36 @@ static void web_apply_hidden_attrs(const uint8_t *html, uint32_t tag_pos, web_st
     if (web_attr_value_range_cstr(html, tag_pos, "aria-hidden", &attr_start, &attr_end) &&
         web_range_contains_cstr_ci(html, attr_start, attr_end, "true")) {
         web_set_flag_property(state, WEB_PROP_VISIBILITY, WEB_STYLE_FLAG_VISIBILITY_HIDDEN, 1, 65535, 1);
+    }
+}
+
+static void web_css_precompute_styles(const uint8_t *html,
+                                      uint32_t viewport_width,
+                                      uint32_t viewport_height) {
+    if (html == NULL || web_css_ready == 0 || web_css_select_ctx == NULL) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < web_css_node_count; ++i) {
+        web_css_node_t *node = &web_css_nodes[i];
+        web_style_state_t state;
+
+        if (node->style_cached != 0 &&
+            node->style_viewport_width == viewport_width &&
+            node->style_viewport_height == viewport_height) {
+            continue;
+        }
+
+        web_state_init(&state);
+        if (web_css_style_for_node(node, viewport_width, viewport_height, &state) != 0) {
+            continue;
+        }
+        web_apply_presentational_attrs(html, node->tag_pos, &state, viewport_width, viewport_height);
+        web_apply_hidden_attrs(html, node->tag_pos, &state);
+        node->cached_style = state.style;
+        node->style_cached = 1;
+        node->style_viewport_width = viewport_width;
+        node->style_viewport_height = viewport_height;
     }
 }
 

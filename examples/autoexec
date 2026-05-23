@@ -11,7 +11,12 @@ cp R:/examples/taskmgr_module.zbuild taskmgr_module.zbuild
 
 cp R:/examples/filemgr_module.Z filemgr_module.Z
 cp R:/examples/filemgr_module.zbuild filemgr_module.zbuild
-
+zclean zbrowser_module
+rm zbrowser_module.Z
+rm zbrowser_html.Z
+rm zbrowser_html_api.Z
+rm zbrowser_module.zbuild
+rm zbrowser_smoke.html
 cp R:/examples/zbrowser_module.Z zbrowser_module.Z
 cp R:/examples/zbrowser_html.Z zbrowser_html.Z
 cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z

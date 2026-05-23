@@ -320,6 +320,7 @@ static void desktop_damage_taskbar(void);
 static void desktop_damage_module_windows(void);
 static void desktop_damage_app(desktop_app_t app);
 static void desktop_damage_full(void);
+static int desktop_damage_is_full(void);
 static int desktop_damage_intersects_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 static void desktop_start_menu_rect(uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h);
 static void desktop_terminal_open(void);
@@ -720,6 +721,9 @@ static void desktop_draw_taskbar(void) {
     if (height < task_h) {
         return;
     }
+    if (!desktop_damage_intersects_rect(0, height - task_h, width, task_h)) {
+        return;
+    }
 
     graphics_fill_rect(0, height - task_h, width, task_h, theme.taskbar);
     graphics_fill_rect(0, height - task_h, width, 1, theme.accent_soft);
@@ -739,15 +743,24 @@ static void desktop_draw_base(void) {
     desktop_theme_t theme = desktop_theme();
     unsigned int i;
 
-    desktop_background();
+    if (desktop_damage_is_full()) {
+        desktop_background();
+    }
 
-    graphics_fill_rect(0, 0, width, top_h, theme.topbar);
-    graphics_fill_rect(0, top_h - 1u, width, 1, theme.accent);
-    console_draw_text_at_pixel(12u, 8u, "LainOS Desktop", theme.text, theme.topbar);
+    if (desktop_damage_intersects_rect(0, 0, width, top_h)) {
+        graphics_fill_rect(0, 0, width, top_h, theme.topbar);
+        graphics_fill_rect(0, top_h - 1u, width, 1, theme.accent);
+        console_draw_text_at_pixel(12u, 8u, "LainOS Desktop", theme.text, theme.topbar);
+    }
 
     if (width > 180u && height > 140u) {
         for (i = 0; i < sizeof(launchers) / sizeof(launchers[0]); ++i) {
-            desktop_draw_launcher(&launchers[i]);
+            if (desktop_damage_intersects_rect(launchers[i].x,
+                                               launchers[i].y,
+                                               launchers[i].w,
+                                               launchers[i].h)) {
+                desktop_draw_launcher(&launchers[i]);
+            }
         }
     }
 
@@ -922,6 +935,9 @@ static void desktop_draw_start_menu(void) {
     }
 
     desktop_start_menu_rect(&menu_x, &menu_y, &menu_w, &menu_h);
+    if (!desktop_damage_intersects_rect(menu_x, menu_y, menu_w, menu_h)) {
+        return;
+    }
 
     desktop_panel(menu_x, menu_y, menu_w, menu_h, theme.panel);
     console_draw_text_at_pixel(menu_x + 12u, menu_y + 10u, "Start", theme.text, theme.panel);
@@ -2313,6 +2329,12 @@ static void desktop_terminal_draw(int fresh) {
     } else {
         desktop_clamp_window(&terminal_window);
     }
+    if (!desktop_damage_intersects_rect(terminal_window.x,
+                                        terminal_window.y,
+                                        terminal_window.w + 6u,
+                                        terminal_window.h + 6u)) {
+        return;
+    }
     desktop_draw_window(&terminal_window, "Terminal");
     console_set_region_preserve(terminal_window.content_x,
                                 terminal_window.content_y,
@@ -2405,6 +2427,12 @@ static void desktop_terminal_close(void) {
 
 static void desktop_draw_files(void) {
     if (!files_open) {
+        return;
+    }
+    if (!desktop_damage_intersects_rect(files_window.x,
+                                        files_window.y,
+                                        files_window.w + 6u,
+                                        files_window.h + 6u)) {
         return;
     }
 
@@ -2911,6 +2939,12 @@ static void desktop_draw_editor(void) {
     if (!editor_open) {
         return;
     }
+    if (!desktop_damage_intersects_rect(editor_window.x,
+                                        editor_window.y,
+                                        editor_window.w + 6u,
+                                        editor_window.h + 6u)) {
+        return;
+    }
 
     desktop_draw_window(&editor_window, editor_name);
     desktop_draw_editor_content();
@@ -3051,6 +3085,29 @@ static void desktop_damage_full(void) {
     desktop_damage_count = 1;
 }
 
+static int desktop_damage_is_full(void) {
+    return desktop_damage_count == 0u ||
+           (desktop_damage_count == 1u &&
+            desktop_damage_x[0] == 0u &&
+            desktop_damage_y[0] == 0u &&
+            desktop_damage_w[0] >= graphics_width() &&
+            desktop_damage_h[0] >= graphics_height());
+}
+
+static void desktop_flush_damage(void) {
+    if (desktop_damage_is_full()) {
+        graphics_backbuffer_flush();
+        return;
+    }
+
+    for (uint32_t i = 0; i < desktop_damage_count; ++i) {
+        graphics_backbuffer_flush_rect(desktop_damage_x[i],
+                                       desktop_damage_y[i],
+                                       desktop_damage_w[i],
+                                       desktop_damage_h[i]);
+    }
+}
+
 static void desktop_redraw_editor_only(uint32_t cursor_x_pos, uint32_t cursor_y_pos) {
     desktop_damage_full();
     desktop_redraw_all();
@@ -3064,11 +3121,15 @@ static void desktop_redraw_clock_only(void) {
 
 static void desktop_redraw_all(void) {
     int buffered;
+    int needs_full;
 
+    needs_full = desktop_first_redraw || desktop_damage_count == 0u;
+    if (needs_full) {
+        desktop_damage_full();
+    }
     desktop_begin_paint();
     buffered = desktop_first_redraw ? 0 : graphics_backbuffer_enable();
     desktop_first_redraw = 0;
-    desktop_damage_full();
     terminal_caret_back_valid = 0;
 
     desktop_draw_base();
@@ -3082,7 +3143,7 @@ static void desktop_redraw_all(void) {
     desktop_draw_start_menu();
 
     if (buffered) {
-        graphics_backbuffer_flush();
+        desktop_flush_damage();
         graphics_backbuffer_disable();
     }
     desktop_damage_reset();

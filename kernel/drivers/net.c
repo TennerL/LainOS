@@ -370,11 +370,15 @@ int net_poll_device(uint32_t index) {
 unsigned int net_poll_all_devices(void) {
     unsigned int polled = 0;
 
+    if (__sync_lock_test_and_set(&net_poll_lock, 1u) != 0u) {
+        return 0u;
+    }
     for (uint32_t i = 0; i < device_count; ++i) {
         if (net_poll_device(i) == 0) {
             ++polled;
         }
     }
+    __sync_lock_release(&net_poll_lock);
     return polled;
 }
 
@@ -1296,6 +1300,7 @@ static void net_http_copy_body_byte(net_tcp_get_t *ctx, char ch) {
 }
 
 static void net_service_background(void) {
+    __asm__ __volatile__("pause");
 }
 
 static void net_progress_device(uint32_t index) {

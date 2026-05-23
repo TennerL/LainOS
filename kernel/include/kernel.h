@@ -126,6 +126,7 @@ typedef struct {
 } kernel_task_info_t;
 unsigned int kernel_task_submit(kernel_task_fn_t fn, void *arg);
 unsigned int kernel_task_submit_named(kernel_task_fn_t fn, void *arg, const char *name);
+unsigned int kernel_task_submit_async_named(kernel_task_fn_t fn, void *arg, const char *name);
 int kernel_task_async_supported(void);
 int kernel_task_done(unsigned int id);
 void kernel_task_release(unsigned int id);

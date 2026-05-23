@@ -41,6 +41,7 @@ static const char *const host_kernel_exports[] = {
     "free",
     "errno_location",
     "kernel_task_submit_named",
+    "kernel_task_submit_async_named",
     "kernel_task_async_supported",
     "kernel_task_done",
     "kernel_task_release",
