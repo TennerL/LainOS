@@ -123,6 +123,52 @@ static int netsurf_port_dom_string_contains_ci(const dom_string *str, const char
     return 0;
 }
 
+static int netsurf_port_dom_string_has_token_ci(const dom_string *str, const char *needle) {
+    const char *data;
+    size_t len;
+    size_t needle_len;
+    size_t pos = 0;
+
+    if (str == 0 || needle == 0) {
+        return 0;
+    }
+
+    data = dom_string_data(str);
+    len = dom_string_byte_length(str);
+    needle_len = strlen(needle);
+    if (data == 0 || needle_len == 0 || len < needle_len) {
+        return 0;
+    }
+
+    while (pos < len) {
+        size_t token_start;
+        size_t token_len;
+        size_t i;
+
+        while (pos < len && data[pos] <= ' ') {
+            ++pos;
+        }
+        token_start = pos;
+        while (pos < len && data[pos] > ' ') {
+            ++pos;
+        }
+        token_len = pos - token_start;
+        if (token_len != needle_len) {
+            continue;
+        }
+        for (i = 0; i < needle_len; ++i) {
+            if (netsurf_port_lower((uint8_t)data[token_start + i]) !=
+                netsurf_port_lower((uint8_t)needle[i])) {
+                break;
+            }
+        }
+        if (i == needle_len) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int netsurf_port_is_html_root(dom_string *name) {
     const char *data;
     size_t len;
@@ -316,6 +362,23 @@ static int netsurf_port_element_attr_equals_ci(dom_node *node,
     return match;
 }
 
+static int netsurf_port_element_attr_has_token_ci(dom_node *node,
+                                                  const char *attr_name,
+                                                  const char *value_name) {
+    dom_string *value = 0;
+    int match = 0;
+
+    if (node == 0 || attr_name == 0 || value_name == 0) {
+        return 0;
+    }
+    value = netsurf_port_element_attr(node, attr_name);
+    if (value != 0) {
+        match = netsurf_port_dom_string_has_token_ci(value, value_name);
+        dom_string_unref(value);
+    }
+    return match;
+}
+
 static int netsurf_port_element_has_attr(dom_node *node, const char *attr_name) {
     dom_string *name = 0;
     bool match = false;
@@ -363,6 +426,20 @@ static int netsurf_port_primary_attr_is_chrome(const dom_string *value) {
            netsurf_port_dom_string_contains_ci(value, "catlinks");
 }
 
+static int netsurf_port_element_role_is(dom_node *node, const char *role_name) {
+    return netsurf_port_element_attr_has_token_ci(node, "role", role_name);
+}
+
+static int netsurf_port_element_role_is_chrome(dom_node *node) {
+    return netsurf_port_element_role_is(node, "navigation") ||
+           netsurf_port_element_role_is(node, "banner") ||
+           netsurf_port_element_role_is(node, "contentinfo") ||
+           netsurf_port_element_role_is(node, "complementary") ||
+           netsurf_port_element_role_is(node, "search") ||
+           netsurf_port_element_role_is(node, "tablist") ||
+           netsurf_port_element_role_is(node, "toolbar");
+}
+
 static uint32_t netsurf_port_element_primary_score(dom_node *node, const dom_string *name) {
     dom_string *id = 0;
     dom_string *klass = 0;
@@ -393,11 +470,19 @@ static uint32_t netsurf_port_element_primary_score(dom_node *node, const dom_str
 
     id = netsurf_port_element_attr(node, "id");
     klass = netsurf_port_element_attr(node, "class");
-    if (netsurf_port_primary_attr_is_chrome(id) || netsurf_port_primary_attr_is_chrome(klass)) {
+    if (netsurf_port_primary_attr_is_chrome(id) ||
+        netsurf_port_primary_attr_is_chrome(klass) ||
+        netsurf_port_element_role_is_chrome(node)) {
         score = 0;
         goto out;
     }
 
+    if (netsurf_port_element_role_is(node, "main")) {
+        score = netsurf_port_u32_max(score, 145u);
+    }
+    if (netsurf_port_element_role_is(node, "article")) {
+        score = netsurf_port_u32_max(score, 110u);
+    }
     if (netsurf_port_dom_string_contains_ci(id, "mw-content-text")) {
         score = netsurf_port_u32_max(score, 140u);
     }
@@ -636,6 +721,12 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
         netsurf_port_dom_string_equals_ci(name, "aside")) {
         return NETSURF_PORT_HINT_ROLE_CHROME;
     }
+    if (scan_attrs != 0 && netsurf_port_element_role_is(node, "main")) {
+        return NETSURF_PORT_HINT_ROLE_PRIMARY;
+    }
+    if (scan_attrs != 0 && netsurf_port_element_role_is_chrome(node)) {
+        return NETSURF_PORT_HINT_ROLE_CHROME;
+    }
     if (scan_attrs != 0 &&
         (netsurf_port_element_attr_contains_ci(node, "class", "navbar") ||
          netsurf_port_element_attr_contains_ci(node, "class", "navigation") ||
@@ -839,6 +930,9 @@ int netsurf_port_style_hint_for_tag(const uint8_t *html,
 }
 
 static int netsurf_port_primary_candidate(dom_node *node, const dom_string *name) {
+    if (netsurf_port_element_role_is(node, "main")) {
+        return 1;
+    }
     if (netsurf_port_dom_string_equals_ci(name, "main") ||
         netsurf_port_dom_string_equals_ci(name, "article")) {
         return 1;
@@ -1223,12 +1317,12 @@ uint32_t netsurf_port_render_smoke(void) {
     static const char html[] =
         "<!doctype html><html><head><title>render smoke</title>"
         "<script>console.log('skip');</script></head>"
-        "<body><nav class=\"toc\">chrome</nav>"
+        "<body><div role=\"navigation\" class=\"toc\">chrome</div>"
         "<span class=\"sr-only\">assistive only</span>"
-        "<main><form><fieldset><legend>Search</legend>"
+        "<div role=\"main\"><form><fieldset><legend>Search</legend>"
         "<input type=\"hidden\" name=\"source\" value=\"smoke\">"
         "<input type=\"search\" name=\"q\" value=\"LainOS\"></fieldset></form>"
-        "<p>NetSurf render smoke</p></main>"
+        "<p>NetSurf render smoke</p></div>"
         "<div id=\"catlinks\">categories</div></body></html>";
     uint8_t out[2048];
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
@@ -1276,7 +1370,7 @@ uint32_t netsurf_port_render_smoke(void) {
         return 0u;
     }
 
-    nav_pos = netsurf_port_find_tag_pos_from_fragment(out, "<nav");
+    nav_pos = netsurf_port_find_tag_pos_from_fragment(out, "role=\"navigation\"");
     display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     role = NETSURF_PORT_HINT_ROLE_NONE;
     flags = 0;
