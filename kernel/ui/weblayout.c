@@ -87,6 +87,7 @@ typedef struct {
 #define WEB_CSS_MAX_NODES 8192u
 #define WEB_CSS_MAX_STACK 96u
 #define WEB_CSS_MAX_CLASSES 16u
+#define WEB_CSS_TRACE_DETAIL_NODE_LIMIT 32u
 #define WEB_CSS_TRACE_EARLY_NODES 2u
 #define WEB_CSS_TRACE_PROGRESS_STRIDE 64u
 
@@ -512,6 +513,10 @@ static int web_css_trace_step_equals(const char *step, const char *expected) {
     return step[i] == 0 && expected[i] == 0;
 }
 
+static int web_css_trace_detailed_enabled(void) {
+    return web_css_node_count <= WEB_CSS_TRACE_DETAIL_NODE_LIMIT;
+}
+
 static int web_css_trace_step_enabled(const web_css_node_t *node, const char *step) {
     uint32_t index;
 
@@ -524,12 +529,16 @@ static int web_css_trace_step_enabled(const web_css_node_t *node, const char *st
         web_css_trace_step_equals(step, "inline-style-fail")) {
         return 1;
     }
-    if (index < WEB_CSS_TRACE_EARLY_NODES || index + 1u >= web_css_node_count) {
-        return 1;
-    }
     if (web_css_trace_step_equals(step, "precompute-node")) {
+        if (index < WEB_CSS_TRACE_EARLY_NODES || index + 1u >= web_css_node_count) {
+            return 1;
+        }
         return WEB_CSS_TRACE_PROGRESS_STRIDE != 0u &&
                (index % WEB_CSS_TRACE_PROGRESS_STRIDE) == 0u;
+    }
+    if (web_css_trace_detailed_enabled() &&
+        (index < WEB_CSS_TRACE_EARLY_NODES || index + 1u >= web_css_node_count)) {
+        return 1;
     }
 
     return 0;
