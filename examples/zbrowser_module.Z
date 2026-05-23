@@ -3987,7 +3987,10 @@ int inline_external_stylesheets(uint8_t *html, int size) {
             make_absolute_url(zbrowser_url, zbrowser_attr, zbrowser_css_url, ZBROWSER_URL_CAPACITY);
             if (zbrowser_css_url[0] != 0) {
                 copy_text(zbrowser_status, 96, "fetching css");
-                css_size = http_get_page_with_retry(zbrowser_css_url, css_buffer, ZBROWSER_CSS_CAPACITY - 1, &info);
+                css_size = read_url_resource_with_retry(zbrowser_css_url,
+                                                        css_buffer,
+                                                        ZBROWSER_CSS_CAPACITY - 1,
+                                                        &info);
                 if (css_size > 0) {
                     css_buffer[css_size] = 0;
                     size = append_text_to_document(html, size, "\n<style>\n");
@@ -4562,6 +4565,19 @@ void copy_url_prefix(uint8_t *out, uint32_t capacity, const uint8_t *text, uint3
     out[i] = 0;
 }
 
+uint32_t local_url_root_length(const uint8_t *base, uint32_t base_end) {
+    uint32_t i;
+
+    i = 0;
+    while (i < base_end && base[i] != 0) {
+        if (base[i] == 47 || base[i] == 92) {
+            return i + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 void pop_url_path_segment(uint8_t *url, uint32_t root_len) {
     uint32_t len;
 
@@ -4617,17 +4633,18 @@ void make_absolute_url(const uint8_t *base, const uint8_t *href, uint8_t *out, u
         scheme_len = 8;
     } else if (zb_starts_with(base, "http://")) {
         scheme_len = 7;
-    } else {
-        copy_text(out, capacity, href);
-        return;
     }
 
     base_end = url_query_or_fragment_start(base);
-    origin_end = scheme_len;
-    while (base[origin_end] != 0 &&
-           origin_end < base_end &&
-           base[origin_end] != 47) {
-        origin_end = origin_end + 1;
+    if (scheme_len != 0) {
+        origin_end = scheme_len;
+        while (base[origin_end] != 0 &&
+               origin_end < base_end &&
+               base[origin_end] != 47) {
+            origin_end = origin_end + 1;
+        }
+    } else {
+        origin_end = local_url_root_length(base, base_end);
     }
 
     if (href[0] == 35) {
@@ -4641,8 +4658,12 @@ void make_absolute_url(const uint8_t *base, const uint8_t *href, uint8_t *out, u
         return;
     }
     if (href[0] == 47) {
-        copy_url_prefix(out, capacity, base, origin_end);
-        append_url_ref(out, capacity, href);
+        if (scheme_len != 0) {
+            copy_url_prefix(out, capacity, base, origin_end);
+            append_url_ref(out, capacity, href);
+        } else {
+            copy_url_ref(out, capacity, href);
+        }
         return;
     }
 
@@ -4698,6 +4719,16 @@ void make_absolute_url(const uint8_t *base, const uint8_t *href, uint8_t *out, u
     }
 
     append_url_ref_from(out, capacity, href, rel_start);
+}
+
+int read_url_resource_with_retry(const uint8_t *url,
+                                 uint8_t *buffer,
+                                 uint32_t capacity,
+                                 struct NetHttpInfo *info) {
+    if (has_scheme(url) == 0) {
+        return os_read_file(url, buffer, capacity);
+    }
+    return http_get_page_with_retry(url, buffer, capacity, info);
 }
 
 void trim_text_end(uint8_t *text) {
@@ -9045,10 +9076,15 @@ void zbrowser_css_worker(uint8_t *arg) {
     zbrowser_css_fetch_started_tick = ticks();
     print("zbrowser css-fetch start");
     print(zbrowser_css_url);
-    zbrowser_css_fetch_size = http_get_page_with_retry(zbrowser_css_url,
-                                                       css_buffer,
-                                                       ZBROWSER_CSS_CAPACITY - 1,
-                                                       &info);
+    if (has_scheme(zbrowser_css_url) == 0) {
+        print("zbrowser css-fetch mode local");
+    } else {
+        print("zbrowser css-fetch mode http");
+    }
+    zbrowser_css_fetch_size = read_url_resource_with_retry(zbrowser_css_url,
+                                                           css_buffer,
+                                                           ZBROWSER_CSS_CAPACITY - 1,
+                                                           &info);
     zbrowser_css_fetch_result = zbrowser_css_fetch_size;
     if (zbrowser_css_fetch_size > 0) {
         css_buffer[zbrowser_css_fetch_size] = 0;

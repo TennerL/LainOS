@@ -1,0 +1,23 @@
+@import "../zbrowser_palette.css";
+
+.import-panel {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 2px dashed #8d99ae;
+  background: #edf2f4;
+}
+
+.import-note {
+  color: #2b2d42;
+  font-style: italic;
+}
+
+.status-grid {
+  margin-top: 18px;
+}
+
+.status-card {
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 2px solid #293241;
+}

@@ -1,0 +1,29 @@
+@import "imports/zbrowser_layout.css";
+
+body {
+  margin: 0;
+  background: #f4efe2;
+  color: #1b1f23;
+  font-family: serif;
+}
+
+.page-shell {
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 20px 24px 28px;
+  background: #fffdf8;
+  border: 3px solid #293241;
+}
+
+h1 {
+  color: #8d3b12;
+  margin-bottom: 8px;
+}
+
+.summary {
+  color: #3d405b;
+}
+
+.primary-card {
+  background: #d9e2ec;
+}

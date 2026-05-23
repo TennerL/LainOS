@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser External CSS Smoke</title>
+<link rel="stylesheet" href="styles/zbrowser_main.css">
+</head>
+<body>
+<main class="page-shell">
+<h1>Z Browser External CSS Smoke</h1>
+<p class="summary">This page should prove local external CSS discovery, nested imports, and render completeness.</p>
+<section class="import-panel">
+<h2>Imported Rule Set</h2>
+<p class="import-note">This note should pick up typography and border styling from nested @import rules.</p>
+</section>
+<div class="status-grid">
+<div class="status-card primary-card">Primary card from the top-level stylesheet.</div>
+<div class="status-card accent-card">Accent card from the nested import chain.</div>
+</div>
+<p class="palette-chip">Palette color comes from the second-level imported stylesheet.</p>
+</main>
+</body>
+</html>

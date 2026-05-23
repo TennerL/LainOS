@@ -1,0 +1,11 @@
+.accent-card {
+  background: #ffd166;
+  color: #22223b;
+}
+
+.palette-chip {
+  display: inline-block;
+  padding: 6px 10px;
+  background: #06d6a0;
+  color: #073b4c;
+}

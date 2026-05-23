@@ -41,6 +41,7 @@ if [ -z "$ovmf_code" ] || [ -z "$ovmf_vars" ]; then
 fi
 
 timeout_seconds="${ZBROWSER_LAUNCH_REPRO_TIMEOUT_SECONDS:-45}"
+launch_page="${ZBROWSER_LAUNCH_REPRO_PAGE:-zbrowser_smoke.html}"
 smoke_img="build/zbrowser-launch-repro.data.img"
 smoke_vars="build/OVMF_VARS.zbrowser-launch-repro.fd"
 serial_log="build/zbrowser-launch-repro.serial.log"
@@ -49,12 +50,18 @@ screenshot_1="build/zbrowser-launch-repro-1.ppm"
 screenshot_2="build/zbrowser-launch-repro-2.ppm"
 seed_root="build/zbrowser-launch-repro.seed"
 host_build_root="build/zbrowser-launch-repro"
+page_source="examples/${launch_page}"
 
 mkdir -p "$host_build_root"
 make build/tools/lainfs_check_host build/tools/lainfs_seed build/tools/zmod_link_host
 
 if [ ! -f build/esp.img ] || [ ! -f build/data.img ]; then
   printf 'zbrowser launch repro: missing build/esp.img or build/data.img; run a normal build first.\n' >&2
+  exit 1
+fi
+
+if [ ! -f "$page_source" ]; then
+  printf 'zbrowser launch repro: missing page %s\n' "$page_source" >&2
   exit 1
 fi
 
@@ -68,12 +75,16 @@ rm -rf "$seed_root"
 mkdir -p "$seed_root/mods"
 cp "$host_build_root/zbrowser_html.zo" "$seed_root/mods/zbrowser_html.zo"
 cp "$host_build_root/zbrowser_module.zo" "$seed_root/mods/zbrowser_module.zo"
-printf 'zbrowser_smoke.html\n' >"$seed_root/mods/browser.url"
+mkdir -p "$(dirname "$seed_root/mods/$launch_page")"
+cp "$page_source" "$seed_root/mods/$launch_page"
+if [ -d examples/styles ]; then
+  cp -R examples/styles "$seed_root/mods/styles"
+fi
+printf '%s\n' "$launch_page" >"$seed_root/mods/browser.url"
 : >"$seed_root/mods/zbrowser.autostart"
 cat >"$seed_root/autoexec" <<'EOF'
 mkdir mods
 cd mods
-cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
 desktop
 EOF
 build/tools/lainfs_seed \
