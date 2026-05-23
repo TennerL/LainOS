@@ -1,0 +1,21 @@
+[submodule "third_party/netsurf/src/libcss"]
+	path = third_party/netsurf/src/libcss
+	url = https://github.com/netsurf-browser/libcss.git
+[submodule "third_party/netsurf/src/libdom"]
+	path = third_party/netsurf/src/libdom
+	url = https://github.com/netsurf-browser/libdom.git
+[submodule "third_party/netsurf/src/libhubbub"]
+	path = third_party/netsurf/src/libhubbub
+	url = https://github.com/netsurf-browser/libhubbub.git
+[submodule "third_party/netsurf/src/libnsutils"]
+	path = third_party/netsurf/src/libnsutils
+	url = https://github.com/netsurf-browser/libnsutils.git
+[submodule "third_party/netsurf/src/libparserutils"]
+	path = third_party/netsurf/src/libparserutils
+	url = https://github.com/netsurf-browser/libparserutils.git
+[submodule "third_party/netsurf/src/libwapcaplet"]
+	path = third_party/netsurf/src/libwapcaplet
+	url = https://github.com/netsurf-browser/libwapcaplet.git
+[submodule "third_party/netsurf/src/netsurf"]
+	path = third_party/netsurf/src/netsurf
+	url = https://github.com/netsurf-browser/netsurf.git
