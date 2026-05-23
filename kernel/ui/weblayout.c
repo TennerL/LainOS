@@ -87,6 +87,8 @@ typedef struct {
 #define WEB_CSS_MAX_NODES 8192u
 #define WEB_CSS_MAX_STACK 96u
 #define WEB_CSS_MAX_CLASSES 16u
+#define WEB_CSS_TRACE_EARLY_NODES 2u
+#define WEB_CSS_TRACE_PROGRESS_STRIDE 64u
 
 typedef struct {
     uint32_t selector_start;
@@ -102,6 +104,9 @@ static uint32_t web_cached_rule_count;
 static uint32_t web_cached_rule_saturated;
 static unsigned long long web_css_select_total_ticks;
 static unsigned long long web_css_apply_total_ticks;
+static unsigned long long web_css_trace_total_ticks;
+static uint32_t web_css_trace_lines_emitted;
+static uint32_t web_css_trace_lines_suppressed;
 static web_cached_rule_t web_cached_rules[WEB_STYLE_MAX_CACHED_RULES];
 
 typedef struct {
@@ -519,29 +524,41 @@ static int web_css_trace_step_enabled(const web_css_node_t *node, const char *st
         web_css_trace_step_equals(step, "inline-style-fail")) {
         return 1;
     }
-    if (index < 8u || index + 1u >= web_css_node_count) {
+    if (index < WEB_CSS_TRACE_EARLY_NODES || index + 1u >= web_css_node_count) {
         return 1;
     }
     if (web_css_trace_step_equals(step, "precompute-node")) {
-        return (index & 7u) == 0u;
+        return WEB_CSS_TRACE_PROGRESS_STRIDE != 0u &&
+               (index % WEB_CSS_TRACE_PROGRESS_STRIDE) == 0u;
     }
 
     return 0;
 }
 
+static void web_css_trace_reset_stats(void) {
+    web_css_trace_total_ticks = 0;
+    web_css_trace_lines_emitted = 0;
+    web_css_trace_lines_suppressed = 0;
+}
+
 static void web_css_trace_node_step(const web_css_node_t *node, const char *step) {
     char name_buf[32];
     uint32_t len = 0;
+    unsigned long long started;
 
     if (!web_css_trace_step_enabled(node, step)) {
+        ++web_css_trace_lines_suppressed;
         return;
     }
 
+    started = timer_ticks();
     console_puts("css-trace ");
     console_puts(step);
     console_puts(" node=");
     if (node == NULL) {
         console_puts("null\n");
+        ++web_css_trace_lines_emitted;
+        web_css_trace_total_ticks += timer_ticks() - started;
         return;
     }
 
@@ -559,6 +576,8 @@ static void web_css_trace_node_step(const web_css_node_t *node, const char *step
     console_puts(" pos=");
     console_put_dec64(node->tag_pos);
     console_puts("\n");
+    ++web_css_trace_lines_emitted;
+    web_css_trace_total_ticks += timer_ticks() - started;
 }
 
 static css_error web_css_resolve_url(void *pw,
@@ -3604,6 +3623,7 @@ static int web_css_prepare_document(const uint8_t *html) {
         "button,input,select,textarea{font-size:16px}"
         "[hidden],template,input[type=\"hidden\"]{display:none}";
 
+    web_css_trace_reset_stats();
     console_puts("css-trace prepare-reset\n");
     web_css_reset();
     console_puts("css-trace prepare-build-nodes\n");
@@ -3862,6 +3882,12 @@ int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uin
     console_put_dec64(rulecache_done_ticks - precompute_done_ticks);
     console_puts(" total_ticks=");
     console_put_dec64(rulecache_done_ticks - start_ticks);
+    console_puts(" trace_lines=");
+    console_put_dec64(web_css_trace_lines_emitted);
+    console_puts(" trace_suppressed=");
+    console_put_dec64(web_css_trace_lines_suppressed);
+    console_puts(" trace_ticks=");
+    console_put_dec64(web_css_trace_total_ticks);
     console_puts("\n");
     return web_cached_rule_saturated ? -3 : (int)web_cached_rule_count;
 }
@@ -4873,6 +4899,12 @@ static void web_css_precompute_styles(const uint8_t *html,
     console_put_dec64(web_css_apply_total_ticks);
     console_puts(" hint_ticks=");
     console_put_dec64(hint_ticks);
+    console_puts(" trace_lines=");
+    console_put_dec64(web_css_trace_lines_emitted);
+    console_puts(" trace_suppressed=");
+    console_put_dec64(web_css_trace_lines_suppressed);
+    console_puts(" trace_ticks=");
+    console_put_dec64(web_css_trace_total_ticks);
     console_puts(" ticks=");
     console_put_dec64(timer_ticks() - start_ticks);
     console_puts("\n");
