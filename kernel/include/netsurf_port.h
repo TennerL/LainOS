@@ -32,6 +32,7 @@
 uint32_t netsurf_port_dom_smoke(void);
 uint32_t netsurf_port_dom_status(void);
 uint32_t netsurf_port_parse_html_smoke(const char *html, size_t len);
+uint32_t netsurf_port_render_smoke(void);
 int netsurf_port_rewrite_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
 int netsurf_port_rewrite_render_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
 int netsurf_port_style_hint_for_tag(const uint8_t *html,

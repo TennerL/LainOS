@@ -55,6 +55,7 @@ static uint32_t netsurf_port_hint_saturated;
 static netsurf_port_style_hint_t netsurf_port_hints[NETSURF_PORT_MAX_HINTS];
 
 static uint8_t netsurf_port_lower(uint8_t ch);
+static uint32_t netsurf_port_find_tag_pos_from_fragment(const uint8_t *html, const char *fragment);
 
 static void netsurf_port_dom_msg(uint32_t severity, void *ctx, const char *msg, ...) {
     (void)severity;
@@ -1195,4 +1196,87 @@ uint32_t netsurf_port_dom_smoke(void) {
         "<body><main><h1>NetSurf DOM</h1><p>adapter smoke</p></main></body></html>";
 
     return netsurf_port_parse_html_smoke(html, sizeof(html) - 1u);
+}
+
+static uint32_t netsurf_port_find_tag_pos_from_fragment(const uint8_t *html, const char *fragment) {
+    const char *found;
+
+    if (html == 0 || fragment == 0) {
+        return 0xffffffffu;
+    }
+    found = strstr((const char *)html, fragment);
+    if (found == 0) {
+        return 0xffffffffu;
+    }
+    while (found > (const char *)html && found[0] != '<') {
+        --found;
+    }
+    if (found[0] != '<') {
+        return 0xffffffffu;
+    }
+    return (uint32_t)(found - (const char *)html);
+}
+
+uint32_t netsurf_port_render_smoke(void) {
+    static const char html[] =
+        "<!doctype html><html><head><title>render smoke</title>"
+        "<script>console.log('skip');</script></head>"
+        "<body><nav class=\"toc\">chrome</nav>"
+        "<main><form><input type=\"hidden\" name=\"source\" value=\"smoke\">"
+        "<input type=\"search\" name=\"q\" value=\"LainOS\"></form>"
+        "<p>NetSurf render smoke</p></main></body></html>";
+    uint8_t out[2048];
+    uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
+    uint32_t flags = 0;
+    uint32_t main_pos;
+    uint32_t nav_pos;
+    uint32_t hidden_input_pos;
+    uint32_t required_status;
+    int written;
+
+    written = netsurf_port_rewrite_render_html((const uint8_t *)html, sizeof(html) - 1u, out, sizeof(out));
+    if (written <= 0) {
+        return 0u;
+    }
+    required_status = NETSURF_PORT_DOM_EXPECTED |
+                      NETSURF_PORT_DOM_SERIALIZE |
+                      NETSURF_PORT_DOM_PRIMARY;
+    if ((netsurf_port_last_dom_status & required_status) != required_status) {
+        return 0u;
+    }
+    if (strstr((const char *)out, "<script") != 0 ||
+        strstr((const char *)out, "console.log") != 0) {
+        return 0u;
+    }
+
+    main_pos = netsurf_port_find_tag_pos_from_fragment(out, "data-zbrowser-primary=\"1\"");
+    if (main_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, main_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
+        (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
+        return 0u;
+    }
+
+    nav_pos = netsurf_port_find_tag_pos_from_fragment(out, "<nav");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (nav_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, nav_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
+    hidden_input_pos = netsurf_port_find_tag_pos_from_fragment(out, "type=\"hidden\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (hidden_input_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, hidden_input_pos, &display, &role, &flags) == 0 ||
+        (flags & NETSURF_PORT_HINT_FLAG_HIDDEN) == 0u) {
+        return 0u;
+    }
+
+    return 1u;
 }

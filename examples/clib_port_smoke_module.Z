@@ -9,6 +9,7 @@ extern uint32_t webcompat_pu_smoke(void);
 extern uint32_t webcompat_pu_status(void);
 extern uint32_t webcompat_css_smoke(void);
 extern uint32_t webcompat_css_status(void);
+extern uint32_t netsurf_port_render_smoke(void);
 
 global uint32_t clib_port_passed;
 global uint32_t clib_port_checksum;
@@ -18,6 +19,7 @@ global uint32_t clib_pu_ok;
 global uint32_t clib_pu_bits;
 global uint32_t clib_css_ok;
 global uint32_t clib_css_bits;
+global uint32_t clib_netsurf_render_ok;
 
 void draw_text(uint32_t col, uint32_t row, const uint8_t *text) {
     uint32_t i;
@@ -46,6 +48,8 @@ export void zmodule_redraw(void) {
     put_dec_at_screen(18, 8, clib_css_ok);
     draw_text(2, 9, "CSS STATUS");
     put_dec_at_screen(18, 9, clib_css_bits);
+    draw_text(2, 10, "NS RENDER");
+    put_dec_at_screen(18, 10, clib_netsurf_render_ok);
 }
 
 export void zmodule_unload(void) {
@@ -57,6 +61,7 @@ export void zmodule_unload(void) {
     clib_pu_bits = 0;
     clib_css_ok = 0;
     clib_css_bits = 0;
+    clib_netsurf_render_ok = 0;
 }
 
 uint32_t run_clib_port_smoke(void) {
@@ -129,9 +134,14 @@ uint32_t run_css_smoke(void) {
     return ok;
 }
 
+uint32_t run_netsurf_render_smoke(void) {
+    return netsurf_port_render_smoke();
+}
+
 clib_port_passed = run_clib_port_smoke();
 clib_lwc_ok = run_lwc_smoke();
 clib_pu_ok = run_parserutils_smoke();
 clib_css_ok = run_css_smoke();
+clib_netsurf_render_ok = run_netsurf_render_smoke();
 
 return 0;

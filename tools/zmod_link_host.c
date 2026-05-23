@@ -100,6 +100,7 @@ static const char *const host_kernel_exports[] = {
     "netsurf_port_dom_smoke",
     "netsurf_port_dom_status",
     "netsurf_port_parse_html_smoke",
+    "netsurf_port_render_smoke",
     "netsurf_port_rewrite_html",
     "netsurf_port_rewrite_render_html",
     "netsurf_port_style_hint_for_tag",
@@ -144,6 +145,7 @@ int kernel_export_value(const char *name, uint64_t *out) {
         host_streq(name, "netsurf_port_dom_smoke") ||
         host_streq(name, "netsurf_port_dom_status") ||
         host_streq(name, "netsurf_port_parse_html_smoke") ||
+        host_streq(name, "netsurf_port_render_smoke") ||
         host_streq(name, "netsurf_port_rewrite_html") ||
         host_streq(name, "netsurf_port_rewrite_render_html") ||
         host_streq(name, "netsurf_port_style_hint_for_tag") ||

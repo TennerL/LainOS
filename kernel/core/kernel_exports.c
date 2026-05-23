@@ -134,6 +134,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("netsurf_port_dom_smoke", netsurf_port_dom_smoke),
     KERNEL_EXPORT("netsurf_port_dom_status", netsurf_port_dom_status),
     KERNEL_EXPORT("netsurf_port_parse_html_smoke", netsurf_port_parse_html_smoke),
+    KERNEL_EXPORT("netsurf_port_render_smoke", netsurf_port_render_smoke),
     KERNEL_EXPORT("netsurf_port_rewrite_html", netsurf_port_rewrite_html),
     KERNEL_EXPORT("netsurf_port_rewrite_render_html", netsurf_port_rewrite_render_html),
     KERNEL_EXPORT("netsurf_port_style_hint_for_tag", netsurf_port_style_hint_for_tag),
