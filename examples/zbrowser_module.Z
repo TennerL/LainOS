@@ -4174,6 +4174,62 @@ void copy_url_ref(uint8_t *out, uint32_t capacity, const uint8_t *text) {
     append_url_ref(out, capacity, text);
 }
 
+uint32_t url_query_or_fragment_start(const uint8_t *url) {
+    uint32_t i;
+
+    i = 0;
+    while (url[i] != 0) {
+        if (url[i] == 63 || url[i] == 35) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+uint32_t url_fragment_start(const uint8_t *url) {
+    uint32_t i;
+
+    i = 0;
+    while (url[i] != 0) {
+        if (url[i] == 35) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+void copy_url_prefix(uint8_t *out, uint32_t capacity, const uint8_t *text, uint32_t end) {
+    uint32_t i;
+
+    if (capacity == 0) {
+        return;
+    }
+    i = 0;
+    while (text[i] != 0 && i < end && i + 1 < capacity) {
+        out[i] = text[i];
+        i = i + 1;
+    }
+    out[i] = 0;
+}
+
+void pop_url_path_segment(uint8_t *url, uint32_t root_len) {
+    uint32_t len;
+
+    len = os_strlen(url);
+    if (len == 0) {
+        return;
+    }
+    if (len > root_len && url[len - 1] == 47) {
+        len = len - 1;
+    }
+    while (len > root_len && url[len - 1] != 47) {
+        len = len - 1;
+    }
+    url[len] = 0;
+}
+
 void make_search_url(const uint8_t *query, uint8_t *out, uint32_t capacity) {
     copy_text(out, capacity, "https://www.google.com/search?q=");
     url_append_encoded(out, capacity, query);
@@ -4181,8 +4237,11 @@ void make_search_url(const uint8_t *query, uint8_t *out, uint32_t capacity) {
 
 void make_absolute_url(const uint8_t *base, const uint8_t *href, uint8_t *out, uint32_t capacity) {
     uint32_t i;
-    uint32_t last_slash;
     uint32_t scheme_len;
+    uint32_t base_end;
+    uint32_t origin_end;
+    uint32_t prefix_end;
+    uint32_t rel_start;
 
     if (capacity == 0) {
         return;
@@ -4215,41 +4274,82 @@ void make_absolute_url(const uint8_t *base, const uint8_t *href, uint8_t *out, u
         return;
     }
 
-    i = scheme_len;
-    while (base[i] != 0 && base[i] != 47) {
-        i = i + 1;
+    base_end = url_query_or_fragment_start(base);
+    origin_end = scheme_len;
+    while (base[origin_end] != 0 &&
+           origin_end < base_end &&
+           base[origin_end] != 47) {
+        origin_end = origin_end + 1;
     }
 
+    if (href[0] == 35) {
+        copy_url_prefix(out, capacity, base, url_fragment_start(base));
+        append_url_ref(out, capacity, href);
+        return;
+    }
+    if (href[0] == 63) {
+        copy_url_prefix(out, capacity, base, base_end);
+        append_url_ref(out, capacity, href);
+        return;
+    }
     if (href[0] == 47) {
-        last_slash = i;
-    } else {
-        last_slash = i;
-        while (base[i] != 0) {
+        copy_url_prefix(out, capacity, base, origin_end);
+        append_url_ref(out, capacity, href);
+        return;
+    }
+
+    prefix_end = origin_end;
+    if (base_end > origin_end) {
+        prefix_end = origin_end;
+        i = origin_end;
+        while (i < base_end) {
             if (base[i] == 47) {
-                last_slash = i + 1;
+                prefix_end = i + 1;
             }
             i = i + 1;
         }
+        if (base[base_end - 1] == 47) {
+            prefix_end = base_end;
+        }
     }
 
-    i = 0;
-    while (base[i] != 0 && i < last_slash && i + 1 < capacity) {
-        out[i] = base[i];
-        i = i + 1;
+    copy_url_prefix(out, capacity, base, prefix_end);
+    if (out[0] != 0 && out[os_strlen(out) - 1] != 47) {
+        append_char_limited(out, capacity, 47);
     }
-    out[i] = 0;
-    if (href[0] == 47) {
-        append_url_ref(out, capacity, href);
-    } else {
-        if (last_slash == scheme_len || base[last_slash - 1] != 47) {
-            append_char_limited(out, capacity, 47);
+
+    rel_start = 0;
+    while (href[rel_start] != 0) {
+        if (href[rel_start] == 46 && href[rel_start + 1] == 47) {
+            rel_start = rel_start + 2;
+            continue;
         }
-        if (href[0] == 46 && href[1] == 47) {
-            append_url_ref_from(out, capacity, href, 2);
-        } else {
-            append_url_ref(out, capacity, href);
+        if (href[rel_start] == 46 &&
+            href[rel_start + 1] == 46 &&
+            href[rel_start + 2] == 47) {
+            pop_url_path_segment(out, origin_end);
+            if (out[0] != 0 && out[os_strlen(out) - 1] != 47) {
+                append_char_limited(out, capacity, 47);
+            }
+            rel_start = rel_start + 3;
+            continue;
         }
+        if (href[rel_start] == 46 && href[rel_start + 1] == 0) {
+            return;
+        }
+        if (href[rel_start] == 46 &&
+            href[rel_start + 1] == 46 &&
+            href[rel_start + 2] == 0) {
+            pop_url_path_segment(out, origin_end);
+            if (out[0] != 0 && out[os_strlen(out) - 1] != 47) {
+                append_char_limited(out, capacity, 47);
+            }
+            return;
+        }
+        break;
     }
+
+    append_url_ref_from(out, capacity, href, rel_start);
 }
 
 void trim_text_end(uint8_t *text) {
