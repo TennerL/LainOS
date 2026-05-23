@@ -192,6 +192,7 @@ static uint32_t editor_output_len;
 static int editor_scroll_drag;
 static unsigned long long desktop_mouse_last_activity_tick;
 static uint64_t desktop_clock_last_stamp = 0xffffffffffffffffull;
+static int desktop_zbrowser_autostart_done;
 static const desktop_launcher_t launchers[] = {
     { 20u, 48u, 54u, 54u, DESKTOP_APP_TERMINAL, "Terminal" },
     { 20u, 124u, 54u, 54u, DESKTOP_APP_BROWSER, "Files" },
@@ -345,6 +346,7 @@ static int text_equals(const char *a, const char *b);
 static void text_copy_limited(char *dst, uint32_t dst_size, const char *src);
 static void desktop_draw_taskbar(void);
 static int desktop_taskbar_clock_tick_due(void);
+static void desktop_try_zbrowser_autostart(void);
 
 typedef struct {
     uint32_t bg_top;
@@ -3608,6 +3610,9 @@ void desktop_run(const boot_info_t *info) {
     desktop_mouse_snapshot(&last_x, &last_y, &last_buttons);
     desktop_mouse_last_activity_tick = timer_ticks();
     cursor_draw_at(last_x, last_y);
+    desktop_try_zbrowser_autostart();
+    desktop_redraw_all();
+    cursor_draw_at(last_x, last_y);
 
     for (;;) {
         key_event_t key;
@@ -4563,4 +4568,21 @@ void desktop_run(const boot_info_t *info) {
     console_reset_region();
     terminal_console_active = 0;
     console_clear();
+}
+static void desktop_try_zbrowser_autostart(void) {
+    char flag[8];
+
+    if (desktop_zbrowser_autostart_done) {
+        return;
+    }
+    desktop_zbrowser_autostart_done = 1;
+    if (shell_api_read_file("/mods/zbrowser.autostart", flag, sizeof(flag) - 1u) < 0) {
+        return;
+    }
+    console_puts("desktop: zbrowser autostart requested\n");
+    if (desktop_open_module_app_by_name("zbrowser_module.zo", 1) != 0) {
+        console_puts("desktop: zbrowser autostart failed\n");
+        return;
+    }
+    console_puts("desktop: zbrowser autostart opened\n");
 }

@@ -5,6 +5,60 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-23 22:31-22:40 Europe/Berlin async-fallback/runtime-trace pass:
+  - Focused host compile gate still passes:
+    - command: `./scripts/zbrowser-compile-smoke.sh`
+  - The bounded desktop/window launch repro now reaches the real zbrowser load path:
+    - command: `./scripts/zbrowser-launch-repro.sh`
+    - serial now shows:
+      - `desktop: zbrowser autostart requested`
+      - `desktop: zbrowser autostart opened`
+      - `zbrowser start-load ... sync-fallback`
+      - `css-trace precompute-count=50`
+      - `css-trace style-prepare-precompute-done`
+      - `zbrowser load-document prepare-css-result 4`
+      - `zbrowser load-document local-fast-path-done`
+  - Root cause for the previous headless false-negative:
+    - `examples/zbrowser_module.Z` refused to load any document when `kernel_task_async_supported() == 0`
+    - in this single-core QEMU path that meant zbrowser stopped before CSS/layout/render, which masked the real runtime behavior
+  - Patch landed in this pass:
+    - `examples/zbrowser_module.Z`: synchronous fallback in `start_load_document_task()` when async tasks are unavailable, so desktop/headless launch still executes `load_document()`
+    - `kernel/ui/weblayout.c`: bounded CSS trace throttling that keeps first-node detail, periodic progress checkpoints, last-node detail, and failures, instead of flooding serial on every node/phase
+    - `kernel/ui/desktop.c`: autostart success/failure trace for the launch harness
+  - Exact current conclusion from the runtime evidence:
+    - on `examples/zbrowser_smoke.html`, the `css-trace` stream in QEMU is not a restart loop; it advances monotonically through the 50-node DOM and completes `style-prepare-precompute-done`
+    - this means the earlier “endless css-trace” symptom can be a long single precompute pass plus trace saturation, not necessarily repeated CSS preparation, at least on the smoke page
+  - Remaining blocker after this pass:
+    - the smoke launch harness still does not capture a second framebuffer screendump, so the next concrete bug boundary is now after CSS precompute: document render, image/background fetch, viewport blit, or monitor-capture timing
+  - Next concrete patch/verification step:
+    - add bounded post-load/render checkpoints in zbrowser around `zmodule_redraw()`, `render_html()`, cached viewport draw, and image/background decode paths
+    - make `scripts/zbrowser-launch-repro.sh` retry or delay the second screendump so framebuffer state after `style-prepare-precompute-done` is actually captured
+- Latest 2026-05-23 22:20-22:31 Europe/Berlin runtime-launch instrumentation pass:
+  - Focused host compile gate still passes: `./scripts/zbrowser-compile-smoke.sh`
+  - The small CSS-prep repro still passes on this tree:
+    - command: `./scripts/zbrowser-css-panic-repro.sh`
+    - terminal tail still ends at `css-trace style-prepare-precompute-done`, `css-repro style-result=4`, `ztest: result=0 expected=0 ok`
+  - New bounded runtime harness added for the real desktop/window launch path:
+    - script: `./scripts/zbrowser-launch-repro.sh`
+    - it seeds host-built `/mods/zbrowser_html.zo` + `/mods/zbrowser_module.zo`, writes `/mods/browser.url` with `zbrowser_smoke.html`, captures serial, and asks QEMU HMP for framebuffer screendumps
+  - New guarded desktop-side autostart hook added:
+    - file: `kernel/ui/desktop.c`
+    - behavior: if `/mods/zbrowser.autostart` exists, desktop attempts `desktop_open_module_app_by_name("zbrowser_module.zo", 1)` once during startup
+  - What was actually reproduced in this cron environment:
+    - the framebuffer capture path works: `build/zbrowser-launch-repro-1.ppm` was produced with SHA-256 `9572ee3f0d4398f1f388b8f87633c9d81b5a2ea1f4f0108d0c0fd5de8d5048aa`
+    - one bounded QEMU run failed before zbrowser because `build/esp.img` had been left non-bootable after a prior PATH-broken `mkfs.fat` attempt; serial tail was:
+      - `BdsDxe: failed to load Boot0001 "UEFI QEMU HARDDISK QM00001 "...: Not Found`
+      - `>>Start PXE over IPv4.`
+  - Current blocker from this pass:
+    - the new launch harness and autostart hook are in place, but the exact endless-`css-trace`/framebuffer-corruption launch symptom is still not verified in this cron pass because the ESP image needs one clean rebuild/update under a PATH that includes `/usr/sbin`
+    - `make build/esp.img` in this environment still trips the known PATH issue unless explicitly prefixed with `/usr/sbin`; a failed attempt left the existing `build/esp.img` unusable for one boot
+  - Next concrete patch/verification step:
+    - rebuild or refresh `build/esp.img` once with `PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"` so the desktop autostart kernel is actually on the EFI image
+    - rerun `./scripts/zbrowser-launch-repro.sh`
+    - capture:
+      - first and second framebuffer screendumps
+      - last non-repeating serial line before any repeated `css-trace`
+      - whether the trace is a single huge CSS precompute pass or repeated prepare passes after autostart
 - Latest 2026-05-23 22:10-22:20 Europe/Berlin timing pass:
   - Host compile gate still passes: `./scripts/zbrowser-compile-smoke.sh`
   - Default self-host smoke behavior in this cron environment is still the intended fast-fail skip:

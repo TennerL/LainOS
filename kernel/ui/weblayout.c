@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "kernel.h"
 #include "libc.h"
 #include "netsurf_port.h"
 #include "libcss/computed.h"
@@ -487,6 +488,75 @@ static int web_css_lwc_equal_ci(lwc_string *a, lwc_string *b) {
 
 static web_css_node_t *web_css_node(void *node) {
     return (web_css_node_t *)node;
+}
+
+static int web_css_trace_step_equals(const char *step, const char *expected) {
+    uint32_t i = 0;
+
+    if (step == NULL || expected == NULL) {
+        return 0;
+    }
+    while (step[i] != 0 && expected[i] != 0) {
+        if (step[i] != expected[i]) {
+            return 0;
+        }
+        ++i;
+    }
+    return step[i] == 0 && expected[i] == 0;
+}
+
+static int web_css_trace_step_enabled(const web_css_node_t *node, const char *step) {
+    uint32_t index;
+
+    if (node == NULL || step == NULL) {
+        return 1;
+    }
+
+    index = (uint32_t)(node - web_css_nodes);
+    if (web_css_trace_step_equals(step, "select-fail") ||
+        web_css_trace_step_equals(step, "inline-style-fail")) {
+        return 1;
+    }
+    if (index < 8u || index + 1u >= web_css_node_count) {
+        return 1;
+    }
+    if (web_css_trace_step_equals(step, "precompute-node")) {
+        return (index & 7u) == 0u;
+    }
+
+    return 0;
+}
+
+static void web_css_trace_node_step(const web_css_node_t *node, const char *step) {
+    char name_buf[32];
+    uint32_t len = 0;
+
+    if (!web_css_trace_step_enabled(node, step)) {
+        return;
+    }
+
+    console_puts("css-trace ");
+    console_puts(step);
+    console_puts(" node=");
+    if (node == NULL) {
+        console_puts("null\n");
+        return;
+    }
+
+    console_put_dec64((unsigned long long)(node - web_css_nodes));
+    console_puts(" tag=");
+    if (node->name != NULL) {
+        len = (uint32_t)lwc_string_length(node->name);
+        if (len >= sizeof(name_buf)) {
+            len = sizeof(name_buf) - 1u;
+        }
+        memcpy(name_buf, lwc_string_data(node->name), len);
+    }
+    name_buf[len] = 0;
+    console_puts(name_buf);
+    console_puts(" pos=");
+    console_put_dec64(node->tag_pos);
+    console_puts("\n");
 }
 
 static css_error web_css_resolve_url(void *pw,
@@ -3349,6 +3419,7 @@ static void web_css_parse_inline_style(const uint8_t *html, web_css_node_t *node
     if (node == NULL || !web_attr_value_range_cstr(html, node->tag_pos, "style", &start, &end) || end <= start) {
         return;
     }
+    web_css_trace_node_step(node, "inline-style-start");
     if (web_css_create_inline_sheet(&node->inline_style) != 0) {
         node->inline_style = NULL;
         return;
@@ -3356,7 +3427,10 @@ static void web_css_parse_inline_style(const uint8_t *html, web_css_node_t *node
     if (web_css_append_sheet_data(node->inline_style, html + start, end - start) != 0) {
         css_stylesheet_destroy(node->inline_style);
         node->inline_style = NULL;
+        web_css_trace_node_step(node, "inline-style-fail");
+        return;
     }
+    web_css_trace_node_step(node, "inline-style-done");
 }
 
 static int32_t web_css_add_node(const uint8_t *html,
@@ -3527,14 +3601,24 @@ static int web_css_prepare_document(const uint8_t *html) {
         "button,input,select,textarea{font-size:16px}"
         "[hidden],template,input[type=\"hidden\"]{display:none}";
 
+    console_puts("css-trace prepare-reset\n");
     web_css_reset();
+    console_puts("css-trace prepare-build-nodes\n");
     web_css_build_nodes(html);
+    console_puts("css-trace prepare-built-nodes\n");
+    if (web_css_node_saturated != 0) {
+        web_css_reset();
+        return -2;
+    }
 
+    console_puts("css-trace prepare-ua-sheet\n");
     if (web_css_create_sheet(&web_css_ua_sheet, "zbrowser:ua") != 0 ||
         web_css_append_sheet_data(web_css_ua_sheet, ua_css, sizeof(ua_css) - 1u) != 0) {
         web_css_reset();
         return -1;
     }
+    console_puts("css-trace prepare-ua-sheet-done\n");
+    console_puts("css-trace prepare-select-ctx\n");
     if (css_select_ctx_create(&web_css_select_ctx) != CSS_OK || web_css_select_ctx == NULL) {
         web_css_reset();
         return -1;
@@ -3543,17 +3627,21 @@ static int web_css_prepare_document(const uint8_t *html) {
         web_css_reset();
         return -1;
     }
+    console_puts("css-trace prepare-select-ctx-done\n");
 
+    console_puts("css-trace prepare-doc-sheet\n");
     if (web_css_create_sheet(&web_css_sheet, "zbrowser:document") != 0) {
         web_css_reset();
         return -1;
     }
+    console_puts("css-trace prepare-doc-sheet-done\n");
 
     while (html[pos] != 0) {
         if (html[pos] == '<' && !web_is_closing_tag(html, pos) && web_tag_name_is(html, pos, "style")) {
             uint32_t style_start = web_skip_tag(html, pos);
             uint32_t style_end = web_find_style_close(html, style_start);
             if (style_end > style_start) {
+                console_puts("css-trace prepare-style-block\n");
                 error = css_stylesheet_append_data(web_css_sheet, html + style_start, style_end - style_start);
                 if (error != CSS_OK && error != CSS_NEEDDATA) {
                     web_css_reset();
@@ -3573,14 +3661,17 @@ static int web_css_prepare_document(const uint8_t *html) {
         web_css_ready = 1;
         return 0;
     }
+    console_puts("css-trace prepare-style-done\n");
     if (css_stylesheet_data_done(web_css_sheet) != CSS_OK) {
         web_css_reset();
         return -1;
     }
+    console_puts("css-trace prepare-style-finalized\n");
     if (css_select_ctx_append_sheet(web_css_select_ctx, web_css_sheet, CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
         web_css_reset();
         return -1;
     }
+    console_puts("css-trace prepare-ready\n");
     web_css_ready = 1;
     return (int)web_css_rule_blocks;
 }
@@ -3711,14 +3802,23 @@ static void web_apply_prepared_rules(const uint8_t *html,
 }
 
 int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uint32_t viewport_height) {
+    int css_status;
+
     if (html == NULL) {
         web_prepared_cache_reset(NULL, 0, 0);
         web_css_reset();
         return -1;
     }
     web_prepared_cache_reset(html, viewport_width, viewport_height);
-    web_css_prepare_document(html);
+    console_puts("css-trace style-prepare-enter\n");
+    css_status = web_css_prepare_document(html);
+    if (css_status < 0) {
+        web_prepared_cache_reset(NULL, 0, 0);
+        return css_status;
+    }
+    console_puts("css-trace style-prepare-doc-ready\n");
     web_css_precompute_styles(html, viewport_width, viewport_height);
+    console_puts("css-trace style-prepare-precompute-done\n");
     uint32_t pos = 0;
     while (html[pos] != 0) {
         if (html[pos] == '<' && !web_is_closing_tag(html, pos) && web_tag_name_is(html, pos, "style")) {
@@ -3730,7 +3830,7 @@ int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uin
             ++pos;
         }
     }
-    return web_cached_rule_saturated ? -(int)web_cached_rule_count : (int)web_cached_rule_count;
+    return web_cached_rule_saturated ? -3 : (int)web_cached_rule_count;
 }
 
 static void web_scan_style_blocks(const uint8_t *html,
@@ -4054,7 +4154,8 @@ static void web_css_apply_computed_border_color(web_style_state_t *state,
     }
 }
 
-static void web_css_apply_computed_style(web_style_state_t *state,
+static void web_css_apply_computed_style(const web_css_node_t *node,
+                                         web_style_state_t *state,
                                          const css_computed_style *computed,
                                          const css_unit_ctx *unit_ctx,
                                          uint32_t viewport_width,
@@ -4075,6 +4176,8 @@ static void web_css_apply_computed_style(web_style_state_t *state,
     int margin_left_auto = 0;
     int margin_right_auto = 0;
     uint8_t type;
+
+    web_css_trace_node_step(node, "apply-start");
 
     type = css_computed_display(computed, false);
     state->style.display = WEB_STYLE_DISPLAY_INLINE;
@@ -4226,6 +4329,8 @@ static void web_css_apply_computed_style(web_style_state_t *state,
                                     web_css_length_to_px(computed, unit_ctx, length, unit, viewport_height));
     }
 
+    web_css_trace_node_step(node, "apply-box");
+
     type = css_computed_margin_left(computed, &length, &unit);
     if (type == CSS_MARGIN_SET) {
         web_css_set_computed_length(state,
@@ -4360,6 +4465,8 @@ static void web_css_apply_computed_style(web_style_state_t *state,
         web_css_apply_computed_border_color(state, type, border_color, current_color, have_current_color);
     }
 
+    web_css_trace_node_step(node, "apply-border");
+
     type = css_computed_font_weight(computed);
     if (type == CSS_FONT_WEIGHT_BOLD ||
         type == CSS_FONT_WEIGHT_BOLDER ||
@@ -4405,6 +4512,8 @@ static void web_css_apply_computed_style(web_style_state_t *state,
         state->style.line_height = 72;
     }
     web_css_set_score(state, WEB_PROP_LINE_HEIGHT);
+
+    web_css_trace_node_step(node, "apply-font");
 
     type = css_computed_text_transform(computed);
     if (type == CSS_TEXT_TRANSFORM_UPPERCASE) {
@@ -4488,6 +4597,8 @@ static void web_css_apply_computed_style(web_style_state_t *state,
     state->style.empty_cells = type == CSS_EMPTY_CELLS_HIDE ? WEB_STYLE_EMPTY_CELLS_HIDE : WEB_STYLE_EMPTY_CELLS_SHOW;
     web_css_set_score(state, WEB_PROP_EMPTY_CELLS);
 
+    web_css_trace_node_step(node, "apply-layout");
+
     if (css_computed_opacity(computed, &fixed_value) == CSS_OPACITY_SET) {
         state->style.opacity = web_css_fixed_unit_to_byte(fixed_value);
         web_css_set_score(state, WEB_PROP_OPACITY);
@@ -4517,6 +4628,8 @@ static void web_css_apply_computed_style(web_style_state_t *state,
         state->style.background_position_y = web_css_length_to_px(computed, unit_ctx, vlength, vunit, viewport_height);
         web_css_set_score(state, WEB_PROP_BACKGROUND_POSITION);
     }
+
+    web_css_trace_node_step(node, "apply-done");
 }
 
 static int web_css_style_for_node(web_css_node_t *node,
@@ -4525,29 +4638,37 @@ static int web_css_style_for_node(web_css_node_t *node,
                                   web_style_state_t *state) {
     css_select_results *results = NULL;
     css_media media;
-    css_unit_ctx unit_ctx = {
-        .viewport_width = 0,
-        .viewport_height = 0,
-        .font_size_default = 0,
-        .font_size_minimum = 0,
-        .device_dpi = 0,
-        .root_style = NULL,
-        .pw = NULL,
-        .measure = NULL,
-    };
+    css_unit_ctx unit_ctx;
     css_error error;
 
     if (node == NULL) {
         return -1;
     }
 
+    memset(&media, 0, sizeof(media));
+    memset(&unit_ctx, 0, sizeof(unit_ctx));
     media.type = CSS_MEDIA_SCREEN;
+    media.width = INTTOFIX((int)viewport_width);
+    media.height = INTTOFIX((int)viewport_height);
+    media.orientation = viewport_width >= viewport_height
+        ? CSS_MEDIA_ORIENTATION_LANDSCAPE
+        : CSS_MEDIA_ORIENTATION_PORTRAIT;
+    media.scan = CSS_MEDIA_SCAN_PROGRESSIVE;
+    media.update = CSS_MEDIA_UPDATE_FREQUENCY_NORMAL;
+    media.pointer = CSS_MEDIA_POINTER_FINE;
+    media.any_pointer = CSS_MEDIA_POINTER_FINE;
+    media.hover = CSS_MEDIA_HOVER_HOVER;
+    media.any_hover = CSS_MEDIA_HOVER_HOVER;
+    media.light_level = CSS_MEDIA_LIGHT_LEVEL_NORMAL;
+    media.scripting = CSS_MEDIA_SCRIPTING_ENABLED;
+    media.color = INTTOFIX(24);
     unit_ctx.viewport_width = INTTOFIX((int)viewport_width);
     unit_ctx.viewport_height = INTTOFIX((int)viewport_height);
     unit_ctx.font_size_default = INTTOFIX(16);
     unit_ctx.font_size_minimum = INTTOFIX(6);
     unit_ctx.device_dpi = INTTOFIX(96);
 
+    web_css_trace_node_step(node, "select-start");
     error = css_select_style(web_css_select_ctx,
                              node,
                              &unit_ctx,
@@ -4557,12 +4678,15 @@ static int web_css_style_for_node(web_css_node_t *node,
                              NULL,
                              &results);
     if (error != CSS_OK || results == NULL || results->styles[CSS_PSEUDO_ELEMENT_NONE] == NULL) {
+        web_css_trace_node_step(node, "select-fail");
         if (results != NULL) {
             css_select_results_destroy(results);
         }
         return -1;
     }
-    web_css_apply_computed_style(state,
+    web_css_trace_node_step(node, "select-done");
+    web_css_apply_computed_style(node,
+                                 state,
                                  results->styles[CSS_PSEUDO_ELEMENT_NONE],
                                  &unit_ctx,
                                  viewport_width,
@@ -4653,17 +4777,24 @@ static void web_css_precompute_styles(const uint8_t *html,
         return;
     }
 
+    console_puts("css-trace precompute-count=");
+    console_put_dec64(web_css_node_count);
+    console_puts("\n");
+
     for (uint32_t i = 0; i < web_css_node_count; ++i) {
         web_css_node_t *node = &web_css_nodes[i];
         web_style_state_t state;
 
+        web_css_trace_node_step(node, "precompute-node");
         if (node->style_cached != 0 &&
             node->style_viewport_width == viewport_width &&
             node->style_viewport_height == viewport_height) {
             continue;
         }
 
+        web_css_trace_node_step(node, "precompute-init");
         web_state_init(&state);
+        web_css_trace_node_step(node, "precompute-select");
         if (web_css_style_for_node(node, viewport_width, viewport_height, &state) != 0) {
             continue;
         }
