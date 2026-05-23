@@ -7,6 +7,7 @@ cd "$repo_root"
 export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 
 scripts/bootstrap-browser-deps.sh
+scripts/zbrowser-compile-smoke.sh
 make build/kernel.elf zcc-smoke lainfs-smoke
 
 missing_tools=()

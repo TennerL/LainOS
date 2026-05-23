@@ -5,10 +5,17 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Reproduced the real zbrowser compile failure with the internal object path, not `zcc-smoke`: `build/tools/zmod_link_host examples/zbrowser_html.Z /tmp/zbrowser_html.zo examples/zbrowser_module.Z /tmp/zbrowser_module.zo`
+- Exact failing file/line before the fix: generated asm for `examples/zbrowser_module.Z`, `zobject_from_asm` status `-83626`, first visible failing asm line `80626` (`mov qword [zbrowser_image_buffer_addr], rax`)
+- Root cause: `kernel/z/zobject.c` capped object relocations at `4096`, but `zbrowser_module` now needs `4118` relocations through the in-kernel assembler/object path
+- Fix landed: raised `ZOBJECT_MAX_RELOCATIONS` to `16384` and added `scripts/zbrowser-compile-smoke.sh` so `scripts/agent-browser-check.sh` catches this end-to-end object/link path instead of only raw asm generation
 - Automation now bootstraps NetSurf submodules and generated parser files before the browser build gate.
-- `scripts/agent-browser-check.sh` passes `build/kernel.elf`, `zcc-smoke`, and `lainfs-smoke`.
+- `scripts/zbrowser-compile-smoke.sh` now passes: host `zcc_host` emits `build/zbrowser-smoke/zbrowser_module.asm`, `zmod_link_host` builds both `.zo` objects, and links them successfully.
+- `scripts/agent-browser-check.sh` now passes `build/kernel.elf`, `zcc-smoke`, `lainfs-smoke`, and full image generation.
 - Full image/QEMU verification needed PATH normalization because OpenClaw/Codex did not include `/usr/sbin`.
 - After PATH normalization, `scripts/agent-browser-check.sh` also builds `boot.iso`, MBR disk image, and GPT disk image with `mkfs.fat`, `sgdisk`, `mtools`, and `xorriso`.
+- Remaining blocker: there is still no reliable scripted way to boot LainOS and scrape the in-OS `autoexec`/`zinstall zbrowser_module` result. The current self-host path exists in `examples/autoexec`, but the repo lacks serial/log capture or a host-side LainFS result-file probe.
+- Next concrete patch: add a bounded self-host smoke harness, most likely by either exposing boot/runtime logs over a host-capturable console path or by adding a tiny host reader for a result file written by a dedicated zbrowser self-host autoexec.
 
 ## Previous Agenda
 
