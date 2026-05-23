@@ -733,12 +733,12 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
         return NETSURF_PORT_HINT_ROLE_CHROME;
     }
     if (scan_attrs != 0 &&
-        (netsurf_port_element_attr_contains_ci(node, "class", "navbar") ||
-         netsurf_port_element_attr_contains_ci(node, "class", "navigation") ||
-         netsurf_port_element_attr_contains_ci(node, "class", "navbox") ||
-         netsurf_port_element_attr_contains_ci(node, "class", "sidebar") ||
-         netsurf_port_element_attr_contains_ci(node, "class", "toc") ||
-         netsurf_port_element_attr_contains_ci(node, "id", "footer"))) {
+        (netsurf_port_element_attr_has_token_ci(node, "class", "navbar") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "navigation") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "navbox") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "sidebar") ||
+         netsurf_port_element_attr_has_token_ci(node, "class", "toc") ||
+         netsurf_port_element_attr_equals_ci(node, "id", "footer"))) {
         return NETSURF_PORT_HINT_ROLE_CHROME;
     }
     if (netsurf_port_dom_string_equals_ci(name, "table") ||
@@ -789,13 +789,13 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
 }
 
 static int netsurf_port_hint_should_skip(dom_node *node) {
-    return netsurf_port_element_attr_contains_ci(node, "class", "printfooter") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "metadata") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "noprint") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "visually-hidden") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "sr-only") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "mw-editsection") ||
-           netsurf_port_element_attr_contains_ci(node, "id", "catlinks");
+    return netsurf_port_element_attr_has_token_ci(node, "class", "printfooter") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "metadata") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "noprint") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "visually-hidden") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "sr-only") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "mw-editsection") ||
+           netsurf_port_element_attr_equals_ci(node, "id", "catlinks");
 }
 
 static uint32_t netsurf_port_hint_flags_for_element(netsurf_port_writer_t *writer,
@@ -946,14 +946,14 @@ static int netsurf_port_primary_candidate(dom_node *node, const dom_string *name
         !netsurf_port_dom_string_equals_ci(name, "section")) {
         return 0;
     }
-    return netsurf_port_element_attr_contains_ci(node, "id", "mw-content-text") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "mw-body-content") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "mw-parser-output") ||
-           netsurf_port_element_attr_contains_ci(node, "id", "article") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "article") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "entry-content") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "post-content") ||
-           netsurf_port_element_attr_contains_ci(node, "class", "main-content");
+    return netsurf_port_element_attr_equals_ci(node, "id", "mw-content-text") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "mw-body-content") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "mw-parser-output") ||
+           netsurf_port_element_attr_equals_ci(node, "id", "article") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "article") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "entry-content") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "post-content") ||
+           netsurf_port_element_attr_has_token_ci(node, "class", "main-content");
 }
 
 static int netsurf_port_omits_element(uint32_t mode, const dom_string *name) {
@@ -1326,6 +1326,8 @@ uint32_t netsurf_port_render_smoke(void) {
         "<div role=\"navigation\" class=\"toc\">chrome</div>"
         "<span role=\"heading\" aria-level=\"2\">Adapter Heading</span>"
         "<span class=\"sr-only\">assistive only</span>"
+        "<div class=\"navbarish\">content should stay content</div>"
+        "<div class=\"noprinter\">also content</div>"
         "<div role=\"main\"><form><fieldset><legend>Search</legend>"
         "<input type=\"hidden\" name=\"source\" value=\"smoke\">"
         "<input type=\"search\" name=\"q\" value=\"LainOS\"></fieldset></form>"
@@ -1343,6 +1345,8 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t sr_only_pos;
     uint32_t hidden_input_pos;
     uint32_t catlinks_pos;
+    uint32_t navbarish_pos;
+    uint32_t noprinter_pos;
     uint32_t required_status;
     int written;
 
@@ -1437,6 +1441,26 @@ uint32_t netsurf_port_render_smoke(void) {
     if (catlinks_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, catlinks_pos, &display, &role, &flags) == 0 ||
         (flags & NETSURF_PORT_HINT_FLAG_SKIP) == 0u) {
+        return 0u;
+    }
+
+    navbarish_pos = netsurf_port_find_tag_pos_from_fragment(out, "class=\"navbarish\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (navbarish_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, navbarish_pos, &display, &role, &flags) == 0 ||
+        role == NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
+    noprinter_pos = netsurf_port_find_tag_pos_from_fragment(out, "class=\"noprinter\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (noprinter_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, noprinter_pos, &display, &role, &flags) == 0 ||
+        (flags & NETSURF_PORT_HINT_FLAG_SKIP) != 0u) {
         return 0u;
     }
 
