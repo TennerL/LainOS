@@ -73,6 +73,7 @@ static const char *const host_kernel_exports[] = {
     "gfx_scroll_rect",
     "gfx_draw_rect",
     "draw_text_at_pixel",
+    "draw_text_scaled_at_pixel",
     "put_char_at_screen",
     "put_dec_at_screen",
     "os_read_file",

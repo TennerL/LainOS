@@ -104,7 +104,9 @@ typedef struct {
     uint32_t tag_pos;
     int32_t parent;
     int32_t prev_sibling;
+    int32_t next_sibling;
     uint32_t child_count;
+    uint32_t text_child_count;
     uint32_t style_cached;
     uint32_t style_viewport_width;
     uint32_t style_viewport_height;
@@ -929,19 +931,29 @@ static css_error web_css_node_count_siblings(void *pw,
                                              bool after,
                                              int32_t *count) {
     web_css_node_t *n = web_css_node(node);
+    web_css_node_t *start = n;
     int32_t out = 0;
     (void)pw;
     if (count == NULL) {
         return CSS_BADPARM;
     }
-    if (n == NULL || after) {
+    if (n == NULL) {
         *count = 0;
         return CSS_OK;
     }
-    while (n->prev_sibling >= 0) {
-        n = &web_css_nodes[(uint32_t)n->prev_sibling];
-        if (!same_name || web_css_lwc_equal_ci(n->name, web_css_node(node)->name)) {
-            ++out;
+    if (after) {
+        while (n->next_sibling >= 0) {
+            n = &web_css_nodes[(uint32_t)n->next_sibling];
+            if (!same_name || web_css_lwc_equal_ci(n->name, start->name)) {
+                ++out;
+            }
+        }
+    } else {
+        while (n->prev_sibling >= 0) {
+            n = &web_css_nodes[(uint32_t)n->prev_sibling];
+            if (!same_name || web_css_lwc_equal_ci(n->name, start->name)) {
+                ++out;
+            }
         }
     }
     *count = out;
@@ -954,7 +966,7 @@ static css_error web_css_node_is_empty(void *pw, void *node, bool *match) {
     if (match == NULL) {
         return CSS_BADPARM;
     }
-    *match = n != NULL && n->child_count == 0;
+    *match = n != NULL && n->child_count == 0 && n->text_child_count == 0;
     return CSS_OK;
 }
 
@@ -3002,6 +3014,7 @@ static int32_t web_css_add_node(const uint8_t *html,
                                 int32_t prev_sibling) {
     uint32_t name_start = 0;
     uint32_t name_end = 0;
+    uint32_t node_index;
     if (web_css_node_count >= WEB_CSS_MAX_NODES) {
         web_css_node_saturated = 1;
         return -1;
@@ -3009,11 +3022,13 @@ static int32_t web_css_add_node(const uint8_t *html,
     if (!web_tag_name_range(html, tag_pos, &name_start, &name_end)) {
         return -1;
     }
+    node_index = web_css_node_count;
     web_css_node_t *node = &web_css_nodes[web_css_node_count];
     memset(node, 0, sizeof(*node));
     node->tag_pos = tag_pos;
     node->parent = parent;
     node->prev_sibling = prev_sibling;
+    node->next_sibling = -1;
     if (lwc_intern_string((const char *)(html + name_start), name_end - name_start, &node->name) != lwc_error_ok ||
         node->name == NULL) {
         return -1;
@@ -3023,6 +3038,9 @@ static int32_t web_css_add_node(const uint8_t *html,
     web_css_parse_inline_style(html, node);
     if (parent >= 0) {
         ++web_css_nodes[(uint32_t)parent].child_count;
+    }
+    if (prev_sibling >= 0) {
+        web_css_nodes[(uint32_t)prev_sibling].next_sibling = (int32_t)node_index;
     }
     ++web_css_node_count;
     return (int32_t)(web_css_node_count - 1u);
@@ -3041,7 +3059,16 @@ static void web_css_build_nodes(const uint8_t *html) {
 
     while (html[pos] != 0) {
         if (html[pos] != '<') {
-            ++pos;
+            int saw_text = 0;
+            while (html[pos] != 0 && html[pos] != '<') {
+                if (!web_is_space(html[pos])) {
+                    saw_text = 1;
+                }
+                ++pos;
+            }
+            if (saw_text && depth > 0u && stack[depth - 1u] >= 0) {
+                ++web_css_nodes[(uint32_t)stack[depth - 1u]].text_child_count;
+            }
             continue;
         }
         if (html[pos + 1u] != 0 &&
@@ -3116,14 +3143,29 @@ static int web_css_prepare_document(const uint8_t *html) {
     uint32_t pos = 0;
     static const uint8_t ua_css[] =
         "html,body{display:block;color:#202122;background:#fff}"
-        "article,aside,div,footer,form,header,main,nav,section,p,blockquote,ul,ol,li,dl,dt,dd,table,tr,h1,h2,h3,h4,h5,h6{display:block}"
-        "table{display:table;border-collapse:separate;border-spacing:2px}"
+        "body{margin:8px;font-size:16px;line-height:1.2}"
+        "article,aside,div,footer,form,header,main,nav,section,p,blockquote,ul,ol,li,dl,dt,dd,figure,figcaption,caption,pre,table,tr,h1,h2,h3,h4,h5,h6{display:block}"
+        "p{margin:0.5em 0}"
+        "h1{font-size:2em;margin:0.67em 0;border-bottom:1px solid #a2a9b1}"
+        "h2{font-size:1.5em;margin:0.83em 0;border-bottom:1px solid #c8ccd1}"
+        "h3{font-size:1.17em;margin:1em 0}"
+        "h4,h5,h6{font-weight:bold;margin:1em 0}"
+        "ul,ol{margin:0.5em 0;padding-left:2em}"
+        "li{display:list-item}"
+        "dl{margin:0.5em 0}"
+        "dd{margin-left:2em}"
+        "blockquote{margin:0.5em 2em}"
+        "pre{white-space:pre;background:#f8f9fa;border:1px solid #c8ccd1;padding:0.5em}"
+        "table{display:table;border-collapse:separate;border-spacing:2px;margin:0.5em 0}"
+        "thead,tbody,tfoot{display:table-row-group}"
         "tr{display:table-row}"
-        "td,th{display:table-cell}"
+        "td,th{display:table-cell;padding:0.2em 0.4em}"
+        "th{font-weight:bold;text-align:center;background:#eaecf0}"
+        "caption{display:table-caption;text-align:center;color:#54595d}"
         "a:link,a:visited{color:#3366cc;text-decoration:underline}"
-        "b,strong,th{font-weight:bold}"
+        "b,strong{font-weight:bold}"
         "i,em,cite{font-style:italic}"
-        "h1,h2,h3{font-weight:bold}"
+        "button,input,select,textarea{font-size:16px}"
         "[hidden],template{display:none}";
 
     web_css_reset();

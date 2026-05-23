@@ -5,6 +5,8 @@ extern uint8_t zb_lower_char(uint8_t ch);
 extern int zb_tag_name_is(const uint8_t *html, uint32_t pos, const uint8_t *name);
 extern int zb_is_closing_tag(const uint8_t *html, uint32_t pos);
 extern uint32_t zb_skip_tag(const uint8_t *html, uint32_t pos);
+extern int zb_tag_self_closes(const uint8_t *html, uint32_t pos);
+extern int zb_tag_is_void(const uint8_t *html, uint32_t pos);
 extern uint32_t zb_skip_until_close_tag(const uint8_t *html, uint32_t pos, const uint8_t *name);
 extern uint32_t zb_skip_comment(const uint8_t *html, uint32_t pos);
 extern uint8_t zb_entity_char(const uint8_t *html, uint32_t pos, uint32_t *advance);

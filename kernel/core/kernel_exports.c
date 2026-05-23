@@ -142,6 +142,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("jpg_debug_byte_at", jpg_debug_byte_at),
     KERNEL_EXPORT("jpg_debug_first_entropy_bits", jpg_debug_first_entropy_bits),
     KERNEL_EXPORT("draw_text_at_pixel", console_draw_text_at_pixel),
+    KERNEL_EXPORT("draw_text_scaled_at_pixel", console_draw_text_scaled_at_pixel),
     KERNEL_EXPORT("mouse_init", mouse_init),
     KERNEL_EXPORT("mouse_enabled", mouse_enabled),
     KERNEL_EXPORT("mouse_x", mouse_x),

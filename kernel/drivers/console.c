@@ -613,6 +613,54 @@ static void console_put_char_at_pixel_colors(uint32_t x,
     }
 }
 
+static void console_put_char_scaled_at_pixel_colors(uint32_t x,
+                                                    uint32_t y,
+                                                    char ch,
+                                                    uint32_t fg,
+                                                    uint32_t bg,
+                                                    uint32_t scale) {
+    uint32_t glyph;
+    uint32_t glyph_row;
+    uint32_t glyph_col;
+    uint32_t sy;
+    uint32_t sx;
+
+    if (scale <= 1u) {
+        console_put_char_at_pixel_colors(x, y, ch, fg, bg);
+        return;
+    }
+    if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT) {
+        ch = ' ';
+    }
+
+    glyph = (uint8_t)ch - ASCII_FIRST;
+    for (glyph_row = 0; glyph_row < FONT_H; ++glyph_row) {
+        uint8_t bits = font_data[glyph][glyph_row];
+
+        for (glyph_col = 0; glyph_col < FONT_W; ++glyph_col) {
+            uint32_t color = bg;
+            int draw_pixel = 0;
+
+            if (bits & (1u << (7u - glyph_col))) {
+                color = fg;
+                draw_pixel = 1;
+            } else if (bg != 0xffffffffu) {
+                draw_pixel = 1;
+            }
+
+            if (draw_pixel) {
+                for (sy = 0; sy < scale; ++sy) {
+                    for (sx = 0; sx < scale; ++sx) {
+                        put_pixel(x + glyph_col * scale + sx,
+                                  y + glyph_row * scale + sy,
+                                  color);
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void console_put_char_at_pixel(uint32_t x, uint32_t y, char ch) {
     console_put_char_at_pixel_colors(x, y, ch, current_fg_color, current_bg_color);
 }
@@ -684,6 +732,31 @@ void console_draw_text_at_pixel(unsigned int x,
     while (*text) {
         console_put_char_at_pixel_colors(px, y, *text++, fg, bg);
         px += FONT_W;
+    }
+}
+
+void console_draw_text_scaled_at_pixel(unsigned int x,
+                                       unsigned int y,
+                                       const char *text,
+                                       unsigned int fg,
+                                       unsigned int bg,
+                                       unsigned int scale) {
+    uint32_t px = x;
+
+    if (text == 0) {
+        return;
+    }
+    if (scale <= 1u) {
+        console_draw_text_at_pixel(x, y, text, fg, bg);
+        return;
+    }
+    if (scale > 4u) {
+        scale = 4u;
+    }
+
+    while (*text) {
+        console_put_char_scaled_at_pixel_colors(px, y, *text++, fg, bg, scale);
+        px += FONT_W * scale;
     }
 }
 

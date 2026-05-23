@@ -62,7 +62,7 @@ export uint32_t zb_skip_tag(const uint8_t *html, uint32_t pos) {
     return pos;
 }
 
-int zb_tag_self_closes(const uint8_t *html, uint32_t pos) {
+export int zb_tag_self_closes(const uint8_t *html, uint32_t pos) {
     uint8_t last;
 
     last = 0;
@@ -78,7 +78,7 @@ int zb_tag_self_closes(const uint8_t *html, uint32_t pos) {
     return 0;
 }
 
-int zb_tag_is_void(const uint8_t *html, uint32_t pos) {
+export int zb_tag_is_void(const uint8_t *html, uint32_t pos) {
     if (zb_tag_name_is(html, pos, "area") ||
         zb_tag_name_is(html, pos, "base") ||
         zb_tag_name_is(html, pos, "basefont") ||

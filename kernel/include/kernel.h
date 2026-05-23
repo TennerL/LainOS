@@ -19,6 +19,7 @@ void console_put_dec_at(unsigned int col, unsigned int row, unsigned long long v
 void console_put_char_at_screen(unsigned int col, unsigned int row, char ch);
 void console_put_dec_at_screen(unsigned int col, unsigned int row, unsigned long long value);
 void console_draw_text_at_pixel(unsigned int x, unsigned int y, const char *text, unsigned int fg, unsigned int bg);
+void console_draw_text_scaled_at_pixel(unsigned int x, unsigned int y, const char *text, unsigned int fg, unsigned int bg, unsigned int scale);
 unsigned int console_rows(void);
 unsigned int console_columns(void);
 void console_clear_line(unsigned int row);
