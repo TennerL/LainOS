@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "libc.h"
+#include "netsurf_port.h"
 #include "libcss/computed.h"
 #include "libcss/fpmath.h"
 #include "libcss/properties.h"
@@ -1202,6 +1203,35 @@ static void web_set_display(web_style_state_t *state, const uint8_t *value, uint
     }
 }
 
+static void web_set_display_hint(web_style_state_t *state, uint32_t display, uint32_t specificity, int important) {
+    if (!web_cascade_allows(state, WEB_PROP_DISPLAY, specificity, important)) {
+        return;
+    }
+    state->style.display = WEB_STYLE_DISPLAY_INLINE;
+    state->style.flags &= ~(WEB_STYLE_FLAG_DISPLAY_NONE |
+                            WEB_STYLE_FLAG_DISPLAY_FLEX |
+                            WEB_STYLE_FLAG_DISPLAY_TABLE |
+                            WEB_STYLE_FLAG_DISPLAY_TABLE_ROW |
+                            WEB_STYLE_FLAG_DISPLAY_TABLE_CELL);
+    if (display == NETSURF_PORT_HINT_DISPLAY_BLOCK) {
+        state->style.display = WEB_STYLE_DISPLAY_BLOCK;
+    } else if (display == NETSURF_PORT_HINT_DISPLAY_FLEX) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_FLEX;
+        state->style.display = WEB_STYLE_DISPLAY_FLEX;
+    } else if (display == NETSURF_PORT_HINT_DISPLAY_TABLE) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE;
+    } else if (display == NETSURF_PORT_HINT_DISPLAY_TABLE_ROW) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_ROW;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE_ROW;
+    } else if (display == NETSURF_PORT_HINT_DISPLAY_TABLE_CELL) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_CELL;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE_CELL;
+    } else if (display == NETSURF_PORT_HINT_DISPLAY_LIST_ITEM) {
+        state->style.display = WEB_STYLE_DISPLAY_LIST_ITEM;
+    }
+}
+
 static void web_set_float(web_style_state_t *state, const uint8_t *value, uint32_t start, uint32_t end, uint32_t specificity, int important) {
     if (!web_cascade_allows(state, WEB_PROP_FLOAT, specificity, important)) {
         return;
@@ -1440,6 +1470,40 @@ static void web_set_length_property(web_style_state_t *state,
     }
     state->style.flags |= flag;
     *field = value;
+}
+
+static void web_set_plain_property(web_style_state_t *state,
+                                   uint32_t property,
+                                   uint32_t *field,
+                                   uint32_t value,
+                                   uint32_t specificity,
+                                   int important) {
+    if (!web_cascade_allows(state, property, specificity, important)) {
+        return;
+    }
+    *field = value;
+}
+
+static void web_set_background_color(web_style_state_t *state,
+                                     uint32_t color,
+                                     uint32_t specificity,
+                                     int important) {
+    if (!web_cascade_allows(state, WEB_PROP_BACKGROUND_COLOR, specificity, important)) {
+        return;
+    }
+    state->style.flags |= WEB_STYLE_FLAG_HAS_BG_COLOR;
+    state->style.background_color = color;
+}
+
+static void web_set_border_color(web_style_state_t *state,
+                                 uint32_t color,
+                                 uint32_t specificity,
+                                 int important) {
+    if (!web_cascade_allows(state, WEB_PROP_BORDER_COLOR, specificity, important)) {
+        return;
+    }
+    state->style.flags |= WEB_STYLE_FLAG_HAS_BORDER_COLOR;
+    state->style.border_color = color;
 }
 
 static void web_clear_length_property(web_style_state_t *state,
@@ -1684,6 +1748,141 @@ static int web_parse_border_width_value(const uint8_t *text,
     return 0;
 }
 
+static int web_parse_opacity_value(const uint8_t *text, uint32_t start, uint32_t end, uint32_t *out_alpha) {
+    uint32_t pos = web_trim_start(text, start, end);
+    int64_t scaled = 0;
+    if (!web_parse_decimal_scaled(text, &pos, end, &scaled)) {
+        return 0;
+    }
+    while (pos < end && web_is_space(text[pos])) {
+        ++pos;
+    }
+    if (pos < end && text[pos] == '%') {
+        scaled /= 100;
+    }
+    if (scaled < 0) {
+        scaled = 0;
+    }
+    if (scaled > 1000) {
+        scaled = 1000;
+    }
+    *out_alpha = (uint32_t)((scaled * 255ll) / 1000ll);
+    return 1;
+}
+
+static int web_parse_positive_integer_value(const uint8_t *text, uint32_t start, uint32_t end, uint32_t *out_value) {
+    uint32_t pos = web_trim_start(text, start, end);
+    int64_t scaled = 0;
+    if (!web_parse_decimal_scaled(text, &pos, end, &scaled)) {
+        return 0;
+    }
+    if (scaled <= 0) {
+        *out_value = 0;
+        return 1;
+    }
+    scaled /= 1000;
+    if (scaled > 1000000) {
+        scaled = 1000000;
+    }
+    *out_value = (uint32_t)scaled;
+    return 1;
+}
+
+static int web_parse_line_height_value(const uint8_t *text,
+                                       uint32_t start,
+                                       uint32_t end,
+                                       uint32_t font_size,
+                                       uint32_t viewport_width,
+                                       uint32_t viewport_height,
+                                       uint32_t *out_px) {
+    uint32_t pos = web_trim_start(text, start, end);
+    uint32_t trimmed_end = web_trim_end(text, pos, end);
+    int64_t scaled = 0;
+
+    if (web_range_contains_cstr_ci(text, pos, trimmed_end, "normal")) {
+        *out_px = (font_size * 6u) / 5u;
+        return 1;
+    }
+    if (web_parse_decimal_scaled(text, &pos, trimmed_end, &scaled)) {
+        while (pos < trimmed_end && web_is_space(text[pos])) {
+            ++pos;
+        }
+        if (pos >= trimmed_end || text[pos] == '!') {
+            if (scaled < 0) {
+                scaled = 0;
+            }
+            *out_px = (uint32_t)(((int64_t)font_size * scaled) / 1000ll);
+            return 1;
+        }
+        if (text[pos] == '%') {
+            *out_px = (uint32_t)(((int64_t)font_size * scaled) / 100000ll);
+            return 1;
+        }
+    }
+    if (web_parse_length_px(text, start, trimmed_end, font_size, viewport_width, viewport_height, out_px)) {
+        return 1;
+    }
+    return 0;
+}
+
+static void web_set_background_repeat(web_style_state_t *state,
+                                      const uint8_t *value,
+                                      uint32_t start,
+                                      uint32_t end,
+                                      uint32_t specificity,
+                                      int important) {
+    uint32_t repeat = WEB_STYLE_BG_REPEAT;
+    if (web_range_contains_cstr_ci(value, start, end, "no-repeat")) {
+        repeat = WEB_STYLE_BG_NO_REPEAT;
+    } else if (web_range_contains_cstr_ci(value, start, end, "repeat-x")) {
+        repeat = WEB_STYLE_BG_REPEAT_X;
+    } else if (web_range_contains_cstr_ci(value, start, end, "repeat-y")) {
+        repeat = WEB_STYLE_BG_REPEAT_Y;
+    }
+    web_set_plain_property(state, WEB_PROP_BACKGROUND_REPEAT, &state->style.background_repeat, repeat, specificity, important);
+}
+
+static void web_set_background_position(web_style_state_t *state,
+                                        const uint8_t *value,
+                                        uint32_t start,
+                                        uint32_t end,
+                                        uint32_t viewport_width,
+                                        uint32_t viewport_height,
+                                        uint32_t specificity,
+                                        int important) {
+    uint32_t top = 0;
+    uint32_t right = 0;
+    uint32_t bottom = 0;
+    uint32_t left = 0;
+    uint32_t x = 0;
+    uint32_t y = 0;
+
+    if (!web_cascade_allows(state, WEB_PROP_BACKGROUND_POSITION, specificity, important)) {
+        return;
+    }
+    if (web_parse_box_lengths(value, start, end, viewport_width, viewport_width, viewport_height, &top, &right, &bottom, &left)) {
+        state->style.background_position_x = top;
+        state->style.background_position_y = right;
+        return;
+    }
+    if (web_range_contains_cstr_ci(value, start, end, "center")) {
+        x = viewport_width / 2u;
+        y = viewport_height / 2u;
+    }
+    if (web_range_contains_cstr_ci(value, start, end, "right")) {
+        x = viewport_width;
+    } else if (web_range_contains_cstr_ci(value, start, end, "left")) {
+        x = 0;
+    }
+    if (web_range_contains_cstr_ci(value, start, end, "bottom")) {
+        y = viewport_height;
+    } else if (web_range_contains_cstr_ci(value, start, end, "top")) {
+        y = 0;
+    }
+    state->style.background_position_x = x;
+    state->style.background_position_y = y;
+}
+
 static uint32_t web_css_skip_comment(const uint8_t *css, uint32_t pos, uint32_t end) {
     if (pos + 1u < end && css[pos] == '/' && css[pos + 1u] == '*') {
         pos += 2;
@@ -1776,6 +1975,34 @@ static void web_apply_declarations(const uint8_t *css,
             if (web_parse_color_value(css, value_start, value_end, &color)) {
                 web_set_color(state, color, specificity, important);
             }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "background-color") ||
+                   web_range_equal_cstr_ci(css, prop_start, prop_end, "background")) {
+            uint32_t color = 0;
+            if (web_parse_color_value(css, value_start, value_end, &color)) {
+                web_set_background_color(state, color, specificity, important);
+            }
+            if (web_range_equal_cstr_ci(css, prop_start, prop_end, "background")) {
+                web_set_background_repeat(state, css, value_start, value_end, specificity, important);
+                web_set_background_position(state,
+                                            css,
+                                            value_start,
+                                            value_end,
+                                            viewport_width,
+                                            viewport_height,
+                                            specificity,
+                                            important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "background-repeat")) {
+            web_set_background_repeat(state, css, value_start, value_end, specificity, important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "background-position")) {
+            web_set_background_position(state,
+                                        css,
+                                        value_start,
+                                        value_end,
+                                        viewport_width,
+                                        viewport_height,
+                                        specificity,
+                                        important);
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "position")) {
             web_set_position(state, css, value_start, value_end, specificity, important);
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "left")) {
@@ -1952,10 +2179,8 @@ static void web_apply_declarations(const uint8_t *css,
             }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-color")) {
             uint32_t color = 0;
-            if (web_parse_color_value(css, value_start, value_end, &color) &&
-                web_cascade_allows(state, WEB_PROP_BORDER_COLOR, specificity, important)) {
-                state->style.flags |= WEB_STYLE_FLAG_HAS_BORDER_COLOR;
-                state->style.border_color = color;
+            if (web_parse_color_value(css, value_start, value_end, &color)) {
+                web_set_border_color(state, color, specificity, important);
             }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border") ||
                    web_range_equal_cstr_ci(css, prop_start, prop_end, "border-width")) {
@@ -1982,6 +2207,10 @@ static void web_apply_declarations(const uint8_t *css,
                 web_set_length_property(state, WEB_PROP_BORDER_RIGHT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_right, px, specificity, important);
                 web_set_length_property(state, WEB_PROP_BORDER_BOTTOM, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_bottom, px, specificity, important);
                 web_set_length_property(state, WEB_PROP_BORDER_LEFT, WEB_STYLE_FLAG_HAS_BORDER, &state->style.border_left, px, specificity, important);
+            }
+            uint32_t color = 0;
+            if (web_parse_color_value(css, value_start, value_end, &color)) {
+                web_set_border_color(state, color, specificity, important);
             }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-left-width")) {
             uint32_t px = 0;
@@ -2076,12 +2305,20 @@ static void web_apply_declarations(const uint8_t *css,
             }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "line-height")) {
             uint32_t px = 0;
-            if (web_range_contains_cstr_ci(css, value_start, value_end, "normal")) {
-                px = (state->style.font_size * 6u) / 5u;
-            } else {
-                (void)web_parse_length_px(css, value_start, value_end, state->style.font_size, viewport_width, viewport_height, &px);
-            }
+            (void)web_parse_line_height_value(css,
+                                              value_start,
+                                              value_end,
+                                              state->style.font_size,
+                                              viewport_width,
+                                              viewport_height,
+                                              &px);
             if (px != 0 && web_cascade_allows(state, WEB_PROP_LINE_HEIGHT, specificity, important)) {
+                if (px < 10) {
+                    px = 10;
+                }
+                if (px > 72) {
+                    px = 72;
+                }
                 state->style.line_height = px;
             }
         } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "text-transform")) {
@@ -2153,6 +2390,118 @@ static void web_apply_declarations(const uint8_t *css,
             if (web_parse_length_px(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &px) &&
                 web_cascade_allows(state, WEB_PROP_TEXT_INDENT, specificity, important)) {
                 state->style.text_indent = px;
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "box-sizing")) {
+            web_set_plain_property(state,
+                                   WEB_PROP_BOX_SIZING,
+                                   &state->style.box_sizing,
+                                   web_range_contains_cstr_ci(css, value_start, value_end, "border-box") ?
+                                       WEB_STYLE_BOX_BORDER_BOX : WEB_STYLE_BOX_CONTENT_BOX,
+                                   specificity,
+                                   important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-collapse")) {
+            web_set_plain_property(state,
+                                   WEB_PROP_BORDER_COLLAPSE,
+                                   &state->style.border_collapse,
+                                   web_range_contains_cstr_ci(css, value_start, value_end, "collapse") ?
+                                       WEB_STYLE_BORDER_COLLAPSE : WEB_STYLE_BORDER_SEPARATE,
+                                   specificity,
+                                   important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "border-spacing")) {
+            uint32_t top = 0;
+            uint32_t right = 0;
+            uint32_t bottom = 0;
+            uint32_t left = 0;
+            if (web_parse_box_lengths(css, value_start, value_end, viewport_width, viewport_width, viewport_height, &top, &right, &bottom, &left) &&
+                web_cascade_allows(state, WEB_PROP_BORDER_SPACING, specificity, important)) {
+                state->style.border_spacing_h = top;
+                state->style.border_spacing_v = right;
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "clear")) {
+            uint32_t clear_side = WEB_STYLE_CLEAR_NONE;
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "both")) {
+                clear_side = WEB_STYLE_CLEAR_BOTH;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "left")) {
+                clear_side = WEB_STYLE_CLEAR_LEFT;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "right")) {
+                clear_side = WEB_STYLE_CLEAR_RIGHT;
+            }
+            web_set_plain_property(state, WEB_PROP_CLEAR, &state->style.clear_side, clear_side, specificity, important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "vertical-align")) {
+            uint32_t align = WEB_STYLE_VERTICAL_BASELINE;
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "sub")) {
+                align = WEB_STYLE_VERTICAL_SUB;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "super")) {
+                align = WEB_STYLE_VERTICAL_SUPER;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "middle")) {
+                align = WEB_STYLE_VERTICAL_MIDDLE;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "bottom")) {
+                align = WEB_STYLE_VERTICAL_BOTTOM;
+            } else if (web_range_contains_cstr_ci(css, value_start, value_end, "top")) {
+                align = WEB_STYLE_VERTICAL_TOP;
+            }
+            web_set_plain_property(state, WEB_PROP_VERTICAL_ALIGN, &state->style.vertical_align, align, specificity, important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "list-style-position")) {
+            web_set_plain_property(state,
+                                   WEB_PROP_LIST_STYLE_POSITION,
+                                   &state->style.list_style_position,
+                                   web_range_contains_cstr_ci(css, value_start, value_end, "inside") ?
+                                       WEB_STYLE_LIST_POSITION_INSIDE : WEB_STYLE_LIST_POSITION_OUTSIDE,
+                                   specificity,
+                                   important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "caption-side")) {
+            web_set_plain_property(state,
+                                   WEB_PROP_CAPTION_SIDE,
+                                   &state->style.caption_side,
+                                   web_range_contains_cstr_ci(css, value_start, value_end, "bottom") ?
+                                       WEB_STYLE_CAPTION_BOTTOM : WEB_STYLE_CAPTION_TOP,
+                                   specificity,
+                                   important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "direction")) {
+            web_set_plain_property(state,
+                                   WEB_PROP_DIRECTION,
+                                   &state->style.direction,
+                                   web_range_contains_cstr_ci(css, value_start, value_end, "rtl") ?
+                                       WEB_STYLE_DIRECTION_RTL : WEB_STYLE_DIRECTION_LTR,
+                                   specificity,
+                                   important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "table-layout")) {
+            web_set_plain_property(state,
+                                   WEB_PROP_TABLE_LAYOUT,
+                                   &state->style.table_layout,
+                                   web_range_contains_cstr_ci(css, value_start, value_end, "fixed") ?
+                                       WEB_STYLE_TABLE_LAYOUT_FIXED : WEB_STYLE_TABLE_LAYOUT_AUTO,
+                                   specificity,
+                                   important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "empty-cells")) {
+            web_set_plain_property(state,
+                                   WEB_PROP_EMPTY_CELLS,
+                                   &state->style.empty_cells,
+                                   web_range_contains_cstr_ci(css, value_start, value_end, "hide") ?
+                                       WEB_STYLE_EMPTY_CELLS_HIDE : WEB_STYLE_EMPTY_CELLS_SHOW,
+                                   specificity,
+                                   important);
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "opacity")) {
+            uint32_t opacity = 255;
+            if (web_parse_opacity_value(css, value_start, value_end, &opacity)) {
+                web_set_plain_property(state, WEB_PROP_OPACITY, &state->style.opacity, opacity, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "z-index")) {
+            uint32_t z_index = 0;
+            if (web_parse_positive_integer_value(css, value_start, value_end, &z_index)) {
+                web_set_plain_property(state, WEB_PROP_Z_INDEX, &state->style.z_index, z_index, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "letter-spacing")) {
+            uint32_t px = 0;
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "normal") ||
+                web_parse_length_px(css, value_start, value_end, state->style.font_size, viewport_width, viewport_height, &px)) {
+                web_set_plain_property(state, WEB_PROP_LETTER_SPACING, &state->style.letter_spacing, px, specificity, important);
+            }
+        } else if (web_range_equal_cstr_ci(css, prop_start, prop_end, "word-spacing")) {
+            uint32_t px = 0;
+            if (web_range_contains_cstr_ci(css, value_start, value_end, "normal") ||
+                web_parse_length_px(css, value_start, value_end, state->style.font_size, viewport_width, viewport_height, &px)) {
+                web_set_plain_property(state, WEB_PROP_WORD_SPACING, &state->style.word_spacing, px, specificity, important);
             }
         }
 
@@ -3155,6 +3504,9 @@ static int web_css_prepare_document(const uint8_t *html) {
         "dl{margin:0.5em 0}"
         "dd{margin-left:2em}"
         "blockquote{margin:0.5em 2em}"
+        "figure{margin:0.5em 2em}"
+        "fieldset{display:block;border:1px solid #c8ccd1;margin:0.5em 0;padding:0.5em}"
+        "legend{display:block;padding:0 0.2em}"
         "pre{white-space:pre;background:#f8f9fa;border:1px solid #c8ccd1;padding:0.5em}"
         "table{display:table;border-collapse:separate;border-spacing:2px;margin:0.5em 0}"
         "thead,tbody,tfoot{display:table-row-group}"
@@ -3162,9 +3514,14 @@ static int web_css_prepare_document(const uint8_t *html) {
         "td,th{display:table-cell;padding:0.2em 0.4em}"
         "th{font-weight:bold;text-align:center;background:#eaecf0}"
         "caption{display:table-caption;text-align:center;color:#54595d}"
+        "summary{display:list-item}"
         "a:link,a:visited{color:#3366cc;text-decoration:underline}"
         "b,strong{font-weight:bold}"
         "i,em,cite{font-style:italic}"
+        "code,kbd,samp{background:#f8f9fa;color:#202122;font-size:0.875em}"
+        "mark{background:#fff3cd;color:#202122}"
+        "sup{font-size:0.75em;vertical-align:super}"
+        "sub{font-size:0.75em;vertical-align:sub}"
         "button,input,select,textarea{font-size:16px}"
         "[hidden],template{display:none}";
 
@@ -3791,10 +4148,13 @@ static void web_css_apply_computed_style(web_style_state_t *state,
     }
 
     type = css_computed_background_color(computed, &color);
-    if ((type == CSS_BACKGROUND_COLOR_COLOR || type == CSS_BACKGROUND_COLOR_CURRENT_COLOR) &&
-        web_css_color_is_visible(color)) {
+    if (type == CSS_BACKGROUND_COLOR_COLOR && web_css_color_is_visible(color)) {
         state->style.flags |= WEB_STYLE_FLAG_HAS_BG_COLOR;
         state->style.background_color = web_css_color_to_rgb(color);
+        web_css_set_score(state, WEB_PROP_BACKGROUND_COLOR);
+    } else if (type == CSS_BACKGROUND_COLOR_CURRENT_COLOR && have_current_color) {
+        state->style.flags |= WEB_STYLE_FLAG_HAS_BG_COLOR;
+        state->style.background_color = current_color;
         web_css_set_score(state, WEB_PROP_BACKGROUND_COLOR);
     }
 
@@ -4239,6 +4599,26 @@ static void web_apply_presentational_attrs(const uint8_t *html,
     }
 }
 
+static void web_apply_netsurf_hints(const uint8_t *html, uint32_t tag_pos, web_style_state_t *state) {
+    uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
+    uint32_t flags = 0;
+
+    if (state == NULL ||
+        netsurf_port_style_hint_for_tag(html, tag_pos, &display, &role, &flags) == 0) {
+        return;
+    }
+    if ((flags & (NETSURF_PORT_HINT_FLAG_SKIP | NETSURF_PORT_HINT_FLAG_HIDDEN)) != 0u) {
+        web_set_display_hint(state, NETSURF_PORT_HINT_DISPLAY_INLINE, 65535u, 1);
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_NONE;
+        return;
+    }
+    if (display != NETSURF_PORT_HINT_DISPLAY_UNKNOWN) {
+        web_set_display_hint(state, display, 0, 0);
+    }
+    (void)role;
+}
+
 static void web_apply_inline_style(const uint8_t *html,
                                    uint32_t tag_pos,
                                    web_style_state_t *state,
@@ -4284,6 +4664,7 @@ static void web_css_precompute_styles(const uint8_t *html,
         if (web_css_style_for_node(node, viewport_width, viewport_height, &state) != 0) {
             continue;
         }
+        web_apply_netsurf_hints(html, node->tag_pos, &state);
         web_apply_presentational_attrs(html, node->tag_pos, &state, viewport_width, viewport_height);
         web_apply_hidden_attrs(html, node->tag_pos, &state);
         node->cached_style = state.style;
@@ -4304,6 +4685,7 @@ int web_style_for_cached_rules(const uint8_t *html,
     }
     web_style_state_t state;
     web_state_init(&state);
+    web_apply_netsurf_hints(html, tag_pos, &state);
     web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
     if (rules != NULL && rules->selectors != 0 && rules->decls != 0 &&
         rules->selector_stride != 0 && rules->decl_stride != 0) {
@@ -4352,6 +4734,7 @@ int web_style_for_tag(const uint8_t *html,
     web_style_state_t state;
     web_state_init(&state);
     if (node != NULL && web_css_style_for_node(node, viewport_width, viewport_height, &state) == 0) {
+        web_apply_netsurf_hints(html, tag_pos, &state);
         web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
         web_apply_hidden_attrs(html, tag_pos, &state);
         *out_style = state.style;
@@ -4361,6 +4744,7 @@ int web_style_for_tag(const uint8_t *html,
         node->style_viewport_height = viewport_height;
         return 0;
     }
+    web_apply_netsurf_hints(html, tag_pos, &state);
     web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
     if (web_cached_html == html &&
         web_cached_viewport_width == viewport_width &&

@@ -30,6 +30,8 @@
 #define ZBROWSER_MAX_TABLE_BOXES 128
 #define ZBROWSER_TABLE_BOX_BG 1
 #define ZBROWSER_TABLE_BOX_BORDER 2
+#define ZBROWSER_FLOW_BOX_BG 1
+#define ZBROWSER_FLOW_BOX_BORDER 2
 #define ZBROWSER_REGION_ARTICLE 0
 #define ZBROWSER_REGION_LEFT 1
 #define ZBROWSER_REGION_RIGHT 2
@@ -147,6 +149,21 @@
 #define WEB_STYLE_BG_REPEAT_X 1
 #define WEB_STYLE_BG_REPEAT_Y 2
 #define WEB_STYLE_BG_NO_REPEAT 3
+#define NETSURF_PORT_HINT_DISPLAY_UNKNOWN 255
+#define NETSURF_PORT_HINT_ROLE_NONE 0
+#define NETSURF_PORT_HINT_ROLE_PRIMARY 1
+#define NETSURF_PORT_HINT_ROLE_CHROME 2
+#define NETSURF_PORT_HINT_ROLE_TABLE 3
+#define NETSURF_PORT_HINT_ROLE_ROW 4
+#define NETSURF_PORT_HINT_ROLE_CELL 5
+#define NETSURF_PORT_HINT_ROLE_LIST 6
+#define NETSURF_PORT_HINT_ROLE_MEDIA 7
+#define NETSURF_PORT_HINT_ROLE_HEADING 8
+#define NETSURF_PORT_HINT_ROLE_FORM 9
+#define NETSURF_PORT_HINT_FLAG_SKIP 1
+#define NETSURF_PORT_HINT_FLAG_PRIMARY 2
+#define NETSURF_PORT_HINT_FLAG_STRUCTURAL 4
+#define NETSURF_PORT_HINT_FLAG_HIDDEN 8
 #define ZBROWSER_STYLE_STACK_MAX 64
 #define ZBROWSER_DOM_TAG_P 1
 #define ZBROWSER_DOM_TAG_LI 2
@@ -188,6 +205,7 @@
 #define ZBROWSER_DOM_TAG_FONT 38
 #define ZBROWSER_DOM_TAG_FIGCAPTION 39
 #define ZBROWSER_DOM_TAG_CAPTION 40
+#define ZBROWSER_DOM_TAG_GENERIC_BASE 4096
 
 #include "zbrowser_html_api.Z"
 
@@ -315,6 +333,14 @@ extern int image_probe(const uint8_t *data, uint32_t size, struct ImageInfo *out
 extern int image_decode_to_screen_scaled(const uint8_t *data, uint32_t size, uint32_t origin_x, uint32_t origin_y, uint32_t max_width, uint32_t max_height);
 extern int image_decode_scaled_to_packed(const uint8_t *data, uint32_t size, uint32_t target_width, uint32_t target_height, uint32_t bg_rgb_color, uint8_t *pixels);
 extern int image_decode_to_screen_tiled(const uint8_t *data, uint32_t size, uint32_t origin_x, uint32_t origin_y, uint32_t width, uint32_t height);
+extern int netsurf_port_rewrite_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
+extern int netsurf_port_rewrite_render_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
+extern int netsurf_port_style_hint_for_tag(const uint8_t *html,
+                                           uint32_t tag_pos,
+                                           uint32_t *out_display,
+                                           uint32_t *out_role,
+                                           uint32_t *out_flags);
+extern uint32_t netsurf_port_dom_status(void);
 global uint32_t zbrowser_enabled;
 global uint32_t zbrowser_loaded;
 global int zbrowser_size;
@@ -344,6 +370,8 @@ global uint32_t zbrowser_css_rule_count;
 global uint32_t zbrowser_css_cache_ready;
 global uint32_t zbrowser_js_executed;
 global uint32_t zbrowser_js_writes;
+global uint32_t zbrowser_netsurf_dom_used;
+global uint32_t zbrowser_netsurf_dom_status;
 global uint8_t zbrowser_js_literal[512];
 global uint64_t zbrowser_css_sel_addr;
 global uint64_t zbrowser_css_decl_addr;
@@ -458,26 +486,41 @@ global uint32_t zbrowser_render_checkpoint_lines[512];
 global uint32_t zbrowser_render_checkpoint_pos[512];
 global uint32_t zbrowser_render_checkpoint_fg[512];
 global uint32_t zbrowser_render_checkpoint_bg[512];
+global uint32_t zbrowser_render_checkpoint_bg_band[512];
 global uint32_t zbrowser_render_checkpoint_align[512];
 global uint32_t zbrowser_render_checkpoint_indent[512];
 global uint32_t zbrowser_render_checkpoint_stride[512];
 global uint32_t zbrowser_render_checkpoint_font_scale[512];
 global uint32_t zbrowser_render_checkpoint_transform[512];
 global uint32_t zbrowser_render_checkpoint_white_space[512];
+global uint32_t zbrowser_render_checkpoint_bottom_space[512];
+global uint32_t zbrowser_render_checkpoint_block_flow[512];
 global uint32_t zbrowser_render_checkpoint_list_depth[512];
+global uint32_t zbrowser_render_checkpoint_flow_x[512];
+global uint32_t zbrowser_render_checkpoint_flow_w[512];
+global uint32_t zbrowser_render_checkpoint_flow_box_x[512];
+global uint32_t zbrowser_render_checkpoint_flow_box_w[512];
+global uint32_t zbrowser_render_checkpoint_flow_box_flags[512];
+global uint32_t zbrowser_render_checkpoint_flow_box_border[512];
 global uint32_t zbrowser_render_checkpoint_count;
 global uint32_t zbrowser_line_cache_valid[2048];
 global uint32_t zbrowser_line_cache_len[2048];
 global uint32_t zbrowser_line_cache_x[2048];
 global uint32_t zbrowser_line_cache_fg[2048];
 global uint32_t zbrowser_line_cache_bg[2048];
+global uint32_t zbrowser_line_cache_bg_band[2048];
 global uint32_t zbrowser_line_cache_scale[2048];
+global uint32_t zbrowser_line_cache_box_x[2048];
+global uint32_t zbrowser_line_cache_box_w[2048];
+global uint32_t zbrowser_line_cache_box_flags[2048];
+global uint32_t zbrowser_line_cache_box_border[2048];
 global uint32_t zbrowser_image_candidates;
 global int zbrowser_image_fetch_result;
 global int zbrowser_image_probe_result;
 global int zbrowser_image_draw_result;
 global uint32_t zbrowser_text_fg;
 global uint32_t zbrowser_text_bg;
+global uint32_t zbrowser_bg_band_active;
 global uint32_t zbrowser_link_text;
 global uint32_t zbrowser_text_align;
 global uint32_t zbrowser_page_bg_color;
@@ -497,6 +540,13 @@ global uint32_t zbrowser_box_top_px;
 global uint32_t zbrowser_box_has_bottom;
 global uint32_t zbrowser_box_bottom_px;
 global uint32_t zbrowser_box_center_x;
+global uint32_t zbrowser_flow_x_px;
+global uint32_t zbrowser_flow_w_px;
+global uint32_t zbrowser_flow_box_x_px;
+global uint32_t zbrowser_flow_box_w_px;
+global uint32_t zbrowser_flow_box_flags;
+global uint32_t zbrowser_flow_box_border;
+global uint32_t zbrowser_flow_draw_border;
 global uint32_t zbrowser_layout_region;
 global uint32_t zbrowser_article_line_no;
 global uint32_t zbrowser_left_line_no;
@@ -577,6 +627,7 @@ global uint32_t zbrowser_web_background_position_x;
 global uint32_t zbrowser_web_background_position_y;
 global uint32_t zbrowser_style_stack_fg[64];
 global uint32_t zbrowser_style_stack_bg[64];
+global uint32_t zbrowser_style_stack_bg_band[64];
 global uint32_t zbrowser_style_stack_align[64];
 global uint32_t zbrowser_style_stack_region[64];
 global uint32_t zbrowser_style_stack_col_mode[64];
@@ -586,6 +637,14 @@ global uint32_t zbrowser_style_stack_line_stride[64];
 global uint32_t zbrowser_style_stack_font_scale[64];
 global uint32_t zbrowser_style_stack_transform[64];
 global uint32_t zbrowser_style_stack_white_space[64];
+global uint32_t zbrowser_style_stack_bottom_space[64];
+global uint32_t zbrowser_style_stack_block_flow[64];
+global uint32_t zbrowser_style_stack_flow_x[64];
+global uint32_t zbrowser_style_stack_flow_w[64];
+global uint32_t zbrowser_style_stack_flow_box_x[64];
+global uint32_t zbrowser_style_stack_flow_box_w[64];
+global uint32_t zbrowser_style_stack_flow_box_flags[64];
+global uint32_t zbrowser_style_stack_flow_box_border[64];
 global uint32_t zbrowser_style_stack_depth;
 global uint32_t zbrowser_dom_stack_tags[64];
 global uint32_t zbrowser_dom_stack_depth;
@@ -596,6 +655,8 @@ global uint32_t zbrowser_line_stride;
 global uint32_t zbrowser_font_scale;
 global uint32_t zbrowser_text_transform;
 global uint32_t zbrowser_white_space;
+global uint32_t zbrowser_css_bottom_space;
+global uint32_t zbrowser_css_scope_block_flow;
 global uint32_t zbrowser_list_ordered[64];
 global uint32_t zbrowser_list_counter[64];
 
@@ -983,6 +1044,7 @@ void reset_line_cache(void) {
     while (i < ZBROWSER_LINE_CACHE_LINES) {
         zbrowser_line_cache_valid[i] = 0;
         zbrowser_line_cache_len[i] = 0;
+        zbrowser_line_cache_box_flags[i] = 0;
         i = i + 1;
     }
 }
@@ -2823,6 +2885,39 @@ uint32_t text_bg_for_draw(void) {
     return zbrowser_text_bg;
 }
 
+int color_is_page_background(uint32_t color) {
+    if (color == zbrowser_page_bg_color) {
+        return 1;
+    }
+    if (color == 0xffffff && zbrowser_page_bg_color == 0xffffffff) {
+        return 1;
+    }
+    if (color == 0xffffffff && zbrowser_page_bg_color == 0xffffff) {
+        return 1;
+    }
+    return 0;
+}
+
+void draw_line_background_band(uint32_t y, uint32_t line_h, uint32_t bg) {
+    uint32_t border_bits;
+
+    border_bits = zbrowser_flow_box_flags & ZBROWSER_FLOW_BOX_BORDER;
+    if (color_is_page_background(bg) != 0 &&
+        border_bits == 0) {
+        return;
+    }
+    if (flow_box_w() <= 4 || line_h == 0) {
+        return;
+    }
+    draw_current_flow_decoration(y, line_h, bg);
+}
+
+void activate_background_band(void) {
+    if (color_is_page_background(text_bg_for_draw()) == 0) {
+        zbrowser_bg_band_active = 1;
+    }
+}
+
 uint8_t zb_upper_char(uint8_t ch) {
     if (ch >= 97 && ch <= 122) {
         return ch - 32;
@@ -2883,6 +2978,7 @@ void push_text_style(void) {
     }
     zbrowser_style_stack_fg[depth] = zbrowser_text_fg;
     zbrowser_style_stack_bg[depth] = zbrowser_text_bg;
+    zbrowser_style_stack_bg_band[depth] = zbrowser_bg_band_active;
     zbrowser_style_stack_align[depth] = zbrowser_text_align;
     zbrowser_style_stack_region[depth] = zbrowser_layout_region;
     zbrowser_style_stack_col_mode[depth] = zbrowser_column_mode;
@@ -2892,6 +2988,14 @@ void push_text_style(void) {
     zbrowser_style_stack_font_scale[depth] = zbrowser_font_scale;
     zbrowser_style_stack_transform[depth] = zbrowser_text_transform;
     zbrowser_style_stack_white_space[depth] = zbrowser_white_space;
+    zbrowser_style_stack_bottom_space[depth] = zbrowser_css_bottom_space;
+    zbrowser_style_stack_block_flow[depth] = zbrowser_css_scope_block_flow;
+    zbrowser_style_stack_flow_x[depth] = zbrowser_flow_x_px;
+    zbrowser_style_stack_flow_w[depth] = zbrowser_flow_w_px;
+    zbrowser_style_stack_flow_box_x[depth] = zbrowser_flow_box_x_px;
+    zbrowser_style_stack_flow_box_w[depth] = zbrowser_flow_box_w_px;
+    zbrowser_style_stack_flow_box_flags[depth] = zbrowser_flow_box_flags;
+    zbrowser_style_stack_flow_box_border[depth] = zbrowser_flow_box_border;
     zbrowser_style_stack_depth = depth + 1;
 }
 
@@ -2902,6 +3006,7 @@ void pop_text_style(void) {
     if (zbrowser_style_stack_depth == 0) {
         zbrowser_text_fg = zbrowser_page_text_fg;
         zbrowser_text_bg = zbrowser_page_bg_color;
+        zbrowser_bg_band_active = 0;
         zbrowser_text_align = zbrowser_page_text_align;
         set_region(ZBROWSER_REGION_ARTICLE);
         zbrowser_column_mode = 0;
@@ -2911,6 +3016,9 @@ void pop_text_style(void) {
         zbrowser_font_scale = 1;
         zbrowser_text_transform = WEB_STYLE_TEXT_TRANSFORM_NONE;
         zbrowser_white_space = WEB_STYLE_WHITE_SPACE_NORMAL;
+        zbrowser_css_bottom_space = 0;
+        zbrowser_css_scope_block_flow = 0;
+        clear_flow_box();
         return;
     }
     depth = zbrowser_style_stack_depth - 1;
@@ -2921,6 +3029,7 @@ void pop_text_style(void) {
     zbrowser_style_stack_depth = depth;
     zbrowser_text_fg = zbrowser_style_stack_fg[depth];
     zbrowser_text_bg = zbrowser_style_stack_bg[depth];
+    zbrowser_bg_band_active = zbrowser_style_stack_bg_band[depth];
     zbrowser_text_align = zbrowser_style_stack_align[depth];
     zbrowser_column_mode = zbrowser_style_stack_col_mode[depth];
     zbrowser_column_start_line = zbrowser_style_stack_col_start[depth];
@@ -2929,10 +3038,66 @@ void pop_text_style(void) {
     zbrowser_font_scale = zbrowser_style_stack_font_scale[depth];
     zbrowser_text_transform = zbrowser_style_stack_transform[depth];
     zbrowser_white_space = zbrowser_style_stack_white_space[depth];
+    zbrowser_css_bottom_space = zbrowser_style_stack_bottom_space[depth];
+    zbrowser_css_scope_block_flow = zbrowser_style_stack_block_flow[depth];
+    zbrowser_flow_x_px = zbrowser_style_stack_flow_x[depth];
+    zbrowser_flow_w_px = zbrowser_style_stack_flow_w[depth];
+    zbrowser_flow_box_x_px = zbrowser_style_stack_flow_box_x[depth];
+    zbrowser_flow_box_w_px = zbrowser_style_stack_flow_box_w[depth];
+    zbrowser_flow_box_flags = zbrowser_style_stack_flow_box_flags[depth];
+    zbrowser_flow_box_border = zbrowser_style_stack_flow_box_border[depth];
     set_region(zbrowser_style_stack_region[depth]);
 }
 
+int netsurf_tag_hint(const uint8_t *html,
+                     uint32_t pos,
+                     uint32_t *out_display,
+                     uint32_t *out_role,
+                     uint32_t *out_flags) {
+    if (netsurf_port_style_hint_for_tag(html, pos, out_display, out_role, out_flags) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+int netsurf_tag_role_is(const uint8_t *html, uint32_t pos, uint32_t role) {
+    uint32_t display;
+    uint32_t hint_role;
+    uint32_t flags;
+
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    hint_role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (netsurf_tag_hint(html, pos, &display, &hint_role, &flags) != 0 &&
+        hint_role == role) {
+        return 1;
+    }
+    return 0;
+}
+
+int netsurf_tag_has_flags(const uint8_t *html, uint32_t pos, uint32_t wanted_flags) {
+    uint32_t display;
+    uint32_t role;
+    uint32_t flags;
+    uint32_t bits;
+
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    bits = 0;
+    if (netsurf_tag_hint(html, pos, &display, &role, &flags) != 0) {
+        bits = flags & wanted_flags;
+        if (bits != 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int tag_is_site_chrome(const uint8_t *html, uint32_t pos) {
+    if (netsurf_tag_role_is(html, pos, NETSURF_PORT_HINT_ROLE_CHROME) != 0) {
+        return 1;
+    }
     if (zb_tag_name_is(html, pos, "nav") ||
         zb_tag_name_is(html, pos, "header") ||
         zb_tag_name_is(html, pos, "footer") ||
@@ -3034,17 +3199,22 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "pre")) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xf8f9fa;
+        if (zb_tag_name_is(html, pos, "pre")) {
+            activate_background_band();
+        }
         return;
     }
     if (zb_tag_name_is(html, pos, "blockquote") ||
         tag_class_contains(html, pos, "quotebox")) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xf8f9fa;
+        activate_background_band();
         return;
     }
     if (zb_tag_name_is(html, pos, "th")) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xeaecf0;
+        activate_background_band();
         return;
     }
     if (zb_attr_value(html, pos, "style", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
@@ -3061,6 +3231,7 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         tag_class_contains(html, pos, "metadata")) {
         zbrowser_text_fg = 0x54595d;
         zbrowser_text_bg = 0xf8f9fa;
+        activate_background_band();
         return;
     }
     if (tag_class_contains(html, pos, "ambox") ||
@@ -3068,6 +3239,7 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         tag_class_contains(html, pos, "warning")) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xfff3cd;
+        activate_background_band();
         return;
     }
     if (tag_class_contains(html, pos, "infobox-title") ||
@@ -3075,6 +3247,7 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xeaecf0;
         zbrowser_text_align = 1;
+        activate_background_band();
         return;
     }
     if (tag_class_contains(html, pos, "infobox-caption") ||
@@ -3082,6 +3255,7 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         zbrowser_text_fg = 0x54595d;
         zbrowser_text_bg = 0xf8f9fa;
         zbrowser_text_align = 1;
+        activate_background_band();
         return;
     }
     if (tag_class_contains(html, pos, "infobox") ||
@@ -3091,11 +3265,22 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         tag_class_contains(html, pos, "sidebar")) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xf8f9fa;
+        activate_background_band();
         return;
     }
     if (tag_is_site_chrome(html, pos) != 0) {
         zbrowser_text_fg = 0x54595d;
         zbrowser_text_bg = 0xf8f9fa;
+        activate_background_band();
+    }
+}
+
+void apply_css_background_band(const uint8_t *html, uint32_t pos) {
+    if (load_web_style(html, pos) != 0 &&
+        web_style_has_flag(WEB_STYLE_FLAG_HAS_BG_COLOR) != 0 &&
+        tag_is_block_flow(html, pos) != 0 &&
+        color_is_page_background(text_bg_for_draw()) == 0) {
+        zbrowser_bg_band_active = 1;
     }
 }
 
@@ -3103,6 +3288,8 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
     uint32_t add_cols;
     uint32_t px;
 
+    zbrowser_css_bottom_space = 0;
+    zbrowser_css_scope_block_flow = 0;
     if (load_web_style(html, pos) == 0) {
         return;
     }
@@ -3111,6 +3298,7 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
         zbrowser_web_style_float == WEB_STYLE_FLOAT_NONE) {
         return;
     }
+    zbrowser_css_scope_block_flow = 1;
     if (zbrowser_web_clear_side != WEB_STYLE_CLEAR_NONE) {
         blank_line();
     }
@@ -3118,6 +3306,11 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
         blank_line();
     } else if (zbrowser_web_margin_t >= 8 || zbrowser_web_padding_t >= 8) {
         flush_line();
+    }
+    if (zbrowser_web_margin_b >= 18 || zbrowser_web_padding_b >= 18) {
+        zbrowser_css_bottom_space = 2;
+    } else if (zbrowser_web_margin_b >= 8 || zbrowser_web_padding_b >= 8) {
+        zbrowser_css_bottom_space = 1;
     }
     add_cols = 0;
     px = zbrowser_web_margin_l + zbrowser_web_padding_l + zbrowser_web_border_l + zbrowser_web_text_indent;
@@ -3137,6 +3330,157 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
         if (zbrowser_content_indent_cols > 18) {
             zbrowser_content_indent_cols = 18;
         }
+    }
+}
+
+uint32_t visible_border_color(void) {
+    if (web_style_has_flag(WEB_STYLE_FLAG_BORDER_COLOR) != 0) {
+        return zbrowser_web_border_color;
+    }
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_COLOR) != 0) {
+        return zbrowser_web_style_color;
+    }
+    return 0xa2a9b1;
+}
+
+int current_style_has_visible_border(void) {
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_BORDER) != 0 &&
+        (zbrowser_web_border_l != 0 ||
+         zbrowser_web_border_r != 0 ||
+         zbrowser_web_border_t != 0 ||
+         zbrowser_web_border_b != 0)) {
+        return 1;
+    }
+    return 0;
+}
+
+void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
+    uint32_t parent_x;
+    uint32_t parent_w;
+    uint32_t margin_l;
+    uint32_t margin_r;
+    uint32_t padding_l;
+    uint32_t padding_r;
+    uint32_t border_l;
+    uint32_t border_r;
+    uint32_t border_x;
+    uint32_t border_w;
+    uint32_t content_x;
+    uint32_t content_w;
+    uint32_t wanted_w;
+    uint32_t flags;
+
+    if (load_web_style(html, pos) == 0) {
+        return;
+    }
+    if (tag_is_block_flow(html, pos) == 0 &&
+        zbrowser_web_style_display != WEB_STYLE_DISPLAY_LIST_ITEM &&
+        zbrowser_web_style_float == WEB_STYLE_FLOAT_NONE) {
+        return;
+    }
+
+    parent_x = flow_content_x();
+    parent_w = flow_content_w();
+    if (parent_w < 16) {
+        return;
+    }
+
+    margin_l = zbrowser_web_margin_l;
+    margin_r = zbrowser_web_margin_r;
+    padding_l = zbrowser_web_padding_l;
+    padding_r = zbrowser_web_padding_r;
+    border_l = zbrowser_web_border_l;
+    border_r = zbrowser_web_border_r;
+    if (border_l > 8) {
+        border_l = 8;
+    }
+    if (border_r > 8) {
+        border_r = 8;
+    }
+    if (padding_l > parent_w / 3) {
+        padding_l = parent_w / 3;
+    }
+    if (padding_r > parent_w / 3) {
+        padding_r = parent_w / 3;
+    }
+    if (margin_l > parent_w / 2) {
+        margin_l = parent_w / 2;
+    }
+    if (margin_r > parent_w / 2) {
+        margin_r = parent_w / 2;
+    }
+
+    border_x = parent_x + margin_l;
+    if (parent_w > margin_l + margin_r) {
+        border_w = parent_w - margin_l - margin_r;
+    } else {
+        border_w = parent_w;
+        border_x = parent_x;
+    }
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_WIDTH) != 0 &&
+        zbrowser_web_style_width != 0) {
+        wanted_w = zbrowser_web_style_width;
+        if (zbrowser_web_box_sizing == WEB_STYLE_BOX_CONTENT_BOX) {
+            wanted_w = wanted_w + padding_l + padding_r + border_l + border_r;
+        }
+        border_w = clamp_flow_width(wanted_w, border_w);
+    }
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_MAX_WIDTH) != 0 &&
+        zbrowser_web_style_max_width != 0 &&
+        zbrowser_web_style_max_width < border_w) {
+        border_w = zbrowser_web_style_max_width;
+    }
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_MIN_WIDTH) != 0 &&
+        zbrowser_web_style_min_width > border_w &&
+        zbrowser_web_style_min_width < parent_w) {
+        border_w = zbrowser_web_style_min_width;
+    }
+    border_w = clamp_flow_width(border_w, parent_w);
+    if ((web_style_has_flag(WEB_STYLE_FLAG_MARGIN_AUTO_X) != 0 ||
+         web_style_has_flag(WEB_STYLE_FLAG_CENTER_X) != 0) &&
+        parent_w > border_w) {
+        border_x = parent_x + (parent_w - border_w) / 2;
+    } else if (zbrowser_web_style_float == WEB_STYLE_FLOAT_RIGHT &&
+               parent_w > border_w + margin_r) {
+        border_x = parent_x + parent_w - border_w - margin_r;
+    }
+    if (border_x < parent_x) {
+        border_x = parent_x;
+    }
+    if (border_x + border_w > parent_x + parent_w) {
+        if (parent_x + parent_w > border_w) {
+            border_x = parent_x + parent_w - border_w;
+        } else {
+            border_x = parent_x;
+            border_w = parent_w;
+        }
+    }
+
+    content_x = border_x + border_l + padding_l;
+    if (border_w > border_l + border_r + padding_l + padding_r) {
+        content_w = border_w - border_l - border_r - padding_l - padding_r;
+    } else {
+        content_w = border_w;
+        content_x = border_x;
+    }
+    content_w = clamp_flow_width(content_w, border_w);
+
+    zbrowser_flow_box_x_px = border_x;
+    zbrowser_flow_box_w_px = border_w;
+    zbrowser_flow_x_px = content_x;
+    zbrowser_flow_w_px = content_w;
+    zbrowser_flow_box_border = visible_border_color();
+    flags = 0;
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_BG_COLOR) != 0 &&
+        color_is_page_background(zbrowser_web_style_bg_color) == 0) {
+        flags = flags + ZBROWSER_FLOW_BOX_BG;
+    }
+    if (current_style_has_visible_border() != 0) {
+        flags = flags + ZBROWSER_FLOW_BOX_BORDER;
+    }
+    zbrowser_flow_box_flags = flags;
+    if (flags != 0) {
+        zbrowser_bg_band_active = 1;
     }
 }
 
@@ -3176,6 +3520,11 @@ int tag_should_skip_content(const uint8_t *html, uint32_t pos) {
     if (html[pos] == 0) {
         return 0;
     }
+    if (netsurf_tag_has_flags(html,
+                              pos,
+                              NETSURF_PORT_HINT_FLAG_SKIP | NETSURF_PORT_HINT_FLAG_HIDDEN) != 0) {
+        return 1;
+    }
     if (tag_class_contains(html, pos, "printfooter") ||
         tag_class_contains(html, pos, "metadata") ||
         tag_class_contains(html, pos, "noprint") ||
@@ -3199,6 +3548,14 @@ uint32_t find_primary_content_start(const uint8_t *html) {
     while (html[pos] != 0) {
         if (html[pos] == 60) {
             if (zb_is_closing_tag(html, pos) == 0) {
+                if ((zb_tag_name_is(html, pos, "div") ||
+                     zb_tag_name_is(html, pos, "main") ||
+                     zb_tag_name_is(html, pos, "article") ||
+                     zb_tag_name_is(html, pos, "section")) &&
+                    zb_attr_value(html, pos, "data-zbrowser-primary", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 &&
+                    text_contains_ci(zbrowser_attr, "1") != 0) {
+                    return pos;
+                }
                 if ((zb_tag_name_is(html, pos, "div") ||
                      zb_tag_name_is(html, pos, "main") ||
                      zb_tag_name_is(html, pos, "article") ||
@@ -3955,6 +4312,132 @@ uint32_t article_w(void) {
     return w;
 }
 
+uint32_t default_flow_content_x(void) {
+    return article_x() + 10;
+}
+
+uint32_t default_flow_content_w(void) {
+    uint32_t w;
+
+    w = article_w();
+    if (w > 20) {
+        return w - 20;
+    }
+    return w;
+}
+
+uint32_t default_flow_box_x(void) {
+    return article_x() + 4;
+}
+
+uint32_t default_flow_box_w(void) {
+    uint32_t w;
+
+    w = article_w();
+    if (w > 8) {
+        return w - 8;
+    }
+    return w;
+}
+
+uint32_t flow_content_x(void) {
+    if (zbrowser_flow_w_px != 0) {
+        return zbrowser_flow_x_px;
+    }
+    return default_flow_content_x();
+}
+
+uint32_t flow_content_w(void) {
+    if (zbrowser_flow_w_px != 0) {
+        return zbrowser_flow_w_px;
+    }
+    return default_flow_content_w();
+}
+
+uint32_t flow_box_x(void) {
+    if (zbrowser_flow_box_w_px != 0) {
+        return zbrowser_flow_box_x_px;
+    }
+    return default_flow_box_x();
+}
+
+uint32_t flow_box_w(void) {
+    if (zbrowser_flow_box_w_px != 0) {
+        return zbrowser_flow_box_w_px;
+    }
+    return default_flow_box_w();
+}
+
+void clear_flow_box(void) {
+    zbrowser_flow_x_px = 0;
+    zbrowser_flow_w_px = 0;
+    zbrowser_flow_box_x_px = 0;
+    zbrowser_flow_box_w_px = 0;
+    zbrowser_flow_box_flags = 0;
+    zbrowser_flow_box_border = 0;
+}
+
+uint32_t clamp_flow_width(uint32_t width, uint32_t max_width) {
+    if (max_width == 0) {
+        return 0;
+    }
+    if (width == 0 || width > max_width) {
+        width = max_width;
+    }
+    if (width < 16 && max_width >= 16) {
+        width = 16;
+    }
+    return width;
+}
+
+void draw_flow_decoration_at(uint32_t x,
+                             uint32_t w,
+                             uint32_t y,
+                             uint32_t h,
+                             uint32_t bg,
+                             uint32_t flags) {
+    uint32_t bg_bits;
+    uint32_t border_bits;
+    uint32_t right_x;
+
+    if (w == 0 || h == 0) {
+        return;
+    }
+    bg_bits = flags & ZBROWSER_FLOW_BOX_BG;
+    border_bits = flags & ZBROWSER_FLOW_BOX_BORDER;
+    if (bg_bits != 0 &&
+        color_is_page_background(bg) == 0) {
+        gfx_fill_rect(x, y, w, h, bg);
+    }
+    if (border_bits != 0) {
+        gfx_fill_rect(x, y, 1, h, zbrowser_flow_draw_border);
+        if (w > 1) {
+            right_x = x + w - 1;
+            gfx_fill_rect(right_x, y, 1, h, zbrowser_flow_draw_border);
+        }
+    }
+}
+
+void draw_current_flow_decoration(uint32_t y, uint32_t h, uint32_t bg) {
+    uint32_t flags;
+    uint32_t bg_bits;
+
+    flags = zbrowser_flow_box_flags;
+    if (zbrowser_bg_band_active != 0) {
+        bg_bits = flags & ZBROWSER_FLOW_BOX_BG;
+        if (bg_bits == 0) {
+            flags = flags + ZBROWSER_FLOW_BOX_BG;
+        }
+    }
+    zbrowser_flow_draw_border = zbrowser_flow_box_border;
+    draw_flow_decoration_at(flow_box_x(),
+                            flow_box_w(),
+                            y,
+                            h,
+                            bg,
+                            flags);
+}
+
 void draw_article_sidebar_hint(void) {
     return;
 }
@@ -4095,13 +4578,22 @@ void remember_render_checkpoint(uint32_t pos) {
     zbrowser_render_checkpoint_pos[index] = pos;
     zbrowser_render_checkpoint_fg[index] = zbrowser_text_fg;
     zbrowser_render_checkpoint_bg[index] = zbrowser_text_bg;
+    zbrowser_render_checkpoint_bg_band[index] = zbrowser_bg_band_active;
     zbrowser_render_checkpoint_align[index] = zbrowser_text_align;
     zbrowser_render_checkpoint_indent[index] = zbrowser_content_indent_cols;
     zbrowser_render_checkpoint_stride[index] = zbrowser_line_stride;
     zbrowser_render_checkpoint_font_scale[index] = zbrowser_font_scale;
     zbrowser_render_checkpoint_transform[index] = zbrowser_text_transform;
     zbrowser_render_checkpoint_white_space[index] = zbrowser_white_space;
+    zbrowser_render_checkpoint_bottom_space[index] = zbrowser_css_bottom_space;
+    zbrowser_render_checkpoint_block_flow[index] = zbrowser_css_scope_block_flow;
     zbrowser_render_checkpoint_list_depth[index] = zbrowser_list_depth;
+    zbrowser_render_checkpoint_flow_x[index] = zbrowser_flow_x_px;
+    zbrowser_render_checkpoint_flow_w[index] = zbrowser_flow_w_px;
+    zbrowser_render_checkpoint_flow_box_x[index] = zbrowser_flow_box_x_px;
+    zbrowser_render_checkpoint_flow_box_w[index] = zbrowser_flow_box_w_px;
+    zbrowser_render_checkpoint_flow_box_flags[index] = zbrowser_flow_box_flags;
+    zbrowser_render_checkpoint_flow_box_border[index] = zbrowser_flow_box_border;
     if (index + 1 > zbrowser_render_checkpoint_count) {
         zbrowser_render_checkpoint_count = index + 1;
     }
@@ -4128,13 +4620,22 @@ int restore_render_checkpoint(uint32_t *pos) {
             zbrowser_line_no = zbrowser_render_checkpoint_lines[index];
             zbrowser_text_fg = zbrowser_render_checkpoint_fg[index];
             zbrowser_text_bg = zbrowser_render_checkpoint_bg[index];
+            zbrowser_bg_band_active = zbrowser_render_checkpoint_bg_band[index];
             zbrowser_text_align = zbrowser_render_checkpoint_align[index];
             zbrowser_content_indent_cols = zbrowser_render_checkpoint_indent[index];
             zbrowser_line_stride = zbrowser_render_checkpoint_stride[index];
             zbrowser_font_scale = zbrowser_render_checkpoint_font_scale[index];
             zbrowser_text_transform = zbrowser_render_checkpoint_transform[index];
             zbrowser_white_space = zbrowser_render_checkpoint_white_space[index];
+            zbrowser_css_bottom_space = zbrowser_render_checkpoint_bottom_space[index];
+            zbrowser_css_scope_block_flow = zbrowser_render_checkpoint_block_flow[index];
             zbrowser_list_depth = zbrowser_render_checkpoint_list_depth[index];
+            zbrowser_flow_x_px = zbrowser_render_checkpoint_flow_x[index];
+            zbrowser_flow_w_px = zbrowser_render_checkpoint_flow_w[index];
+            zbrowser_flow_box_x_px = zbrowser_render_checkpoint_flow_box_x[index];
+            zbrowser_flow_box_w_px = zbrowser_render_checkpoint_flow_box_w[index];
+            zbrowser_flow_box_flags = zbrowser_render_checkpoint_flow_box_flags[index];
+            zbrowser_flow_box_border = zbrowser_render_checkpoint_flow_box_border[index];
             zbrowser_style_stack_depth = 0;
             zbrowser_dom_stack_depth = 0;
             zbrowser_table_depth = 0;
@@ -4188,14 +4689,14 @@ uint32_t zbrowser_line_max_cols(void) {
     uint32_t max_cols;
     uint32_t char_w;
 
-    aw = article_w();
+    aw = flow_content_w();
     char_w = zbrowser_char_width();
     if (char_w == 0) {
         char_w = 8;
     }
     max_cols = 18;
-    if (aw > 32) {
-        max_cols = (aw - 24) / char_w;
+    if (aw > 8) {
+        max_cols = aw / char_w;
     }
     if (max_cols >= ZBROWSER_LINE_CAPACITY) {
         max_cols = ZBROWSER_LINE_CAPACITY - 1;
@@ -4318,6 +4819,11 @@ void remember_line_cache(uint32_t line, uint32_t x, uint32_t had_inline) {
         zbrowser_line_cache_fg[line] = zbrowser_line_fg[0];
     }
     zbrowser_line_cache_bg[line] = text_bg_for_draw();
+    zbrowser_line_cache_bg_band[line] = zbrowser_bg_band_active;
+    zbrowser_line_cache_box_x[line] = flow_box_x();
+    zbrowser_line_cache_box_w[line] = flow_box_w();
+    zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags;
+    zbrowser_line_cache_box_border[line] = zbrowser_flow_box_border;
 }
 
 void remember_blank_line_cache(uint32_t line) {
@@ -4332,10 +4838,15 @@ void remember_blank_line_cache(uint32_t line) {
     slot[0] = 0;
     zbrowser_line_cache_valid[line] = 1;
     zbrowser_line_cache_len[line] = 0;
-    zbrowser_line_cache_x[line] = article_x() + 10;
+    zbrowser_line_cache_x[line] = flow_content_x();
     zbrowser_line_cache_scale[line] = zbrowser_clamped_font_scale(zbrowser_font_scale);
     zbrowser_line_cache_fg[line] = zbrowser_text_fg;
     zbrowser_line_cache_bg[line] = text_bg_for_draw();
+    zbrowser_line_cache_bg_band[line] = zbrowser_bg_band_active;
+    zbrowser_line_cache_box_x[line] = flow_box_x();
+    zbrowser_line_cache_box_w[line] = flow_box_w();
+    zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags;
+    zbrowser_line_cache_box_border[line] = zbrowser_flow_box_border;
 }
 
 void set_link_rect_exact(uint32_t index,
@@ -4405,6 +4916,8 @@ int draw_cached_line(uint32_t line) {
     uint32_t scale;
     uint32_t char_w;
     uint32_t line_h;
+    uint32_t box_flags;
+    uint32_t box_bg_bits;
 
     if (line < zbrowser_scroll) {
         return 1;
@@ -4423,10 +4936,34 @@ int draw_cached_line(uint32_t line) {
         return 1;
     }
     len = zbrowser_line_cache_len[line];
+    box_flags = zbrowser_line_cache_box_flags[line];
+    box_bg_bits = box_flags & ZBROWSER_FLOW_BOX_BG;
+    if (zbrowser_line_cache_bg_band[line] != 0 &&
+        box_bg_bits == 0) {
+        box_flags = box_flags + ZBROWSER_FLOW_BOX_BG;
+    }
     if (len == 0) {
+        if (box_flags != 0) {
+            zbrowser_flow_draw_border = zbrowser_line_cache_box_border[line];
+            draw_flow_decoration_at(zbrowser_line_cache_box_x[line],
+                                    zbrowser_line_cache_box_w[line],
+                                    draw_y,
+                                    line_h,
+                                    zbrowser_line_cache_bg[line],
+                                    box_flags);
+        }
         return 1;
     }
 
+    if (box_flags != 0) {
+        zbrowser_flow_draw_border = zbrowser_line_cache_box_border[line];
+        draw_flow_decoration_at(zbrowser_line_cache_box_x[line],
+                                zbrowser_line_cache_box_w[line],
+                                draw_y,
+                                line_h,
+                                zbrowser_line_cache_bg[line],
+                                box_flags);
+    }
     slot = line_cache_text_slot(line);
     fg_slot = line_cache_fg_slot(line);
     start = 0;
@@ -4600,17 +5137,20 @@ void flush_line(void) {
     zbrowser_line[zbrowser_line_len] = 0;
     char_w = zbrowser_char_width();
     line_h = zbrowser_line_height();
-    x = article_x() + 10;
+    x = flow_content_x();
     text_w = zbrowser_line_len * char_w;
-    if (zbrowser_text_align == 1 && article_w() > text_w + 20) {
-        x = article_x() + (article_w() - text_w) / 2;
-    } else if (zbrowser_text_align == 2 && article_w() > text_w + 20) {
-        x = article_x() + article_w() - text_w - 10;
+    if (zbrowser_text_align == 1 && flow_content_w() > text_w) {
+        x = flow_content_x() + (flow_content_w() - text_w) / 2;
+    } else if (zbrowser_text_align == 2 && flow_content_w() > text_w) {
+        x = flow_content_x() + flow_content_w() - text_w;
     }
     remember_line_cache(zbrowser_line_no, x, had_inline);
     if (zbrowser_line_no >= zbrowser_scroll && zbrowser_should_draw_line(zbrowser_line_no) != 0) {
         draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
         if (draw_y + line_h < h) {
+            if (zbrowser_bg_band_active != 0) {
+                draw_line_background_band(draw_y, line_h, text_bg_for_draw());
+            }
             draw_table_boxes_on_line(zbrowser_line_no, x, draw_y, 0);
             draw_line_text_runs(x, draw_y);
             i = 0;
@@ -4921,8 +5461,8 @@ uint32_t control_x_for_width(uint32_t box_w) {
     uint32_t ax;
     uint32_t aw;
 
-    ax = article_x();
-    aw = article_w();
+    ax = flow_content_x();
+    aw = flow_content_w();
     if (aw <= box_w + 16) {
         return ax + 8;
     }
@@ -4954,7 +5494,7 @@ uint32_t input_control_width_for_tag(const uint8_t *html, uint32_t pos) {
             width = chars * 8 + 24;
         }
     }
-    styled = image_style_length(html, pos, "width", article_w());
+    styled = image_style_length(html, pos, "width", flow_content_w());
     if (styled != 0) {
         width = styled;
     }
@@ -4962,8 +5502,8 @@ uint32_t input_control_width_for_tag(const uint8_t *html, uint32_t pos) {
         width = 460;
     }
     max_w = 96;
-    if (article_w() > 32) {
-        max_w = article_w() - 24;
+    if (flow_content_w() > 8) {
+        max_w = flow_content_w();
     }
     if (width > max_w) {
         width = max_w;
@@ -4986,8 +5526,8 @@ uint32_t button_control_width_for_label(const uint8_t *label) {
         width = 240;
     }
     max_w = 96;
-    if (article_w() > 32) {
-        max_w = article_w() - 24;
+    if (flow_content_w() > 8) {
+        max_w = flow_content_w();
     }
     if (width > max_w) {
         width = max_w;
@@ -5007,8 +5547,8 @@ uint32_t select_control_width_for_label(const uint8_t *label) {
         width = 320;
     }
     max_w = 96;
-    if (article_w() > 32) {
-        max_w = article_w() - 24;
+    if (flow_content_w() > 8) {
+        max_w = flow_content_w();
     }
     if (width > max_w) {
         width = max_w;
@@ -5063,8 +5603,8 @@ uint32_t table_cell_padding_cols_for_tag(const uint8_t *html,
     uint32_t px;
     uint32_t cols;
 
-    if (style_length_px_prop(html, pos, "padding-left", article_w(), &px) != 0 ||
-        style_length_px_prop(html, pos, "padding", article_w(), &px) != 0) {
+    if (style_length_px_prop(html, pos, "padding-left", flow_content_w(), &px) != 0 ||
+        style_length_px_prop(html, pos, "padding", flow_content_w(), &px) != 0) {
         cols = table_cols_from_px(px, 4);
         return cols;
     }
@@ -5305,7 +5845,7 @@ uint32_t table_cell_target_cols_for_tag(const uint8_t *html, uint32_t pos) {
     if (zbrowser_tbl_fixed_cell_cols != 0) {
         cols = zbrowser_tbl_fixed_cell_cols;
     }
-    px = image_style_length(html, pos, "width", article_w());
+    px = image_style_length(html, pos, "width", flow_content_w());
     if (px != 0) {
         cols = (px + 7) / 8;
     }
@@ -5488,7 +6028,7 @@ void start_table_layout(const uint8_t *html, uint32_t pos) {
     zbrowser_tbl_default_pad_cols = table_attr_cols(html, pos, "cellpadding", zbrowser_tbl_default_pad_cols, 4);
     zbrowser_tbl_cell_pad_cols = zbrowser_tbl_default_pad_cols;
     zbrowser_tbl_cell_gap_cols = table_attr_cols(html, pos, "cellspacing", zbrowser_tbl_cell_gap_cols, 4);
-    if (style_length_px_prop(html, pos, "border-spacing", article_w(), &color) != 0) {
+    if (style_length_px_prop(html, pos, "border-spacing", flow_content_w(), &color) != 0) {
         zbrowser_tbl_cell_gap_cols = table_cols_from_px(color, 4);
     }
     if (load_web_style(html, pos) != 0) {
@@ -5552,8 +6092,8 @@ void draw_input_control(uint32_t index, const uint8_t *value) {
     }
 
     box_w = 128;
-    if (article_w() > 32) {
-        box_w = article_w() - 24;
+    if (flow_content_w() > 8) {
+        box_w = flow_content_w();
     }
     if (box_w > 360) {
         box_w = 360;
@@ -5603,8 +6143,8 @@ void draw_button_control(const uint8_t *label) {
     if (os_strlen(label) * 8 + 28 > box_w) {
         box_w = os_strlen(label) * 8 + 28;
     }
-    if (article_w() > 32 && box_w > article_w() - 24) {
-        box_w = article_w() - 24;
+    if (flow_content_w() > 8 && box_w > flow_content_w()) {
+        box_w = flow_content_w();
     }
     box_x = control_x_for_width(box_w);
     gfx_fill_rect(box_x, draw_y, box_w, 20, 0xeaecf0);
@@ -5642,8 +6182,8 @@ void draw_select_control(const uint8_t *label) {
     }
 
     box_w = 160;
-    if (article_w() > 32) {
-        box_w = article_w() - 24;
+    if (flow_content_w() > 8) {
+        box_w = flow_content_w();
     }
     if (box_w > 320) {
         box_w = 320;
@@ -5727,9 +6267,9 @@ void draw_image_placeholder(const uint8_t *src, const uint8_t *label) {
 
     link_index = register_link(src);
     if (link_index != 9999) {
-        draw_text_at_pixel(article_x() + 10, draw_y, label, zbrowser_link_text, text_bg_for_draw());
+        draw_text_at_pixel(flow_content_x(), draw_y, label, zbrowser_link_text, text_bg_for_draw());
     } else {
-        draw_text_at_pixel(article_x() + 10, draw_y, label, 0x54595d, text_bg_for_draw());
+        draw_text_at_pixel(flow_content_x(), draw_y, label, 0x54595d, text_bg_for_draw());
     }
     zbrowser_line_no = zbrowser_line_no + 1;
 }
@@ -5737,12 +6277,19 @@ void draw_image_placeholder(const uint8_t *src, const uint8_t *label) {
 void draw_style_block_start(const uint8_t *html, uint32_t pos) {
     uint32_t border;
     uint32_t border_visible;
+    uint32_t box_h;
+    uint32_t box_w;
+    uint32_t box_x;
     uint32_t bg;
     uint32_t h;
+    uint32_t has_bg;
     uint32_t y;
-    uint32_t w;
 
-    bg = style_background_color(html, pos, 0xffffff);
+    bg = style_background_color(html, pos, 0xffffffff);
+    has_bg = 0;
+    if (bg != 0xffffffff && color_is_page_background(bg) == 0) {
+        has_bg = 1;
+    }
     border = 0xa2a9b1;
     border_visible = 0;
     if (load_web_style(html, pos) != 0) {
@@ -5756,23 +6303,77 @@ void draw_style_block_start(const uint8_t *html, uint32_t pos) {
             }
         }
     }
-    if (bg == 0xffffff && border_visible == 0) {
+    if (border_visible == 0 && has_bg == 0) {
         return;
     }
     flush_line();
     h = gfx_height();
-    w = gfx_width();
+    if (flow_box_w() <= 4) {
+        return;
+    }
+    box_x = flow_box_x();
+    box_w = flow_box_w();
+    box_h = 18;
+    if (load_web_style(html, pos) != 0) {
+        box_h = 12 + zbrowser_web_padding_t + zbrowser_web_padding_b;
+        if (web_style_has_flag(WEB_STYLE_FLAG_HAS_HEIGHT) != 0 &&
+            zbrowser_web_style_height > box_h) {
+            box_h = zbrowser_web_style_height;
+        }
+        if (web_style_has_flag(WEB_STYLE_FLAG_HAS_MIN_HEIGHT) != 0 &&
+            zbrowser_web_style_min_height > box_h) {
+            box_h = zbrowser_web_style_min_height;
+        }
+    }
+    if (box_h < 18) {
+        box_h = 18;
+    }
+    if (box_h > 96) {
+        box_h = 96;
+    }
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (y + 18 < h - 18) {
-            if (bg != 0xffffff) {
-                gfx_fill_rect(article_x() + 4, y, article_w() - 8, 18, bg);
+        if (y + box_h < h - 18) {
+            if (has_bg != 0) {
+                gfx_fill_rect(box_x, y, box_w, box_h, bg);
             }
             if (border_visible != 0) {
-                gfx_draw_rect(article_x() + 4, y, article_w() - 8, 18, border);
+                gfx_draw_rect(box_x, y, box_w, box_h, border);
             }
         }
     }
+}
+
+int tag_may_draw_style_block(const uint8_t *html, uint32_t pos) {
+    if (zb_tag_name_is(html, pos, "div") ||
+        zb_tag_name_is(html, pos, "section") ||
+        zb_tag_name_is(html, pos, "article") ||
+        zb_tag_name_is(html, pos, "header") ||
+        zb_tag_name_is(html, pos, "footer") ||
+        zb_tag_name_is(html, pos, "main") ||
+        zb_tag_name_is(html, pos, "aside") ||
+        zb_tag_name_is(html, pos, "nav") ||
+        zb_tag_name_is(html, pos, "form") ||
+        zb_tag_name_is(html, pos, "figure") ||
+        zb_tag_name_is(html, pos, "figcaption") ||
+        zb_tag_name_is(html, pos, "blockquote") ||
+        zb_tag_name_is(html, pos, "pre") ||
+        zb_tag_name_is(html, pos, "p") ||
+        zb_tag_name_is(html, pos, "ul") ||
+        zb_tag_name_is(html, pos, "ol") ||
+        zb_tag_name_is(html, pos, "li") ||
+        zb_tag_name_is(html, pos, "dl") ||
+        zb_tag_name_is(html, pos, "dt") ||
+        zb_tag_name_is(html, pos, "dd")) {
+        return 1;
+    }
+    if (load_web_style(html, pos) != 0 &&
+        (zbrowser_web_style_display == WEB_STYLE_DISPLAY_BLOCK ||
+         zbrowser_web_style_display == WEB_STYLE_DISPLAY_FLEX ||
+         zbrowser_web_style_display == WEB_STYLE_DISPLAY_LIST_ITEM)) {
+        return 1;
+    }
+    return 0;
 }
 
 void draw_semantic_block_start(const uint8_t *html, uint32_t pos) {
@@ -5833,9 +6434,9 @@ void draw_semantic_block_start(const uint8_t *html, uint32_t pos) {
     w = gfx_width();
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (y + panel_h < h - 18 && w > 24 && article_w() > 24) {
-            gfx_fill_rect(article_x() + 6, y, article_w() - 12, panel_h, bg);
-            gfx_draw_rect(article_x() + 6, y, article_w() - 12, panel_h, border);
+        if (y + panel_h < h - 18 && w > 24 && flow_box_w() > 12) {
+            gfx_fill_rect(flow_box_x(), y, flow_box_w(), panel_h, bg);
+            gfx_draw_rect(flow_box_x(), y, flow_box_w(), panel_h, border);
         }
     }
 }
@@ -5850,9 +6451,9 @@ void draw_page_band(uint32_t color, uint32_t border) {
     w = gfx_width();
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (y + 18 < h - 18 && w > 24) {
-            gfx_fill_rect(article_x() + 4, y, article_w() - 8, 18, color);
-            gfx_draw_rect(article_x() + 4, y, article_w() - 8, 18, border);
+        if (y + 18 < h - 18 && w > 24 && flow_box_w() > 4) {
+            gfx_fill_rect(flow_box_x(), y, flow_box_w(), 18, color);
+            gfx_draw_rect(flow_box_x(), y, flow_box_w(), 18, border);
         }
     }
 }
@@ -5872,9 +6473,9 @@ void draw_heading_band(uint32_t is_top) {
     }
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (y + 18 < h - 18 && w > 24 && article_w() > 24) {
-            gfx_fill_rect(article_x() + 8, y, article_w() - 16, 17, 0xffffff);
-            gfx_fill_rect(article_x() + 8, y + 15, article_w() - 16, 1, line_color);
+        if (y + 18 < h - 18 && w > 24 && flow_box_w() > 16) {
+            gfx_fill_rect(flow_box_x() + 4, y, flow_box_w() - 8, 17, 0xffffff);
+            gfx_fill_rect(flow_box_x() + 4, y + 15, flow_box_w() - 8, 1, line_color);
         }
     }
 }
@@ -5889,8 +6490,8 @@ void draw_rule_line(uint32_t color) {
     w = gfx_width();
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12 + 6;
-        if (y + 2 < h - 18 && w > 24) {
-            gfx_fill_rect(article_x() + 8, y, article_w() - 16, 2, color);
+        if (y + 2 < h - 18 && w > 24 && flow_box_w() > 16) {
+            gfx_fill_rect(flow_box_x() + 4, y, flow_box_w() - 8, 2, color);
         }
     }
     zbrowser_line_no = zbrowser_line_no + 1;
@@ -5904,9 +6505,9 @@ void draw_quote_bar(void) {
     h = gfx_height();
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (y + 24 < h - 18 && gfx_width() > 28 && article_w() > 24) {
-            gfx_fill_rect(article_x() + 8, y, 4, 24, 0x3366cc);
-            gfx_fill_rect(article_x() + 12, y, article_w() - 20, 24, 0xf8f9fa);
+        if (y + 24 < h - 18 && gfx_width() > 28 && flow_box_w() > 20) {
+            gfx_fill_rect(flow_box_x() + 4, y, 4, 24, 0x3366cc);
+            gfx_fill_rect(flow_box_x() + 8, y, flow_box_w() - 12, 24, 0xf8f9fa);
         }
     }
     zbrowser_line_no = zbrowser_line_no + 1;
@@ -5922,8 +6523,8 @@ void draw_table_row_band(void) {
     w = gfx_width();
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (y + 14 < h - 18 && w > 24) {
-            gfx_fill_rect(article_x() + 8, y, article_w() - 16, 14, 0xf8f9fa);
+        if (y + 14 < h - 18 && w > 24 && flow_box_w() > 16) {
+            gfx_fill_rect(flow_box_x() + 4, y, flow_box_w() - 8, 14, 0xf8f9fa);
         }
     }
 }
@@ -5969,8 +6570,18 @@ void submit_focused_form(void) {
 }
 
 void blank_line(void) {
+    uint32_t draw_y;
+    uint32_t line_h;
+
     flush_line();
     remember_blank_line_cache(zbrowser_line_no);
+    if (zbrowser_line_no >= zbrowser_scroll && zbrowser_should_draw_line(zbrowser_line_no) != 0) {
+        line_h = zbrowser_line_height();
+        draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
+        if (zbrowser_bg_band_active != 0 && draw_y + line_h < gfx_height()) {
+            draw_line_background_band(draw_y, line_h, text_bg_for_draw());
+        }
+    }
     zbrowser_line_no = zbrowser_line_no + 1;
     zbrowser_last_space = 0;
 }
@@ -6215,7 +6826,91 @@ int anchor_next_is_image(const uint8_t *html, uint32_t pos) {
     return 0;
 }
 
+int dom_stack_has_tag(uint32_t tag) {
+    uint32_t match;
+
+    if (tag == 0) {
+        return 0;
+    }
+    match = zbrowser_dom_stack_depth;
+    while (match > 0) {
+        if (zbrowser_dom_stack_tags[match - 1] == tag) {
+            return 1;
+        }
+        match = match - 1;
+    }
+    return 0;
+}
+
+int tag_has_css_identity(const uint8_t *html, uint32_t pos) {
+    if (zb_attr_value(html, pos, "style", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 ||
+        zb_attr_value(html, pos, "class", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 ||
+        zb_attr_value(html, pos, "id", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+int computed_style_affects_text_scope(const uint8_t *html, uint32_t pos) {
+    uint32_t layout_bits;
+
+    if (zb_is_closing_tag(html, pos) != 0 ||
+        zb_tag_is_void(html, pos) != 0 ||
+        zb_tag_self_closes(html, pos) != 0 ||
+        load_web_style(html, pos) == 0) {
+        return 0;
+    }
+    if (zbrowser_web_style_display != WEB_STYLE_DISPLAY_INLINE ||
+        zbrowser_web_style_float != WEB_STYLE_FLOAT_NONE ||
+        zbrowser_web_style_position != WEB_STYLE_POS_STATIC) {
+        return 1;
+    }
+    layout_bits = zbrowser_web_style_flags &
+        (WEB_STYLE_FLAG_HAS_TEXT_ALIGN +
+         WEB_STYLE_FLAG_HAS_BG_COLOR +
+         WEB_STYLE_FLAG_HAS_MARGIN +
+         WEB_STYLE_FLAG_HAS_PADDING +
+         WEB_STYLE_FLAG_HAS_BORDER +
+         WEB_STYLE_FLAG_BORDER_COLOR +
+         WEB_STYLE_FLAG_FONT_BOLD +
+         WEB_STYLE_FLAG_FONT_ITALIC +
+         WEB_STYLE_FLAG_TEXT_UNDERLINE +
+         WEB_STYLE_FLAG_HAS_WIDTH +
+         WEB_STYLE_FLAG_HAS_HEIGHT +
+         WEB_STYLE_FLAG_HAS_MIN_WIDTH +
+         WEB_STYLE_FLAG_HAS_MAX_WIDTH +
+         WEB_STYLE_FLAG_HAS_MIN_HEIGHT +
+         WEB_STYLE_FLAG_HAS_MAX_HEIGHT);
+    if (layout_bits != 0) {
+        return 1;
+    }
+    if (tag_has_css_identity(html, pos) != 0 &&
+        web_style_has_flag(WEB_STYLE_FLAG_HAS_COLOR) != 0 &&
+        zbrowser_web_style_color != zbrowser_text_fg) {
+        return 1;
+    }
+    if (zbrowser_web_font_size != 16 ||
+        zbrowser_web_line_height != 19 ||
+        zbrowser_web_text_transform != WEB_STYLE_TEXT_TRANSFORM_NONE ||
+        zbrowser_web_white_space != WEB_STYLE_WHITE_SPACE_NORMAL ||
+        zbrowser_web_list_style_type != WEB_STYLE_LIST_DISC ||
+        zbrowser_web_list_style_position != WEB_STYLE_LIST_POSITION_OUTSIDE ||
+        zbrowser_web_direction != WEB_STYLE_DIRECTION_LTR ||
+        zbrowser_web_opacity != 255 ||
+        zbrowser_web_letter_spacing != 0 ||
+        zbrowser_web_word_spacing != 0) {
+        return 1;
+    }
+    return 0;
+}
+
 int tag_affects_text_style(const uint8_t *html, uint32_t pos) {
+    if (zb_is_closing_tag(html, pos) != 0) {
+        return dom_stack_has_tag(dom_tag_id(html, pos));
+    }
+    if (zb_tag_is_void(html, pos) != 0 || zb_tag_self_closes(html, pos) != 0) {
+        return 0;
+    }
     if (zb_tag_name_is(html, pos, "div") ||
         zb_tag_name_is(html, pos, "span") ||
         zb_tag_name_is(html, pos, "section") ||
@@ -6258,15 +6953,32 @@ int tag_affects_text_style(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "h6")) {
         return 1;
     }
+    if (computed_style_affects_text_scope(html, pos) != 0) {
+        return 1;
+    }
     return 0;
 }
 
 int tag_is_block_flow(const uint8_t *html, uint32_t pos) {
-    if (style_property_has(html, pos, "display", "inline") != 0) {
-        return 0;
+    if (zb_is_closing_tag(html, pos) != 0) {
+        if (dom_stack_has_tag(dom_tag_id(html, pos)) != 0 &&
+            zbrowser_css_scope_block_flow != 0) {
+            return 1;
+        }
     }
-    if (load_web_style(html, pos) != 0 &&
-        zbrowser_web_style_display == WEB_STYLE_DISPLAY_INLINE) {
+    if (load_web_style(html, pos) != 0) {
+        if (zbrowser_web_style_display == WEB_STYLE_DISPLAY_INLINE) {
+            return 0;
+        }
+        if (zbrowser_web_style_display == WEB_STYLE_DISPLAY_BLOCK ||
+            zbrowser_web_style_display == WEB_STYLE_DISPLAY_LIST_ITEM ||
+            zbrowser_web_style_display == WEB_STYLE_DISPLAY_FLEX ||
+            zbrowser_web_style_display == WEB_STYLE_DISPLAY_TABLE ||
+            zbrowser_web_style_display == WEB_STYLE_DISPLAY_TABLE_ROW) {
+            return 1;
+        }
+    }
+    if (style_property_has(html, pos, "display", "inline") != 0) {
         return 0;
     }
     if (zb_tag_name_is(html, pos, "address") ||
@@ -6304,15 +7016,37 @@ int tag_is_block_flow(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "ul")) {
         return 1;
     }
-    if (load_web_style(html, pos) != 0 &&
-        (zbrowser_web_style_display == WEB_STYLE_DISPLAY_BLOCK ||
-         zbrowser_web_style_display == WEB_STYLE_DISPLAY_LIST_ITEM ||
-         zbrowser_web_style_display == WEB_STYLE_DISPLAY_FLEX ||
-         zbrowser_web_style_display == WEB_STYLE_DISPLAY_TABLE ||
-         zbrowser_web_style_display == WEB_STYLE_DISPLAY_TABLE_ROW)) {
-        return 1;
-    }
     return 0;
+}
+
+uint32_t dom_generic_tag_id(const uint8_t *html, uint32_t pos) {
+    uint32_t name_pos;
+    uint32_t hash;
+    uint32_t count;
+    uint8_t ch;
+
+    if (html[pos] != 60) {
+        return 0;
+    }
+    name_pos = pos + 1;
+    if (html[name_pos] == 47) {
+        name_pos = name_pos + 1;
+    }
+    while (css_space_char(html[name_pos]) != 0) {
+        name_pos = name_pos + 1;
+    }
+    hash = 5381;
+    count = 0;
+    while (selector_name_char(html[name_pos]) != 0) {
+        ch = zb_lower_char(html[name_pos]);
+        hash = (hash * 33 + (uint32_t)ch) % 1000000;
+        count = count + 1;
+        name_pos = name_pos + 1;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    return ZBROWSER_DOM_TAG_GENERIC_BASE + hash;
 }
 
 uint32_t dom_tag_id(const uint8_t *html, uint32_t pos) {
@@ -6436,7 +7170,7 @@ uint32_t dom_tag_id(const uint8_t *html, uint32_t pos) {
     if (zb_tag_name_is(html, pos, "caption")) {
         return ZBROWSER_DOM_TAG_CAPTION;
     }
-    return 0;
+    return dom_generic_tag_id(html, pos);
 }
 
 int dom_new_tag_closes_p(const uint8_t *html, uint32_t pos) {
@@ -6496,6 +7230,14 @@ int dom_open_closes_top(uint32_t top, uint32_t new_tag, const uint8_t *html, uin
     return 0;
 }
 
+void apply_css_scope_end_spacing(void) {
+    if (zbrowser_css_bottom_space >= 2) {
+        blank_line();
+    } else if (zbrowser_css_bottom_space == 1) {
+        flush_line();
+    }
+}
+
 void dom_pop_implicit(void) {
     uint32_t top;
 
@@ -6510,6 +7252,7 @@ void dom_pop_implicit(void) {
     } else {
         flush_line();
     }
+    apply_css_scope_end_spacing();
     pop_text_style();
     zbrowser_dom_stack_depth = zbrowser_dom_stack_depth - 1;
 }
@@ -6554,6 +7297,7 @@ void dom_close_tag(const uint8_t *html, uint32_t pos) {
     while (match > 0) {
         if (zbrowser_dom_stack_tags[match - 1] == tag) {
             while (zbrowser_dom_stack_depth >= match) {
+                apply_css_scope_end_spacing();
                 pop_text_style();
                 zbrowser_dom_stack_depth = zbrowser_dom_stack_depth - 1;
             }
@@ -6682,6 +7426,7 @@ void render_html(const uint8_t *html) {
     uint32_t input_index;
     uint32_t line_limit;
     uint32_t skip_pos;
+    uint32_t transient_style;
     uint8_t *input_value;
     uint8_t ch;
 
@@ -6736,6 +7481,7 @@ void render_html(const uint8_t *html) {
     zbrowser_image_candidates = 0;
     zbrowser_text_fg = zbrowser_page_text_fg;
     zbrowser_text_bg = zbrowser_page_bg_color;
+    zbrowser_bg_band_active = 0;
     zbrowser_link_text = zbrowser_page_link_fg;
     zbrowser_text_align = zbrowser_page_text_align;
     zbrowser_style_stack_depth = 0;
@@ -6748,6 +7494,9 @@ void render_html(const uint8_t *html) {
     zbrowser_font_scale = 1;
     zbrowser_text_transform = WEB_STYLE_TEXT_TRANSFORM_NONE;
     zbrowser_white_space = WEB_STYLE_WHITE_SPACE_NORMAL;
+    zbrowser_css_bottom_space = 0;
+    zbrowser_css_scope_block_flow = 0;
+    clear_flow_box();
     zbrowser_active_link = 9999;
     reset_css_position_box();
     clear_web_style_cache();
@@ -6762,6 +7511,7 @@ void render_html(const uint8_t *html) {
         remember_render_checkpoint(pos);
         ch = html[pos];
         if (ch == 60) {
+            transient_style = 0;
             if (zb_starts_with(html + pos, "<!--")) {
                 pos = zb_skip_comment(html, pos + 4);
                 continue;
@@ -6797,6 +7547,14 @@ void render_html(const uint8_t *html) {
                 push_text_style();
                 dom_push_tag(html, pos);
             }
+            if (zb_is_closing_tag(html, pos) == 0 &&
+                tag_affects_text_style(html, pos) == 0 &&
+                (zb_tag_is_void(html, pos) != 0 ||
+                 zb_tag_self_closes(html, pos) != 0) &&
+                zbrowser_style_stack_depth < ZBROWSER_STYLE_STACK_MAX) {
+                push_text_style();
+                transient_style = 1;
+            }
             if (zb_is_closing_tag(html, pos) == 0) {
                 apply_layout(html, pos);
                 zbrowser_text_align = style_text_align(html, pos, zbrowser_text_align);
@@ -6805,6 +7563,8 @@ void render_html(const uint8_t *html) {
             if (zb_is_closing_tag(html, pos) == 0) {
                 zbrowser_text_fg = style_text_color(html, pos, zbrowser_text_fg);
                 zbrowser_text_bg = style_background_color(html, pos, zbrowser_text_bg);
+                apply_css_flow_box(html, pos);
+                apply_css_background_band(html, pos);
                 apply_semantic_tag_style(html, pos);
                 apply_css_block_spacing(html, pos);
                 if (style_background_image_url(html, pos, zbrowser_style_image_url, ZBROWSER_URL_CAPACITY) != 0 &&
@@ -6813,13 +7573,7 @@ void render_html(const uint8_t *html) {
                     zbrowser_image_candidates = zbrowser_image_candidates + 1;
                     render_background_image(zbrowser_style_image_url);
                 }
-                if (zb_tag_name_is(html, pos, "div") ||
-                    zb_tag_name_is(html, pos, "section") ||
-                    zb_tag_name_is(html, pos, "article") ||
-                    zb_tag_name_is(html, pos, "header") ||
-                    zb_tag_name_is(html, pos, "footer") ||
-                    zb_tag_name_is(html, pos, "main") ||
-                    zb_tag_name_is(html, pos, "form")) {
+                if (tag_may_draw_style_block(html, pos) != 0) {
                     draw_style_block_start(html, pos);
                 }
             }
@@ -6827,18 +7581,30 @@ void render_html(const uint8_t *html) {
                 draw_semantic_block_start(html, pos);
             }
             if (zb_tag_name_is(html, pos, "script")) {
+                if (transient_style != 0) {
+                    pop_text_style();
+                }
                 pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "script");
                 continue;
             }
             if (zb_tag_name_is(html, pos, "style")) {
+                if (transient_style != 0) {
+                    pop_text_style();
+                }
                 pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "style");
                 continue;
             }
             if (zb_tag_name_is(html, pos, "title")) {
+                if (transient_style != 0) {
+                    pop_text_style();
+                }
                 pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "title");
                 continue;
             }
             if (zb_tag_name_is(html, pos, "noscript")) {
+                if (transient_style != 0) {
+                    pop_text_style();
+                }
                 pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "noscript");
                 continue;
             }
@@ -6869,6 +7635,7 @@ void render_html(const uint8_t *html) {
                     zbrowser_text_fg = 0x54595d;
                     zbrowser_text_bg = 0xf8f9fa;
                     zbrowser_text_align = 1;
+                    activate_background_band();
                 } else {
                     blank_line();
                 }
@@ -6936,7 +7703,10 @@ void render_html(const uint8_t *html) {
                         draw_heading_band(0);
                     }
                 }
-            } else if (zb_tag_name_is(html, pos, "li")) {
+            } else if (zb_tag_name_is(html, pos, "li") ||
+                       (zb_is_closing_tag(html, pos) == 0 &&
+                        load_web_style(html, pos) != 0 &&
+                        zbrowser_web_style_display == WEB_STYLE_DISPLAY_LIST_ITEM)) {
                 if (!zb_is_closing_tag(html, pos)) {
                     flush_line();
                     emit_list_prefix(html, pos);
@@ -6968,6 +7738,9 @@ void render_html(const uint8_t *html) {
                 zbrowser_image_candidates = zbrowser_image_candidates + 1;
                 if (image_source_for_tag(html, pos, zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 &&
                     render_inline_image(html, pos, zbrowser_attr) != 0) {
+                    if (transient_style != 0) {
+                        pop_text_style();
+                    }
                     pos = zb_skip_tag(html, pos);
                     continue;
                 }
@@ -6978,6 +7751,9 @@ void render_html(const uint8_t *html) {
                        should_try_inline_image(zbrowser_attr) != 0) {
                 zbrowser_image_candidates = zbrowser_image_candidates + 1;
                 if (render_inline_image(html, pos, zbrowser_attr) != 0) {
+                    if (transient_style != 0) {
+                        pop_text_style();
+                    }
                     pos = zb_skip_tag(html, pos);
                     continue;
                 }
@@ -7020,6 +7796,9 @@ void render_html(const uint8_t *html) {
                         copy_text(zbrowser_url_tmp, ZBROWSER_URL_CAPACITY, "Submit");
                     }
                     draw_inline_button_control(zbrowser_url_tmp);
+                    if (transient_style != 0) {
+                        pop_text_style();
+                    }
                     pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "button");
                     continue;
                 }
@@ -7035,6 +7814,9 @@ void render_html(const uint8_t *html) {
                         flush_line();
                         draw_input_control(input_index, input_value);
                     }
+                    if (transient_style != 0) {
+                        pop_text_style();
+                    }
                     pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "textarea");
                     continue;
                 }
@@ -7045,9 +7827,15 @@ void render_html(const uint8_t *html) {
                         copy_text(zbrowser_url_tmp, ZBROWSER_URL_CAPACITY, "Select");
                     }
                     draw_inline_select_control(zbrowser_url_tmp);
+                    if (transient_style != 0) {
+                        pop_text_style();
+                    }
                     pos = zb_skip_until_close_tag(html, zb_skip_tag(html, pos), "select");
                     continue;
                 }
+            }
+            if (transient_style != 0) {
+                pop_text_style();
             }
             pos = zb_skip_tag(html, pos);
         } else if (ch == 38) {
@@ -7076,6 +7864,9 @@ void render_html(const uint8_t *html) {
         append_uint_limited(zbrowser_status, 96, zbrowser_js_executed);
         append_text_limited(zbrowser_status, 96, "/");
         append_uint_limited(zbrowser_status, 96, zbrowser_js_writes);
+    }
+    if (zbrowser_netsurf_dom_used != 0) {
+        append_text_limited(zbrowser_status, 96, " dom");
     }
     if (zbrowser_doc_truncated != 0) {
         append_text_limited(zbrowser_status, 96, " truncated");
@@ -7374,8 +8165,8 @@ int render_background_image(const uint8_t *src) {
 
     h = gfx_height();
     draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-    band_x = article_x() + 4;
-    band_w = article_w() - 8;
+    band_x = flow_box_x();
+    band_w = flow_box_w();
     band_h = 128;
     if (draw_y + band_h >= h - 18) {
         if (h > draw_y + 38) {
@@ -7524,8 +8315,8 @@ int render_inline_image(const uint8_t *html, uint32_t tag_pos, const uint8_t *sr
                 draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
             }
             max_w = 1;
-            if (article_w() > 20) {
-                max_w = article_w() - 20;
+            if (flow_content_w() > 0) {
+                max_w = flow_content_w();
             }
             if (max_w > 720) {
                 max_w = 720;
@@ -7590,12 +8381,12 @@ int render_inline_image(const uint8_t *html, uint32_t tag_pos, const uint8_t *sr
                 if (drawn_w == 0) {
                     drawn_w = 1;
                 }
-                draw_x = article_x() + 10;
+                draw_x = flow_content_x();
                 if ((zbrowser_text_align == 1 || image_should_center(html, tag_pos) != 0) &&
-                    article_w() > drawn_w + 20) {
-                    draw_x = article_x() + (article_w() - drawn_w) / 2;
-                } else if (zbrowser_text_align == 2 && article_w() > drawn_w + 20) {
-                    draw_x = article_x() + article_w() - drawn_w - 10;
+                    flow_content_w() > drawn_w) {
+                    draw_x = flow_content_x() + (flow_content_w() - drawn_w) / 2;
+                } else if (zbrowser_text_align == 2 && flow_content_w() > drawn_w) {
+                    draw_x = flow_content_x() + flow_content_w() - drawn_w;
                 }
                 if (is_positioned != 0) {
                     if (zbrowser_box_center_x != 0 && gfx_width() > drawn_w) {
@@ -7856,6 +8647,47 @@ void zbrowser_wait_css_task(void) {
     }
 }
 
+int zbrowser_normalize_with_netsurf(uint8_t *buffer, int size) {
+    int rewritten;
+
+    if (size <= 0) {
+        return size;
+    }
+    copy_text(zbrowser_status, 96, "parsing dom");
+    rewritten = netsurf_port_rewrite_html(buffer,
+                                          (uint32_t)size,
+                                          buffer,
+                                          ZBROWSER_HTTP_CAPACITY + 1);
+    zbrowser_netsurf_dom_status = netsurf_port_dom_status();
+    if (rewritten > 0) {
+        zbrowser_netsurf_dom_used = 1;
+        buffer[rewritten] = 0;
+        return rewritten;
+    }
+    zbrowser_netsurf_dom_used = 0;
+    return size;
+}
+
+int zbrowser_prepare_render_dom_with_netsurf(uint8_t *buffer, int size) {
+    int rewritten;
+
+    if (size <= 0) {
+        return size;
+    }
+    copy_text(zbrowser_status, 96, "building dom view");
+    rewritten = netsurf_port_rewrite_render_html(buffer,
+                                                 (uint32_t)size,
+                                                 buffer,
+                                                 ZBROWSER_HTTP_CAPACITY + 1);
+    zbrowser_netsurf_dom_status = netsurf_port_dom_status();
+    if (rewritten > 0) {
+        zbrowser_netsurf_dom_used = 1;
+        buffer[rewritten] = 0;
+        return rewritten;
+    }
+    return size;
+}
+
 void load_document(void) {
     uint8_t *buffer;
     int size;
@@ -7878,6 +8710,8 @@ void load_document(void) {
     zbrowser_css_fetch_result = 0;
     zbrowser_js_executed = 0;
     zbrowser_js_writes = 0;
+    zbrowser_netsurf_dom_used = 0;
+    zbrowser_netsurf_dom_status = 0;
     zbrowser_clear_http_diag();
     reset_page_style();
     tried_browser_url = 0;
@@ -7898,8 +8732,10 @@ void load_document(void) {
         size = os_read_file(zbrowser_url, buffer, ZBROWSER_HTTP_CAPACITY - 1);
         if (size > 0) {
             buffer[size] = 0;
-            prepare_external_css_queue(buffer);
+            size = zbrowser_normalize_with_netsurf(buffer, size);
             size = zbrowser_process_inline_scripts(buffer, size);
+            size = zbrowser_prepare_render_dom_with_netsurf(buffer, size);
+            prepare_external_css_queue(buffer);
             build_css_rule_cache(buffer);
             zbrowser_size = size;
             prepare_web_styles_for_loaded_document(buffer);
@@ -7945,8 +8781,10 @@ void load_document(void) {
         }
         if (size >= 0) {
             buffer[size] = 0;
-            prepare_external_css_queue(buffer);
+            size = zbrowser_normalize_with_netsurf(buffer, size);
             size = zbrowser_process_inline_scripts(buffer, size);
+            size = zbrowser_prepare_render_dom_with_netsurf(buffer, size);
+            prepare_external_css_queue(buffer);
             build_css_rule_cache(buffer);
             zbrowser_size = size;
             prepare_web_styles_for_loaded_document(buffer);
@@ -7976,8 +8814,10 @@ void load_document(void) {
     size = os_read_file(zbrowser_url, buffer, ZBROWSER_HTTP_CAPACITY - 1);
     if (size >= 0) {
         buffer[size] = 0;
-        prepare_external_css_queue(buffer);
+        size = zbrowser_normalize_with_netsurf(buffer, size);
         size = zbrowser_process_inline_scripts(buffer, size);
+        size = zbrowser_prepare_render_dom_with_netsurf(buffer, size);
+        prepare_external_css_queue(buffer);
         build_css_rule_cache(buffer);
         zbrowser_size = size;
         prepare_web_styles_for_loaded_document(buffer);
@@ -8632,6 +9472,8 @@ zbrowser_css_fetch_size = 0;
 zbrowser_css_fetch_result = 0;
 zbrowser_js_executed = 0;
 zbrowser_js_writes = 0;
+zbrowser_netsurf_dom_used = 0;
+zbrowser_netsurf_dom_status = 0;
 zbrowser_js_literal[0] = 0;
 zbrowser_style_prepare_w = 0;
 zbrowser_style_prepare_h = 0;
@@ -8681,6 +9523,7 @@ zbrowser_image_probe_result = 0;
 zbrowser_image_draw_result = 0;
 zbrowser_text_fg = 0x202122;
 zbrowser_text_bg = 0xffffff;
+zbrowser_bg_band_active = 0;
 zbrowser_link_text = 0x3366cc;
 zbrowser_text_align = 0;
 zbrowser_line[0] = 0;
@@ -8694,6 +9537,9 @@ zbrowser_line_stride = 1;
 zbrowser_font_scale = 1;
 zbrowser_text_transform = WEB_STYLE_TEXT_TRANSFORM_NONE;
 zbrowser_white_space = WEB_STYLE_WHITE_SPACE_NORMAL;
+zbrowser_css_bottom_space = 0;
+zbrowser_css_scope_block_flow = 0;
+clear_flow_box();
 zbrowser_page_bg_color = 0xffffff;
 zbrowser_page_text_fg = 0x202122;
 zbrowser_page_link_fg = 0x3366cc;

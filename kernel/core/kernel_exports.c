@@ -4,6 +4,7 @@
 #include "kernel.h"
 #include "kmem.h"
 #include "libc.h"
+#include "netsurf_port.h"
 #include "registry.h"
 #include "shell.h"
 #include "webcompat.h"
@@ -40,6 +41,8 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("calloc", calloc),
     KERNEL_EXPORT("realloc", realloc),
     KERNEL_EXPORT("free", free),
+    KERNEL_EXPORT("abort", abort),
+    KERNEL_EXPORT("time", time),
     KERNEL_EXPORT("memcpy", memcpy),
     KERNEL_EXPORT("memset", memset),
     KERNEL_EXPORT("memmove", memmove),
@@ -56,6 +59,10 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("strrchr", strrchr),
     KERNEL_EXPORT("strstr", strstr),
     KERNEL_EXPORT("strdup", strdup),
+    KERNEL_EXPORT("strtol", strtol),
+    KERNEL_EXPORT("strtoul", strtoul),
+    KERNEL_EXPORT("snprintf", snprintf),
+    KERNEL_EXPORT("vsnprintf", vsnprintf),
     KERNEL_EXPORT("tolower", tolower),
     KERNEL_EXPORT("toupper", toupper),
     KERNEL_EXPORT("bsearch", bsearch),
@@ -124,6 +131,13 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("webcompat_pu_status", webcompat_pu_status),
     KERNEL_EXPORT("webcompat_css_smoke", webcompat_css_smoke),
     KERNEL_EXPORT("webcompat_css_status", webcompat_css_status),
+    KERNEL_EXPORT("netsurf_port_dom_smoke", netsurf_port_dom_smoke),
+    KERNEL_EXPORT("netsurf_port_dom_status", netsurf_port_dom_status),
+    KERNEL_EXPORT("netsurf_port_parse_html_smoke", netsurf_port_parse_html_smoke),
+    KERNEL_EXPORT("netsurf_port_rewrite_html", netsurf_port_rewrite_html),
+    KERNEL_EXPORT("netsurf_port_rewrite_render_html", netsurf_port_rewrite_render_html),
+    KERNEL_EXPORT("netsurf_port_style_hint_for_tag", netsurf_port_style_hint_for_tag),
+    KERNEL_EXPORT("netsurf_port_status", netsurf_port_status),
     KERNEL_EXPORT("jpg_probe", jpg_probe),
     KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
     KERNEL_EXPORT("jpg_decode_to_screen", jpg_decode_to_screen),

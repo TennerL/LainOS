@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdarg.h>
+#include <time.h>
 
 void *memcpy(void *dst, const void *src, size_t len);
 void *memset(void *dst, int value, size_t len);
@@ -25,6 +27,14 @@ char *strdup(const char *s);
 int tolower(int ch);
 int toupper(int ch);
 int abs(int value);
+void abort(void);
+time_t time(time_t *out);
+
+long strtol(const char *nptr, char **endptr, int base);
+unsigned long strtoul(const char *nptr, char **endptr, int base);
+
+int vsnprintf(char *str, size_t size, const char *fmt, va_list ap);
+int snprintf(char *str, size_t size, const char *fmt, ...);
 
 void *bsearch(const void *key,
               const void *base,
