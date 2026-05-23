@@ -8814,6 +8814,7 @@ int zbrowser_prepare_render_dom_with_netsurf(uint8_t *buffer, int size) {
         buffer[rewritten] = 0;
         return rewritten;
     }
+    zbrowser_netsurf_dom_used = 0;
     return size;
 }
 
