@@ -298,6 +298,23 @@ static int netsurf_port_element_attr_contains_ci(dom_node *node,
     return match;
 }
 
+static int netsurf_port_element_attr_equals_ci(dom_node *node,
+                                               const char *attr_name,
+                                               const char *value_name) {
+    dom_string *value = 0;
+    int match = 0;
+
+    if (node == 0 || attr_name == 0 || value_name == 0) {
+        return 0;
+    }
+    value = netsurf_port_element_attr(node, attr_name);
+    if (value != 0) {
+        match = netsurf_port_dom_string_equals_ci(value, value_name);
+        dom_string_unref(value);
+    }
+    return match;
+}
+
 static int netsurf_port_element_has_attr(dom_node *node, const char *attr_name) {
     dom_string *name = 0;
     bool match = false;
@@ -704,6 +721,10 @@ static uint32_t netsurf_port_hint_flags_for_element(netsurf_port_writer_t *write
     /* hidden/aria-hidden are global HTML attributes, not a display-tag special case. */
     if (netsurf_port_element_has_attr(node, "hidden") ||
         netsurf_port_element_attr_contains_ci(node, "aria-hidden", "true")) {
+        flags |= NETSURF_PORT_HINT_FLAG_HIDDEN;
+    }
+    if (netsurf_port_dom_string_equals_ci(name, "input") &&
+        netsurf_port_element_attr_equals_ci(node, "type", "hidden")) {
         flags |= NETSURF_PORT_HINT_FLAG_HIDDEN;
     }
     if (netsurf_port_dom_string_equals_ci(name, "script") ||

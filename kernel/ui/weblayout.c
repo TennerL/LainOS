@@ -3523,7 +3523,7 @@ static int web_css_prepare_document(const uint8_t *html) {
         "sup{font-size:0.75em;vertical-align:super}"
         "sub{font-size:0.75em;vertical-align:sub}"
         "button,input,select,textarea{font-size:16px}"
-        "[hidden],template{display:none}";
+        "[hidden],template,input[type=\"hidden\"]{display:none}";
 
     web_css_reset();
     web_css_build_nodes(html);
@@ -4640,6 +4640,11 @@ static void web_apply_hidden_attrs(const uint8_t *html, uint32_t tag_pos, web_st
     if (web_attr_value_range_cstr(html, tag_pos, "aria-hidden", &attr_start, &attr_end) &&
         web_range_contains_cstr_ci(html, attr_start, attr_end, "true")) {
         web_set_flag_property(state, WEB_PROP_VISIBILITY, WEB_STYLE_FLAG_VISIBILITY_HIDDEN, 1, 65535, 1);
+    }
+    if (web_tag_name_is(html, tag_pos, "input") &&
+        web_attr_value_range_cstr(html, tag_pos, "type", &attr_start, &attr_end) &&
+        web_range_contains_cstr_ci(html, attr_start, attr_end, "hidden")) {
+        web_set_flag_property(state, WEB_PROP_DISPLAY, WEB_STYLE_FLAG_DISPLAY_NONE, 1, 65535, 1);
     }
 }
 
