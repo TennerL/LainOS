@@ -3583,9 +3583,7 @@ void desktop_run(const boot_info_t *info) {
             if (module_focused != 0 && module_focused->open) {
                 cursor_restore();
                 if (desktop_module_app_send_key(module_focused, &key)) {
-                    if (key.type != KEY_UP && key.type != KEY_DOWN) {
-                        desktop_redraw_all();
-                    }
+                    (void)desktop_tick_module_app(module_focused, 1);
                     cursor_draw_at(x, y);
                     continue;
                 }

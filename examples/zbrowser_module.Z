@@ -6226,8 +6226,9 @@ void zbrowser_scroll_by(int delta) {
     if (zbrowser_scroll == old_scroll) {
         return;
     }
-    zbrowser_scroll_cooldown = 0;
+    zbrowser_scroll_cooldown = 2;
     zbrowser_scroll_light_redraw = 1;
+    zbrowser_chrome_dirty = 1;
     zbrowser_needs_redraw = 1;
 }
 

@@ -74,9 +74,6 @@ static int desktop_module_app_send_key(desktop_module_window_t *slot, const key_
     rc = shell_module_key((uint32_t)module_index, (uint32_t)key->type, (uint32_t)(uint8_t)key->ch);
     graphics_viewport_pop();
     if (rc == 0) {
-        if (key->type != KEY_UP && key->type != KEY_DOWN) {
-            desktop_damage_full();
-        }
         return 1;
     }
     return 0;
