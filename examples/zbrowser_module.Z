@@ -8165,7 +8165,8 @@ void render_html(const uint8_t *html) {
                     should_try_inline_image(zbrowser_style_image_url) != 0 &&
                     tag_is_page_root(html, pos) == 0) {
                     zbrowser_image_candidates = zbrowser_image_candidates + 1;
-                    render_background_image(zbrowser_style_image_url);
+                    /* Fetch CSS background images opportunistically, but do not lay them out like content. */
+                    prefetch_background_image(zbrowser_style_image_url);
                 }
                 if (tag_may_draw_style_block(html, pos) != 0) {
                     draw_style_block_start(html, pos);
@@ -8722,34 +8723,19 @@ void cache_first_inline_image(const uint8_t *html) {
     }
 }
 
-int render_background_image(const uint8_t *src) {
-    struct ImageInfo image;
-    uint32_t h;
-    uint32_t draw_y;
-    uint32_t band_x;
-    uint32_t band_w;
-    uint32_t band_h;
+void prefetch_background_image(const uint8_t *src) {
     uint32_t slot;
-    uint32_t line_count;
-    uint32_t drawn_w;
-    uint32_t drawn_h;
-    uint32_t decoded_slot;
-    uint32_t image_drawn;
 
     if (zbrowser_image_buffer_addr == 0 || zbrowser_images_loaded >= ZBROWSER_MAX_IMAGES) {
-        return 0;
+        return;
     }
     if (should_try_inline_image(src) == 0) {
-        return 0;
-    }
-    if (zbrowser_line_no < zbrowser_scroll) {
-        return 0;
+        return;
     }
 
-    flush_line();
     make_absolute_url(zbrowser_url, src, zbrowser_url_tmp, ZBROWSER_URL_CAPACITY);
     if (zbrowser_url_tmp[0] == 0) {
-        return 0;
+        return;
     }
     if (find_cached_image_slot(zbrowser_url_tmp) == 9999 &&
         image_url_already_cached(zbrowser_url_tmp, ZBROWSER_IMAGE_SLOT_COUNT) == 0) {
@@ -8758,86 +8744,6 @@ int render_background_image(const uint8_t *src) {
             schedule_image_fetch(slot, zbrowser_url_tmp);
         }
     }
-
-    h = gfx_height();
-    draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-    band_x = flow_box_x();
-    band_w = flow_box_w();
-    band_h = 128;
-    if (draw_y + band_h >= h - 18) {
-        if (h > draw_y + 38) {
-            band_h = h - draw_y - 28;
-        } else {
-            return 0;
-        }
-    }
-
-    gfx_fill_rect(band_x, draw_y, band_w, band_h, zbrowser_text_bg);
-    slot = 0;
-    while (slot < ZBROWSER_IMAGE_SLOT_COUNT) {
-        if (zbrowser_cached_image_valids[slot] == 1 &&
-            text_equal(zbrowser_url_tmp, image_url_slot(slot)) != 0 &&
-            image_probe(image_buffer_slot(slot), (uint32_t)zbrowser_cached_image_sizes[slot], &image) == 0) {
-            drawn_w = image.width;
-            drawn_h = image.height;
-            if (drawn_w > band_w) {
-                drawn_h = (uint32_t)(((uint64_t)drawn_h * band_w) / drawn_w);
-                drawn_w = band_w;
-            }
-            if (drawn_h > band_h) {
-                drawn_w = (uint32_t)(((uint64_t)drawn_w * band_h) / drawn_h);
-                drawn_h = band_h;
-            }
-            if (drawn_w == 0) {
-                drawn_w = 1;
-            }
-            if (drawn_h == 0) {
-                drawn_h = 1;
-            }
-            image_drawn = 0;
-            decoded_slot = find_decoded_image_slot(slot, drawn_w, drawn_h, zbrowser_text_bg);
-            if (decoded_slot != 9999 &&
-                draw_decoded_image_slot(decoded_slot, band_x, draw_y, drawn_w, drawn_h, 0) != 0) {
-                image_drawn = 1;
-            }
-            if (image_drawn == 0) {
-                if (zbrowser_image_decode_budget != 0) {
-                    zbrowser_image_decode_budget = zbrowser_image_decode_budget - 1;
-                    decoded_slot = ensure_decoded_image_slot(slot, drawn_w, drawn_h, zbrowser_text_bg);
-                    if (decoded_slot != 9999 &&
-                        draw_decoded_image_slot(decoded_slot, band_x, draw_y, drawn_w, drawn_h, 0) != 0) {
-                        image_drawn = 1;
-                    } else {
-                        zbrowser_image_draw_result = image_decode_to_screen_scaled(image_buffer_slot(slot),
-                                                                                   (uint32_t)zbrowser_cached_image_sizes[slot],
-                                                                                   band_x,
-                                                                                   draw_y,
-                                                                                   band_w,
-                                                                                   band_h);
-                    }
-                }
-            }
-            line_count = (band_h / 12) + 1;
-            if (decoded_slot != 9999 && image_drawn != 0) {
-                remember_image_line_cache(zbrowser_line_no, line_count);
-                remember_rendered_image_record(zbrowser_line_no,
-                                               band_x,
-                                               drawn_w,
-                                               drawn_h,
-                                               slot,
-                                               9999);
-            }
-            zbrowser_line_no = zbrowser_line_no + line_count;
-            zbrowser_images_loaded = zbrowser_images_loaded + 1;
-            return 1;
-        }
-        slot = slot + 1;
-    }
-
-    line_count = (band_h / 12) + 1;
-    zbrowser_line_no = zbrowser_line_no + line_count;
-    zbrowser_images_loaded = zbrowser_images_loaded + 1;
-    return 1;
 }
 
 int render_inline_image(const uint8_t *html, uint32_t tag_pos, const uint8_t *src) {

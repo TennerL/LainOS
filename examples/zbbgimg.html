@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Background Image Layout Repro</title>
+<style>
+body { background:#ffffff; color:#202122; }
+h1 { color:#202122; }
+.hero {
+  background:#102033 url(https://dummyimage.com/320x120/102033/f7d154.jpg&text=Background) center no-repeat;
+  color:#ffffff;
+  padding:4px 8px;
+}
+p { margin:8px 0; }
+</style>
+</head>
+<body>
+<h1>Background Image Layout</h1>
+<div class="hero">Hero text should stay visible on the dark panel.</div>
+<p>Follow-up text should stay directly below the panel instead of being pushed far down.</p>
+</body>
+</html>
