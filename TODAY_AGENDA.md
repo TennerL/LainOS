@@ -5,6 +5,28 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-23 23:30-23:39 Europe/Berlin CSS timing breakdown pass:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" make build/kernel.elf build/esp.img`
+    - `PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin" ./scripts/zbrowser-launch-repro.sh`
+  - Small patch landed:
+    - `examples/zbrowser_module.Z`: bounded counters/traces for stylesheet discovery, `@import` discovery, duplicate URL suppression, appended CSS bytes, batch timing, and first render handoff timing after load
+    - `kernel/ui/weblayout.c`: style-preparation timing split now reports `prepare_ticks`, `precompute_ticks`, `rulecache_ticks`, plus `select_ticks`, `apply_ticks`, and HTML-side hint/attr time inside precompute
+  - Current measured result on the smoke page:
+    - `zbrowser css-queue summary links=0 imports=0 queued=0 unique=0 duplicates=0`
+    - `css-trace precompute-summary nodes=50 cached=0 selected=50 failed=0 select_ticks=41 apply_ticks=4168 hint_ticks=3 ticks=8395`
+    - `css-trace style-prepare-summary rules=4 prepare_ticks=82 precompute_ticks=8556 rulecache_ticks=159 total_ticks=8797`
+    - `zbrowser render-first mode=html ticks=106`
+  - Exact conclusion from these numbers:
+    - on the current smoke page, CSS discovery/fetch is not the bottleneck because there are no external stylesheets in the batch
+    - almost all CSS time is inside the precompute pass, and within that the dominant measured cost is computed-style application (`apply_ticks=4168`) rather than selector matching (`select_ticks=41`) or HTML-side hint handling (`hint_ticks=3`)
+  - Remaining blocker after this pass:
+    - the launch harness still only captures the first framebuffer screendump, so post-CSS visual completeness after the initial render is still poorly observed
+    - the smoke page is useful for timing, but it does not yet exercise the external stylesheet queue on a real batch
+  - Next concrete patch/verification step:
+    - add a small external-CSS smoke page plus launch/repro path that loads at least one `<link rel="stylesheet">` and one nested `@import`, then compare queue counters and precompute timings
+    - add bounded timing around `web_css_apply_computed_style()` internals or the downstream render/layout bridge if `apply_ticks` remains dominant on that external-CSS repro
 - Latest 2026-05-23 22:31-22:40 Europe/Berlin async-fallback/runtime-trace pass:
   - Focused host compile gate still passes:
     - command: `./scripts/zbrowser-compile-smoke.sh`

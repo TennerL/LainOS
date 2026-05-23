@@ -100,6 +100,8 @@ static uint32_t web_cached_viewport_width;
 static uint32_t web_cached_viewport_height;
 static uint32_t web_cached_rule_count;
 static uint32_t web_cached_rule_saturated;
+static unsigned long long web_css_select_total_ticks;
+static unsigned long long web_css_apply_total_ticks;
 static web_cached_rule_t web_cached_rules[WEB_STYLE_MAX_CACHED_RULES];
 
 typedef struct {
@@ -3817,6 +3819,9 @@ static void web_apply_prepared_rules(const uint8_t *html,
 int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uint32_t viewport_height) {
     int css_status;
     unsigned long long start_ticks = timer_ticks();
+    unsigned long long prepare_done_ticks;
+    unsigned long long precompute_done_ticks;
+    unsigned long long rulecache_done_ticks;
 
     if (html == NULL) {
         web_prepared_cache_reset(NULL, 0, 0);
@@ -3830,8 +3835,10 @@ int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uin
         web_prepared_cache_reset(NULL, 0, 0);
         return css_status;
     }
+    prepare_done_ticks = timer_ticks();
     console_puts("css-trace style-prepare-doc-ready\n");
     web_css_precompute_styles(html, viewport_width, viewport_height);
+    precompute_done_ticks = timer_ticks();
     console_puts("css-trace style-prepare-precompute-done\n");
     uint32_t pos = 0;
     while (html[pos] != 0) {
@@ -3844,10 +3851,17 @@ int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uin
             ++pos;
         }
     }
+    rulecache_done_ticks = timer_ticks();
     console_puts("css-trace style-prepare-summary rules=");
     console_put_dec64(web_cached_rule_count);
-    console_puts(" ticks=");
-    console_put_dec64(timer_ticks() - start_ticks);
+    console_puts(" prepare_ticks=");
+    console_put_dec64(prepare_done_ticks - start_ticks);
+    console_puts(" precompute_ticks=");
+    console_put_dec64(precompute_done_ticks - prepare_done_ticks);
+    console_puts(" rulecache_ticks=");
+    console_put_dec64(rulecache_done_ticks - precompute_done_ticks);
+    console_puts(" total_ticks=");
+    console_put_dec64(rulecache_done_ticks - start_ticks);
     console_puts("\n");
     return web_cached_rule_saturated ? -3 : (int)web_cached_rule_count;
 }
@@ -4659,6 +4673,7 @@ static int web_css_style_for_node(web_css_node_t *node,
     css_media media;
     css_unit_ctx unit_ctx;
     css_error error;
+    unsigned long long start_ticks;
 
     if (node == NULL) {
         return -1;
@@ -4688,6 +4703,7 @@ static int web_css_style_for_node(web_css_node_t *node,
     unit_ctx.device_dpi = INTTOFIX(96);
 
     web_css_trace_node_step(node, "select-start");
+    start_ticks = timer_ticks();
     error = css_select_style(web_css_select_ctx,
                              node,
                              &unit_ctx,
@@ -4703,13 +4719,16 @@ static int web_css_style_for_node(web_css_node_t *node,
         }
         return -1;
     }
+    web_css_select_total_ticks += timer_ticks() - start_ticks;
     web_css_trace_node_step(node, "select-done");
+    start_ticks = timer_ticks();
     web_css_apply_computed_style(node,
                                  state,
                                  results->styles[CSS_PSEUDO_ELEMENT_NONE],
                                  &unit_ctx,
                                  viewport_width,
                                  viewport_height);
+    web_css_apply_total_ticks += timer_ticks() - start_ticks;
     css_select_results_destroy(results);
     return 0;
 }
@@ -4796,11 +4815,15 @@ static void web_css_precompute_styles(const uint8_t *html,
     uint32_t cached_nodes = 0;
     uint32_t selected_nodes = 0;
     uint32_t failed_nodes = 0;
+    unsigned long long hint_ticks = 0;
+    unsigned long long hint_started;
 
     if (html == NULL || web_css_ready == 0 || web_css_select_ctx == NULL) {
         return;
     }
     start_ticks = timer_ticks();
+    web_css_select_total_ticks = 0;
+    web_css_apply_total_ticks = 0;
 
     console_puts("css-trace precompute-count=");
     console_put_dec64(web_css_node_count);
@@ -4826,9 +4849,11 @@ static void web_css_precompute_styles(const uint8_t *html,
             continue;
         }
         ++selected_nodes;
+        hint_started = timer_ticks();
         web_apply_netsurf_hints(html, node->tag_pos, &state);
         web_apply_presentational_attrs(html, node->tag_pos, &state, viewport_width, viewport_height);
         web_apply_hidden_attrs(html, node->tag_pos, &state);
+        hint_ticks += timer_ticks() - hint_started;
         node->cached_style = state.style;
         node->style_cached = 1;
         node->style_viewport_width = viewport_width;
@@ -4842,6 +4867,12 @@ static void web_css_precompute_styles(const uint8_t *html,
     console_put_dec64(selected_nodes);
     console_puts(" failed=");
     console_put_dec64(failed_nodes);
+    console_puts(" select_ticks=");
+    console_put_dec64(web_css_select_total_ticks);
+    console_puts(" apply_ticks=");
+    console_put_dec64(web_css_apply_total_ticks);
+    console_puts(" hint_ticks=");
+    console_put_dec64(hint_ticks);
     console_puts(" ticks=");
     console_put_dec64(timer_ticks() - start_ticks);
     console_puts("\n");
