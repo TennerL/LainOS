@@ -409,6 +409,8 @@ global uint32_t zbrowser_css_links_discovered;
 global uint32_t zbrowser_css_imports_discovered;
 global uint32_t zbrowser_css_duplicate_skips;
 global uint32_t zbrowser_css_prepare_pending;
+global uint32_t zbrowser_css_prepare_wait_frames;
+global uint32_t zbrowser_css_prepare_cache_skips;
 global uint32_t zbrowser_css_pending_count;
 global uint32_t zbrowser_css_seen_count;
 global uint32_t zbrowser_css_queue_limit_hit;
@@ -1194,6 +1196,7 @@ void prepare_web_styles_for_render(const uint8_t *html) {
     h = gfx_height();
     if (zbrowser_css_prepare_pending != 0 &&
         (zbrowser_css_load_done == 0 || zbrowser_css_load_in_progress != 0 || zbrowser_css_task_id != 0)) {
+        zbrowser_css_prepare_wait_frames = zbrowser_css_prepare_wait_frames + 1;
         if (zbrowser_css_prepare_pending == 1) {
             print("zbrowser css-prepare wait links-loaded=");
             print(zbrowser_css_links_loaded);
@@ -1212,7 +1215,7 @@ void prepare_web_styles_for_render(const uint8_t *html) {
         zbrowser_style_doc_size == zbrowser_size &&
         zbrowser_style_doc_w == w &&
         zbrowser_style_doc_h == h) {
-        print("zbrowser css-prepare render-skip cached");
+        zbrowser_css_prepare_cache_skips = zbrowser_css_prepare_cache_skips + 1;
         clear_web_style_cache();
         return;
     }
@@ -1229,6 +1232,10 @@ void prepare_web_styles_for_render(const uint8_t *html) {
     print(w);
     print("x");
     print(h);
+    print(" wait-frames=");
+    print(zbrowser_css_prepare_wait_frames);
+    print(" cached-skips=");
+    print(zbrowser_css_prepare_cache_skips);
     style_result = web_style_prepare_document(html, w, h);
     prepare_ticks = 0;
     if (ticks() >= prepare_started) {
@@ -1243,6 +1250,8 @@ void prepare_web_styles_for_render(const uint8_t *html) {
     zbrowser_style_doc_w = w;
     zbrowser_style_doc_h = h;
     zbrowser_css_prepare_pending = 0;
+    zbrowser_css_prepare_wait_frames = 0;
+    zbrowser_css_prepare_cache_skips = 0;
     if (style_result == -1) {
         copy_text(zbrowser_status, 96, "styles unavailable");
     } else if (style_result == -2) {
@@ -1273,6 +1282,8 @@ int prepare_web_styles_for_loaded_document(const uint8_t *html) {
     zbrowser_style_doc_w = w;
     zbrowser_style_doc_h = h;
     zbrowser_css_prepare_pending = 0;
+    zbrowser_css_prepare_wait_frames = 0;
+    zbrowser_css_prepare_cache_skips = 0;
     if (style_result == -1) {
         copy_text(zbrowser_status, 96, "styles unavailable");
     } else if (style_result == -2) {
@@ -9367,6 +9378,8 @@ void load_document(void) {
     zbrowser_css_imports_discovered = 0;
     zbrowser_css_duplicate_skips = 0;
     zbrowser_css_prepare_pending = 0;
+    zbrowser_css_prepare_wait_frames = 0;
+    zbrowser_css_prepare_cache_skips = 0;
     zbrowser_css_pending_count = 0;
     zbrowser_css_seen_count = 0;
     zbrowser_css_queue_limit_hit = 0;
@@ -10234,6 +10247,8 @@ zbrowser_css_links_discovered = 0;
 zbrowser_css_imports_discovered = 0;
 zbrowser_css_duplicate_skips = 0;
 zbrowser_css_prepare_pending = 0;
+zbrowser_css_prepare_wait_frames = 0;
+zbrowser_css_prepare_cache_skips = 0;
 zbrowser_css_pending_count = 0;
 zbrowser_css_seen_count = 0;
 zbrowser_css_queue_limit_hit = 0;

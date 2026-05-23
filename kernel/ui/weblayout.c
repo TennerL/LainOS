@@ -88,6 +88,7 @@ typedef struct {
 #define WEB_CSS_MAX_STACK 96u
 #define WEB_CSS_MAX_CLASSES 16u
 #define WEB_CSS_TRACE_DETAIL_NODE_LIMIT 32u
+#define WEB_CSS_TRACE_MAX_LINES 48u
 #define WEB_CSS_TRACE_EARLY_NODES 2u
 #define WEB_CSS_TRACE_PROGRESS_STRIDE 64u
 
@@ -556,6 +557,10 @@ static void web_css_trace_node_step(const web_css_node_t *node, const char *step
     unsigned long long started;
 
     if (!web_css_trace_step_enabled(node, step)) {
+        ++web_css_trace_lines_suppressed;
+        return;
+    }
+    if (web_css_trace_lines_emitted >= WEB_CSS_TRACE_MAX_LINES) {
         ++web_css_trace_lines_suppressed;
         return;
     }
