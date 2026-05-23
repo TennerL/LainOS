@@ -411,6 +411,34 @@ static int netsurf_port_primary_attr_is_chrome(const dom_string *value) {
            netsurf_port_dom_string_contains_ci(value, "catlinks");
 }
 
+static int netsurf_port_primary_attr_is_content_region(const dom_string *value) {
+    return netsurf_port_dom_string_contains_ci(value, "mw-content-text") ||
+           netsurf_port_dom_string_contains_ci(value, "mw-body-content") ||
+           netsurf_port_dom_string_contains_ci(value, "mw-parser-output") ||
+           netsurf_port_dom_string_contains_ci(value, "main-content") ||
+           netsurf_port_dom_string_contains_ci(value, "article-content") ||
+           netsurf_port_dom_string_contains_ci(value, "article-body") ||
+           netsurf_port_dom_string_contains_ci(value, "page-content") ||
+           netsurf_port_dom_string_contains_ci(value, "content-body") ||
+           netsurf_port_dom_string_contains_ci(value, "story-body") ||
+           netsurf_port_dom_string_contains_ci(value, "story-content");
+}
+
+static int netsurf_port_primary_attr_is_article_region(const dom_string *value) {
+    return netsurf_port_dom_string_contains_ci(value, "article") ||
+           netsurf_port_dom_string_has_token_ci(value, "post") ||
+           netsurf_port_dom_string_has_token_ci(value, "entry-content") ||
+           netsurf_port_dom_string_has_token_ci(value, "post-content") ||
+           netsurf_port_dom_string_has_token_ci(value, "article-content") ||
+           netsurf_port_dom_string_has_token_ci(value, "article-body") ||
+           netsurf_port_dom_string_has_token_ci(value, "article__content") ||
+           netsurf_port_dom_string_has_token_ci(value, "page-content") ||
+           netsurf_port_dom_string_has_token_ci(value, "content-body") ||
+           netsurf_port_dom_string_has_token_ci(value, "story-body") ||
+           netsurf_port_dom_string_has_token_ci(value, "story-content") ||
+           netsurf_port_dom_string_has_token_ci(value, "e-content");
+}
+
 static int netsurf_port_element_role_is(dom_node *node, const char *role_name) {
     return netsurf_port_element_attr_has_token_ci(node, "role", role_name);
 }
@@ -489,19 +517,25 @@ static uint32_t netsurf_port_element_primary_score(dom_node *node, const dom_str
     if (netsurf_port_dom_string_contains_ci(klass, "mw-body-content")) {
         score = netsurf_port_u32_max(score, 130u);
     }
-    if (netsurf_port_dom_string_contains_ci(id, "article") ||
-        netsurf_port_dom_string_contains_ci(klass, "article")) {
+    if (netsurf_port_primary_attr_is_article_region(id) ||
+        netsurf_port_primary_attr_is_article_region(klass)) {
         score = netsurf_port_u32_max(score, 105u);
     }
-    if (netsurf_port_dom_string_has_token_ci(klass, "post")) {
+    if (netsurf_port_dom_string_has_token_ci(klass, "post") ||
+        netsurf_port_dom_string_has_token_ci(klass, "entry-content") ||
+        netsurf_port_dom_string_has_token_ci(klass, "post-content") ||
+        netsurf_port_dom_string_has_token_ci(klass, "article-content") ||
+        netsurf_port_dom_string_has_token_ci(klass, "article-body") ||
+        netsurf_port_dom_string_has_token_ci(klass, "article__content") ||
+        netsurf_port_dom_string_has_token_ci(klass, "page-content") ||
+        netsurf_port_dom_string_has_token_ci(klass, "content-body") ||
+        netsurf_port_dom_string_has_token_ci(klass, "story-body") ||
+        netsurf_port_dom_string_has_token_ci(klass, "story-content") ||
+        netsurf_port_dom_string_has_token_ci(klass, "e-content")) {
         score = netsurf_port_u32_max(score, 100u);
     }
-    if (netsurf_port_dom_string_contains_ci(klass, "entry-content") ||
-        netsurf_port_dom_string_contains_ci(klass, "post-content")) {
-        score = netsurf_port_u32_max(score, 100u);
-    }
-    if (netsurf_port_dom_string_contains_ci(id, "main-content") ||
-        netsurf_port_dom_string_contains_ci(klass, "main-content")) {
+    if (netsurf_port_primary_attr_is_content_region(id) ||
+        netsurf_port_primary_attr_is_content_region(klass)) {
         score = netsurf_port_u32_max(score, 95u);
     }
     if (netsurf_port_dom_string_contains_ci(id, "content") ||
@@ -946,6 +980,10 @@ int netsurf_port_style_hint_for_tag(const uint8_t *html,
 }
 
 static int netsurf_port_primary_candidate(dom_node *node, const dom_string *name) {
+    dom_string *id = 0;
+    dom_string *klass = 0;
+    int match = 0;
+
     if (netsurf_port_element_attr_has_token_ci(node, "itemprop", "articleBody") ||
         netsurf_port_element_attr_has_token_ci(node, "itemprop", "mainContentOfPage")) {
         return 1;
@@ -961,15 +999,19 @@ static int netsurf_port_primary_candidate(dom_node *node, const dom_string *name
         !netsurf_port_dom_string_equals_ci(name, "section")) {
         return 0;
     }
-    return netsurf_port_element_attr_equals_ci(node, "id", "mw-content-text") ||
-           netsurf_port_element_attr_has_token_ci(node, "class", "mw-body-content") ||
-           netsurf_port_element_attr_has_token_ci(node, "class", "mw-parser-output") ||
-           netsurf_port_element_attr_equals_ci(node, "id", "article") ||
-           netsurf_port_element_attr_has_token_ci(node, "class", "article") ||
-           netsurf_port_element_attr_has_token_ci(node, "class", "post") ||
-           netsurf_port_element_attr_has_token_ci(node, "class", "entry-content") ||
-           netsurf_port_element_attr_has_token_ci(node, "class", "post-content") ||
-           netsurf_port_element_attr_has_token_ci(node, "class", "main-content");
+    id = netsurf_port_element_attr(node, "id");
+    klass = netsurf_port_element_attr(node, "class");
+    match = netsurf_port_primary_attr_is_content_region(id) ||
+            netsurf_port_primary_attr_is_content_region(klass) ||
+            netsurf_port_primary_attr_is_article_region(id) ||
+            netsurf_port_primary_attr_is_article_region(klass);
+    if (klass != 0) {
+        dom_string_unref(klass);
+    }
+    if (id != 0) {
+        dom_string_unref(id);
+    }
+    return match;
 }
 
 static int netsurf_port_omits_element(uint32_t mode, const dom_string *name) {
@@ -1370,6 +1412,16 @@ uint32_t netsurf_port_render_smoke(void) {
         "<div class=\"site-header\">Utility header</div>"
         "<section itemprop=\"mainContentOfPage\"><p>Schema main content with enough readable text to become the primary reading region.</p></section>"
         "</body></html>";
+    static const char story_html[] =
+        "<!doctype html><html><body>"
+        "<div class=\"site-header\">Utility header</div>"
+        "<div class=\"story-body\"><p>Story body content with enough readable text to become the primary reading region.</p></div>"
+        "</body></html>";
+    static const char article_content_html[] =
+        "<!doctype html><html><body>"
+        "<div class=\"site-header\">Utility header</div>"
+        "<section class=\"article__content\"><p>Article wrapper content with enough readable text to become the primary reading region.</p></section>"
+        "</body></html>";
     static const char body_html[] =
         "<!doctype html><html><body>"
         "<p>Plain document body content with enough readable text to become the primary fallback region.</p>"
@@ -1378,6 +1430,8 @@ uint32_t netsurf_port_render_smoke(void) {
     uint8_t fallback_out[768];
     uint8_t schema_out[768];
     uint8_t schema_main_out[768];
+    uint8_t story_out[768];
+    uint8_t article_content_out[768];
     uint8_t body_out[384];
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
@@ -1402,12 +1456,16 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t post_pos;
     uint32_t schema_body_pos;
     uint32_t schema_main_body_pos;
+    uint32_t story_body_pos;
+    uint32_t article_content_pos;
     uint32_t body_pos;
     uint32_t required_status;
     int written;
     int fallback_written;
     int schema_written;
     int schema_main_written;
+    int story_written;
+    int article_content_written;
     int body_written;
 
     written = netsurf_port_rewrite_render_html((const uint8_t *)html, sizeof(html) - 1u, out, sizeof(out));
@@ -1660,6 +1718,53 @@ uint32_t netsurf_port_render_smoke(void) {
     flags = 0;
     if (schema_main_body_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(schema_main_out, schema_main_body_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
+        (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
+        return 0u;
+    }
+
+    story_written = netsurf_port_rewrite_render_html((const uint8_t *)story_html,
+                                                     sizeof(story_html) - 1u,
+                                                     story_out,
+                                                     sizeof(story_out));
+    if (story_written <= 0) {
+        return 0u;
+    }
+    if ((netsurf_port_last_dom_status & required_status) != required_status) {
+        return 0u;
+    }
+
+    story_body_pos = netsurf_port_find_tag_pos_from_fragment(story_out,
+                                                             "class=\"story-body\" data-zbrowser-primary=\"1\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (story_body_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(story_out, story_body_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
+        (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
+        return 0u;
+    }
+
+    article_content_written = netsurf_port_rewrite_render_html((const uint8_t *)article_content_html,
+                                                               sizeof(article_content_html) - 1u,
+                                                               article_content_out,
+                                                               sizeof(article_content_out));
+    if (article_content_written <= 0) {
+        return 0u;
+    }
+    if ((netsurf_port_last_dom_status & required_status) != required_status) {
+        return 0u;
+    }
+
+    article_content_pos = netsurf_port_find_tag_pos_from_fragment(
+        article_content_out,
+        "class=\"article__content\" data-zbrowser-primary=\"1\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (article_content_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(article_content_out, article_content_pos, &display, &role, &flags) == 0 ||
         role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
         (flags & NETSURF_PORT_HINT_FLAG_PRIMARY) == 0u) {
         return 0u;
