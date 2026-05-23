@@ -3140,10 +3140,12 @@ static int web_css_new_tag_closes_p(const uint8_t *html, uint32_t pos) {
            web_tag_name_is(html, pos, "header") ||
            web_tag_name_is(html, pos, "hr") ||
            web_tag_name_is(html, pos, "main") ||
+           web_tag_name_is(html, pos, "menu") ||
            web_tag_name_is(html, pos, "nav") ||
            web_tag_name_is(html, pos, "ol") ||
            web_tag_name_is(html, pos, "p") ||
            web_tag_name_is(html, pos, "pre") ||
+           web_tag_name_is(html, pos, "search") ||
            web_tag_name_is(html, pos, "section") ||
            web_tag_name_is(html, pos, "table") ||
            web_tag_name_is(html, pos, "ul");
@@ -3493,13 +3495,13 @@ static int web_css_prepare_document(const uint8_t *html) {
     static const uint8_t ua_css[] =
         "html,body{display:block;color:#202122;background:#fff}"
         "body{margin:8px;font-size:16px;line-height:1.2}"
-        "article,aside,div,footer,form,header,main,nav,section,p,blockquote,ul,ol,li,dl,dt,dd,figure,figcaption,caption,pre,table,tr,h1,h2,h3,h4,h5,h6{display:block}"
+        "article,aside,div,footer,form,header,main,menu,nav,search,section,p,blockquote,ul,ol,li,dl,dt,dd,figure,figcaption,caption,pre,table,tr,h1,h2,h3,h4,h5,h6{display:block}"
         "p{margin:0.5em 0}"
         "h1{font-size:2em;margin:0.67em 0;border-bottom:1px solid #a2a9b1}"
         "h2{font-size:1.5em;margin:0.83em 0;border-bottom:1px solid #c8ccd1}"
         "h3{font-size:1.17em;margin:1em 0}"
         "h4,h5,h6{font-weight:bold;margin:1em 0}"
-        "ul,ol{margin:0.5em 0;padding-left:2em}"
+        "ul,ol,menu{margin:0.5em 0;padding-left:2em}"
         "li{display:list-item}"
         "dl{margin:0.5em 0}"
         "dd{margin-left:2em}"

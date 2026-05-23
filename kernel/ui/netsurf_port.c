@@ -420,6 +420,8 @@ static int netsurf_port_element_role_is_chrome(dom_node *node) {
            netsurf_port_element_role_is(node, "banner") ||
            netsurf_port_element_role_is(node, "contentinfo") ||
            netsurf_port_element_role_is(node, "complementary") ||
+           netsurf_port_element_role_is(node, "menu") ||
+           netsurf_port_element_role_is(node, "menubar") ||
            netsurf_port_element_role_is(node, "search") ||
            netsurf_port_element_role_is(node, "tablist") ||
            netsurf_port_element_role_is(node, "toolbar");
@@ -682,6 +684,7 @@ static uint32_t netsurf_port_hint_display_for_tag(const dom_string *name) {
         netsurf_port_dom_string_equals_ci(name, "hr") ||
         netsurf_port_dom_string_equals_ci(name, "legend") ||
         netsurf_port_dom_string_equals_ci(name, "main") ||
+        netsurf_port_dom_string_equals_ci(name, "menu") ||
         netsurf_port_dom_string_equals_ci(name, "nav") ||
         netsurf_port_dom_string_equals_ci(name, "ol") ||
         netsurf_port_dom_string_equals_ci(name, "p") ||
@@ -750,6 +753,7 @@ static uint32_t netsurf_port_hint_role_for_tag(dom_node *node, const dom_string 
     }
     if (netsurf_port_dom_string_equals_ci(name, "ul") ||
         netsurf_port_dom_string_equals_ci(name, "ol") ||
+        netsurf_port_dom_string_equals_ci(name, "menu") ||
         netsurf_port_dom_string_equals_ci(name, "dl") ||
         netsurf_port_dom_string_equals_ci(name, "li") ||
         netsurf_port_dom_string_equals_ci(name, "dt") ||
@@ -1321,12 +1325,14 @@ uint32_t netsurf_port_render_smoke(void) {
         "<body><search><form><input type=\"search\" name=\"site\" value=\"docs\"></form></search>"
         "<div class=\"breadcrumbs\">trail</div>"
         "<div role=\"navigation\" class=\"toc\">chrome</div>"
+        "<div role=\"menubar\" id=\"app-menubar\">app menu</div>"
         "<div aria-hidden=\"true\" id=\"aria-hidden-only\">still visible</div>"
         "<span role=\"heading\" aria-level=\"2\">Adapter Heading</span>"
         "<span class=\"sr-only\">assistive only</span>"
         "<span class=\"screen-reader-text\">wordpress helper</span>"
         "<div class=\"navbarish\">content should stay content</div>"
         "<div class=\"noprinter\">also content</div>"
+        "<menu id=\"action-menu\"><li>Open</li><li>Save</li></menu>"
         "<div role=\"main\"><form><fieldset><legend>Search</legend>"
         "<input type=\"hidden\" name=\"source\" value=\"smoke\">"
         "<input type=\"search\" name=\"q\" value=\"LainOS\"></fieldset></form>"
@@ -1347,12 +1353,14 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t nav_pos;
     uint32_t search_pos;
     uint32_t breadcrumb_pos;
+    uint32_t menubar_pos;
     uint32_t aria_hidden_pos;
     uint32_t heading_pos;
     uint32_t sr_only_pos;
     uint32_t screen_reader_text_pos;
     uint32_t hidden_input_pos;
     uint32_t catlinks_pos;
+    uint32_t menu_pos;
     uint32_t navbarish_pos;
     uint32_t noprinter_pos;
     uint32_t site_header_pos;
@@ -1425,6 +1433,16 @@ uint32_t netsurf_port_render_smoke(void) {
         return 0u;
     }
 
+    menubar_pos = netsurf_port_find_tag_pos_from_fragment(out, "id=\"app-menubar\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (menubar_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, menubar_pos, &display, &role, &flags) == 0 ||
+        role != NETSURF_PORT_HINT_ROLE_CHROME) {
+        return 0u;
+    }
+
     aria_hidden_pos = netsurf_port_find_tag_pos_from_fragment(out, "id=\"aria-hidden-only\"");
     display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     role = NETSURF_PORT_HINT_ROLE_NONE;
@@ -1482,6 +1500,17 @@ uint32_t netsurf_port_render_smoke(void) {
     if (catlinks_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, catlinks_pos, &display, &role, &flags) == 0 ||
         (flags & NETSURF_PORT_HINT_FLAG_SKIP) == 0u) {
+        return 0u;
+    }
+
+    menu_pos = netsurf_port_find_tag_pos_from_fragment(out, "id=\"action-menu\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (menu_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, menu_pos, &display, &role, &flags) == 0 ||
+        display != NETSURF_PORT_HINT_DISPLAY_BLOCK ||
+        role != NETSURF_PORT_HINT_ROLE_LIST) {
         return 0u;
     }
 
