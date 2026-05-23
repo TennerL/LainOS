@@ -607,6 +607,7 @@ static uint32_t netsurf_port_hint_display_for_tag(const dom_string *name) {
         netsurf_port_dom_string_equals_ci(name, "h6") ||
         netsurf_port_dom_string_equals_ci(name, "header") ||
         netsurf_port_dom_string_equals_ci(name, "hr") ||
+        netsurf_port_dom_string_equals_ci(name, "legend") ||
         netsurf_port_dom_string_equals_ci(name, "main") ||
         netsurf_port_dom_string_equals_ci(name, "nav") ||
         netsurf_port_dom_string_equals_ci(name, "ol") ||
@@ -1222,13 +1223,15 @@ uint32_t netsurf_port_render_smoke(void) {
         "<!doctype html><html><head><title>render smoke</title>"
         "<script>console.log('skip');</script></head>"
         "<body><nav class=\"toc\">chrome</nav>"
-        "<main><form><input type=\"hidden\" name=\"source\" value=\"smoke\">"
-        "<input type=\"search\" name=\"q\" value=\"LainOS\"></form>"
+        "<main><form><fieldset><legend>Search</legend>"
+        "<input type=\"hidden\" name=\"source\" value=\"smoke\">"
+        "<input type=\"search\" name=\"q\" value=\"LainOS\"></fieldset></form>"
         "<p>NetSurf render smoke</p></main></body></html>";
     uint8_t out[2048];
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
     uint32_t flags = 0;
+    uint32_t legend_pos;
     uint32_t main_pos;
     uint32_t nav_pos;
     uint32_t hidden_input_pos;
@@ -1250,7 +1253,17 @@ uint32_t netsurf_port_render_smoke(void) {
         return 0u;
     }
 
+    legend_pos = netsurf_port_find_tag_pos_from_fragment(out, "<legend");
+    if (legend_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, legend_pos, &display, &role, &flags) == 0 ||
+        display != NETSURF_PORT_HINT_DISPLAY_BLOCK) {
+        return 0u;
+    }
+
     main_pos = netsurf_port_find_tag_pos_from_fragment(out, "data-zbrowser-primary=\"1\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
     if (main_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, main_pos, &display, &role, &flags) == 0 ||
         role != NETSURF_PORT_HINT_ROLE_PRIMARY ||
