@@ -710,6 +710,7 @@ static uint32_t netsurf_port_hint_flags_for_element(netsurf_port_writer_t *write
                                                     int scan_attrs) {
     uint32_t flags = 0;
 
+    (void)scan_attrs;
     if (writer != 0 && writer->primary_node != 0 && writer->primary_node == node) {
         flags |= NETSURF_PORT_HINT_FLAG_PRIMARY;
     }
@@ -717,7 +718,7 @@ static uint32_t netsurf_port_hint_flags_for_element(netsurf_port_writer_t *write
         role != NETSURF_PORT_HINT_ROLE_NONE) {
         flags |= NETSURF_PORT_HINT_FLAG_STRUCTURAL;
     }
-    if (scan_attrs != 0 && netsurf_port_hint_should_skip(node)) {
+    if (netsurf_port_hint_should_skip(node)) {
         flags |= NETSURF_PORT_HINT_FLAG_SKIP;
     }
     /* hidden/aria-hidden are global HTML attributes, not a display-tag special case. */
@@ -1223,10 +1224,12 @@ uint32_t netsurf_port_render_smoke(void) {
         "<!doctype html><html><head><title>render smoke</title>"
         "<script>console.log('skip');</script></head>"
         "<body><nav class=\"toc\">chrome</nav>"
+        "<span class=\"sr-only\">assistive only</span>"
         "<main><form><fieldset><legend>Search</legend>"
         "<input type=\"hidden\" name=\"source\" value=\"smoke\">"
         "<input type=\"search\" name=\"q\" value=\"LainOS\"></fieldset></form>"
-        "<p>NetSurf render smoke</p></main></body></html>";
+        "<p>NetSurf render smoke</p></main>"
+        "<div id=\"catlinks\">categories</div></body></html>";
     uint8_t out[2048];
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
@@ -1234,7 +1237,9 @@ uint32_t netsurf_port_render_smoke(void) {
     uint32_t legend_pos;
     uint32_t main_pos;
     uint32_t nav_pos;
+    uint32_t sr_only_pos;
     uint32_t hidden_input_pos;
+    uint32_t catlinks_pos;
     uint32_t required_status;
     int written;
 
@@ -1281,6 +1286,16 @@ uint32_t netsurf_port_render_smoke(void) {
         return 0u;
     }
 
+    sr_only_pos = netsurf_port_find_tag_pos_from_fragment(out, "class=\"sr-only\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (sr_only_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, sr_only_pos, &display, &role, &flags) == 0 ||
+        (flags & NETSURF_PORT_HINT_FLAG_SKIP) == 0u) {
+        return 0u;
+    }
+
     hidden_input_pos = netsurf_port_find_tag_pos_from_fragment(out, "type=\"hidden\"");
     display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     role = NETSURF_PORT_HINT_ROLE_NONE;
@@ -1288,6 +1303,16 @@ uint32_t netsurf_port_render_smoke(void) {
     if (hidden_input_pos == 0xffffffffu ||
         netsurf_port_style_hint_for_tag(out, hidden_input_pos, &display, &role, &flags) == 0 ||
         (flags & NETSURF_PORT_HINT_FLAG_HIDDEN) == 0u) {
+        return 0u;
+    }
+
+    catlinks_pos = netsurf_port_find_tag_pos_from_fragment(out, "id=\"catlinks\"");
+    display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
+    role = NETSURF_PORT_HINT_ROLE_NONE;
+    flags = 0;
+    if (catlinks_pos == 0xffffffffu ||
+        netsurf_port_style_hint_for_tag(out, catlinks_pos, &display, &role, &flags) == 0 ||
+        (flags & NETSURF_PORT_HINT_FLAG_SKIP) == 0u) {
         return 0u;
     }
 

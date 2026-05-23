@@ -3529,7 +3529,9 @@ int tag_should_skip_content(const uint8_t *html, uint32_t pos) {
         tag_class_contains(html, pos, "metadata") ||
         tag_class_contains(html, pos, "noprint") ||
         tag_class_contains(html, pos, "visually-hidden") ||
-        tag_class_contains(html, pos, "sr-only")) {
+        tag_class_contains(html, pos, "sr-only") ||
+        tag_class_contains(html, pos, "mw-editsection") ||
+        tag_id_contains(html, pos, "catlinks")) {
         return 1;
     }
     return 0;
