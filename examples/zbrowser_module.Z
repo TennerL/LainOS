@@ -7175,8 +7175,8 @@ void blank_line(void) {
     if (zbrowser_line_no >= zbrowser_scroll && zbrowser_should_draw_line(zbrowser_line_no) != 0) {
         line_h = zbrowser_line_height();
         draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (zbrowser_bg_band_active != 0 && draw_y + line_h < gfx_height()) {
-            draw_line_background_band(draw_y, line_h, text_bg_for_draw());
+        if (draw_y + line_h < gfx_height()) {
+            draw_current_flow_decoration(draw_y, line_h, text_bg_for_draw());
         }
     }
     zbrowser_line_no = zbrowser_line_no + 1;

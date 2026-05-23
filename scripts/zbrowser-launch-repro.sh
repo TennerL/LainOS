@@ -115,8 +115,31 @@ capture_screendump() {
   ) &
 }
 
-capture_screendump 10 "$screenshot_1"
-capture_screendump 20 "$screenshot_2"
+capture_screendump_after_log() {
+  local pattern="$1"
+  local output="$2"
+  local settle_delay="${3:-0}"
+  local wait_timeout="${4:-35}"
+  local attempts="${5:-6}"
+  (
+    local waited=0
+    while [ "$waited" -lt "$wait_timeout" ]; do
+      if grep -q "$pattern" "$serial_log" 2>/dev/null; then
+        if [ "$settle_delay" -gt 0 ]; then
+          sleep "$settle_delay"
+        fi
+        capture_screendump 0 "$output" "$attempts"
+        exit 0
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    capture_screendump 0 "$output" "$attempts"
+  ) &
+}
+
+capture_screendump_after_log "zbrowser render-first mode=" "$screenshot_1" 1 35 8
+capture_screendump_after_log "zbrowser render-first mode=" "$screenshot_2" 4 40 8
 
 qemu_status=0
 if ! timeout "${timeout_seconds}s" qemu-system-x86_64 \
