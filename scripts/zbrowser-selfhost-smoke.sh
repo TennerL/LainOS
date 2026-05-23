@@ -106,6 +106,7 @@ if [ "$qemu_runtime" != "kvm" ]; then
   printf 'zbrowser self-host smoke: running without KVM because %s\n' "$kvm_reason"
 fi
 
+qemu_start_epoch="$(date +%s)"
 set +e
 timeout "${timeout_seconds}s" qemu-system-x86_64 \
   "${qemu_accel_args[@]}" \
@@ -119,17 +120,19 @@ timeout "${timeout_seconds}s" qemu-system-x86_64 \
   -serial "file:$serial_log" \
   -monitor none
 qemu_status=$?
+qemu_end_epoch="$(date +%s)"
 set -e
+qemu_elapsed="$((qemu_end_epoch - qemu_start_epoch))"
 
 if [ "$qemu_status" -ne 0 ] && [ "$qemu_status" -ne 124 ]; then
-  printf 'zbrowser self-host smoke: QEMU exited with status %s\n' "$qemu_status" >&2
+  printf 'zbrowser self-host smoke: QEMU exited with status %s after %ss\n' "$qemu_status" "$qemu_elapsed" >&2
   exit 1
 fi
 
 check_file() {
   local fs_path="$1"
   if ! build/tools/lainfs_check_host exists "$smoke_img" "$fs_path"; then
-    printf 'zbrowser self-host smoke: missing %s\n' "$fs_path" >&2
+    printf 'zbrowser self-host smoke: missing %s after %ss\n' "$fs_path" "$qemu_elapsed" >&2
     printf 'zbrowser self-host smoke: root listing follows\n' >&2
     build/tools/lainfs_check_host ls "$smoke_img" / >&2 || true
     printf 'zbrowser self-host smoke: mods listing follows\n' >&2
@@ -154,4 +157,4 @@ if ! printf '%s\n' "$build_log" | grep -q '^objects 2$'; then
   exit 1
 fi
 
-printf 'zbrowser self-host smoke: ok (timeout=%ss)\n' "$timeout_seconds"
+printf 'zbrowser self-host smoke: ok (timeout=%ss elapsed=%ss)\n' "$timeout_seconds" "$qemu_elapsed"

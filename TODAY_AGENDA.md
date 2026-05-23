@@ -5,6 +5,19 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-23 22:10-22:20 Europe/Berlin timing pass:
+  - Host compile gate still passes: `./scripts/zbrowser-compile-smoke.sh`
+  - Default self-host smoke behavior in this cron environment is still the intended fast-fail skip:
+    - command: `./scripts/zbrowser-selfhost-smoke.sh`
+    - result: `Skipping zbrowser self-host smoke; KVM is unavailable (/dev/kvm is not accessible for uid=1000 gid=1000; groups=administrator adm cdrom sudo dip plugdev users). Set ZBROWSER_SELFHOST_ALLOW_TCG=1 to force slow TCG.`
+  - Forced TCG timing probe still proves the in-OS zbrowser install path completes on this tree:
+    - command: `ZBROWSER_SELFHOST_ALLOW_TCG=1 ./scripts/zbrowser-selfhost-smoke.sh`
+    - result: `zbrowser self-host smoke: ok (timeout=420s elapsed=200s)`
+  - Patch landed in this pass:
+    - `scripts/zbrowser-selfhost-smoke.sh` now reports actual QEMU wall time on success and failure so future cron runs can compare `tcg` vs `kvm` runs numerically instead of only by timeout outcome
+  - Current conclusion from this pass:
+    - the cron/runtime blocker is firmly in the emulator profile difference, not in a reproducible self-host compiler deadlock on the current tree
+    - use the measured `elapsed=200s` TCG result as the baseline until a KVM-capable cron environment is available
 - Latest 2026-05-23 22:00-22:10 Europe/Berlin QEMU harness pass:
   - Host compile gate still passes: `./scripts/zbrowser-compile-smoke.sh`
   - In this cron environment, `./scripts/zbrowser-selfhost-smoke.sh` skips by default because `/dev/kvm` exists but is not usable by `administrator`; the exact reason is permission/group access, not missing QEMU support.
