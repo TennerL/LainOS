@@ -3812,7 +3812,9 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
     padding_top_space = css_spacing_lines(zbrowser_web_padding_t);
     if (top_space != 0 || padding_top_space != 0) {
         flush_line();
-        while (top_space > 1) {
+        /* One-line top margins are common in the UA sheet; reserve them
+         * visibly instead of collapsing them away entirely. */
+        while (top_space != 0) {
             blank_line();
             top_space = top_space - 1;
         }
