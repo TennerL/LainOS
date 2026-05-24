@@ -32,6 +32,8 @@
 #define ZBROWSER_TABLE_BOX_BORDER 2
 #define ZBROWSER_FLOW_BOX_BG 1
 #define ZBROWSER_FLOW_BOX_BORDER 2
+#define ZBROWSER_FLOW_BOX_BORDER_TOP 4
+#define ZBROWSER_FLOW_BOX_BORDER_BOTTOM 8
 #define ZBROWSER_REGION_ARTICLE 0
 #define ZBROWSER_REGION_LEFT 1
 #define ZBROWSER_REGION_RIGHT 2
@@ -561,6 +563,8 @@ global uint32_t zbrowser_flow_box_x_px;
 global uint32_t zbrowser_flow_box_w_px;
 global uint32_t zbrowser_flow_box_flags;
 global uint32_t zbrowser_flow_box_border;
+global uint32_t zbrowser_flow_box_pending_top;
+global uint32_t zbrowser_flow_box_pending_bottom;
 global uint32_t zbrowser_flow_draw_border;
 global uint32_t zbrowser_layout_region;
 global uint32_t zbrowser_article_line_no;
@@ -4968,6 +4972,21 @@ void clear_flow_box(void) {
     zbrowser_flow_box_w_px = 0;
     zbrowser_flow_box_flags = 0;
     zbrowser_flow_box_border = 0;
+    zbrowser_flow_box_pending_top = 0;
+    zbrowser_flow_box_pending_bottom = 0;
+}
+
+uint32_t current_flow_box_pending_flags(void) {
+    uint32_t flags;
+
+    flags = 0;
+    if (zbrowser_flow_box_pending_top != 0) {
+        flags = flags + ZBROWSER_FLOW_BOX_BORDER_TOP;
+    }
+    if (zbrowser_flow_box_pending_bottom != 0) {
+        flags = flags + ZBROWSER_FLOW_BOX_BORDER_BOTTOM;
+    }
+    return flags;
 }
 
 uint32_t clamp_flow_width(uint32_t width, uint32_t max_width) {
@@ -4991,22 +5010,34 @@ void draw_flow_decoration_at(uint32_t x,
                              uint32_t flags) {
     uint32_t bg_bits;
     uint32_t border_bits;
+    uint32_t top_bits;
+    uint32_t bottom_bits;
     uint32_t right_x;
+    uint32_t bottom_y;
 
     if (w == 0 || h == 0) {
         return;
     }
     bg_bits = flags & ZBROWSER_FLOW_BOX_BG;
     border_bits = flags & ZBROWSER_FLOW_BOX_BORDER;
+    top_bits = flags & ZBROWSER_FLOW_BOX_BORDER_TOP;
+    bottom_bits = flags & ZBROWSER_FLOW_BOX_BORDER_BOTTOM;
     if (bg_bits != 0 &&
         color_is_page_background(bg) == 0) {
         gfx_fill_rect(x, y, w, h, bg);
     }
     if (border_bits != 0) {
+        if (top_bits != 0) {
+            gfx_fill_rect(x, y, w, 1, zbrowser_flow_draw_border);
+        }
         gfx_fill_rect(x, y, 1, h, zbrowser_flow_draw_border);
         if (w > 1) {
             right_x = x + w - 1;
             gfx_fill_rect(right_x, y, 1, h, zbrowser_flow_draw_border);
+        }
+        if (bottom_bits != 0 && h > 1) {
+            bottom_y = y + h - 1;
+            gfx_fill_rect(x, bottom_y, w, 1, zbrowser_flow_draw_border);
         }
     }
 }
@@ -5022,6 +5053,7 @@ void draw_current_flow_decoration(uint32_t y, uint32_t h, uint32_t bg) {
             flags = flags + ZBROWSER_FLOW_BOX_BG;
         }
     }
+    flags = flags | current_flow_box_pending_flags();
     zbrowser_flow_draw_border = zbrowser_flow_box_border;
     draw_flow_decoration_at(flow_box_x(),
                             flow_box_w(),
@@ -5029,6 +5061,8 @@ void draw_current_flow_decoration(uint32_t y, uint32_t h, uint32_t bg) {
                             h,
                             bg,
                             flags);
+    zbrowser_flow_box_pending_top = 0;
+    zbrowser_flow_box_pending_bottom = 0;
 }
 
 void draw_article_sidebar_hint(void) {
@@ -5415,7 +5449,7 @@ void remember_line_cache(uint32_t line, uint32_t x, uint32_t had_inline) {
     zbrowser_line_cache_bg_band[line] = zbrowser_bg_band_active;
     zbrowser_line_cache_box_x[line] = flow_box_x();
     zbrowser_line_cache_box_w[line] = flow_box_w();
-    zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags;
+    zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags | current_flow_box_pending_flags();
     zbrowser_line_cache_box_border[line] = zbrowser_flow_box_border;
 }
 
@@ -5438,7 +5472,7 @@ void remember_blank_line_cache(uint32_t line) {
     zbrowser_line_cache_bg_band[line] = zbrowser_bg_band_active;
     zbrowser_line_cache_box_x[line] = flow_box_x();
     zbrowser_line_cache_box_w[line] = flow_box_w();
-    zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags;
+    zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags | current_flow_box_pending_flags();
     zbrowser_line_cache_box_border[line] = zbrowser_flow_box_border;
 }
 
@@ -8124,6 +8158,10 @@ void render_html(const uint8_t *html) {
             }
             if (zb_is_closing_tag(html, pos) != 0 &&
                 tag_is_block_flow(html, pos) != 0) {
+                if (current_style_has_visible_border() != 0 &&
+                    zbrowser_web_border_b != 0) {
+                    zbrowser_flow_box_pending_bottom = 1;
+                }
                 flush_line();
             }
             if (zb_is_closing_tag(html, pos) == 0 &&
@@ -8158,6 +8196,10 @@ void render_html(const uint8_t *html) {
                 zbrowser_text_fg = style_text_color(html, pos, zbrowser_text_fg);
                 zbrowser_text_bg = style_background_color(html, pos, zbrowser_text_bg);
                 apply_css_flow_box(html, pos);
+                if (current_style_has_visible_border() != 0 &&
+                    zbrowser_web_border_t != 0) {
+                    zbrowser_flow_box_pending_top = 1;
+                }
                 apply_css_background_band(html, pos);
                 apply_semantic_tag_style(html, pos);
                 apply_css_block_spacing(html, pos);
@@ -10073,16 +10115,7 @@ export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t whee
     }
 }
 
-export void zmodule_unload(void) {
-    zbrowser_enabled = 0;
-    zbrowser_wait_css_task();
-    zbrowser_wait_image_task();
-    if (zbrowser_load_task_id != 0) {
-        kernel_task_wait(zbrowser_load_task_id);
-        kernel_task_release(zbrowser_load_task_id);
-        zbrowser_load_task_id = 0;
-        zbrowser_load_in_progress = 0;
-    }
+void zbrowser_release_buffers(void) {
     if (zbrowser_doc_buffer_addr != 0) {
         kfree((uint8_t *)zbrowser_doc_buffer_addr);
         zbrowser_doc_buffer_addr = 0;
@@ -10119,6 +10152,19 @@ export void zmodule_unload(void) {
         kfree((uint8_t *)zbrowser_line_cache_fg_addr);
         zbrowser_line_cache_fg_addr = 0;
     }
+}
+
+export void zmodule_unload(void) {
+    zbrowser_enabled = 0;
+    zbrowser_wait_css_task();
+    zbrowser_wait_image_task();
+    if (zbrowser_load_task_id != 0) {
+        kernel_task_wait(zbrowser_load_task_id);
+        kernel_task_release(zbrowser_load_task_id);
+        zbrowser_load_task_id = 0;
+        zbrowser_load_in_progress = 0;
+    }
+    zbrowser_release_buffers();
 }
 
 zbrowser_enabled = 0;
@@ -10254,42 +10300,7 @@ if (zbrowser_doc_buffer_addr == 0 || zbrowser_css_buffer_addr == 0 ||
     zbrowser_image_buffer_addr == 0 || zbrowser_links_addr == 0 ||
     zbrowser_line_cache_addr == 0 || zbrowser_line_cache_fg_addr == 0) {
     copy_text(zbrowser_status, 96, "buffer alloc failed");
-    if (zbrowser_doc_buffer_addr != 0) {
-        kfree((uint8_t *)zbrowser_doc_buffer_addr);
-        zbrowser_doc_buffer_addr = 0;
-    }
-    if (zbrowser_css_buffer_addr != 0) {
-        kfree((uint8_t *)zbrowser_css_buffer_addr);
-        zbrowser_css_buffer_addr = 0;
-    }
-    if (zbrowser_css_sel_addr != 0) {
-        kfree((uint8_t *)zbrowser_css_sel_addr);
-        zbrowser_css_sel_addr = 0;
-    }
-    if (zbrowser_css_decl_addr != 0) {
-        kfree((uint8_t *)zbrowser_css_decl_addr);
-        zbrowser_css_decl_addr = 0;
-    }
-    if (zbrowser_image_buffer_addr != 0) {
-        kfree((uint8_t *)zbrowser_image_buffer_addr);
-        zbrowser_image_buffer_addr = 0;
-    }
-    if (zbrowser_decoded_image_buffer_addr != 0) {
-        kfree((uint8_t *)zbrowser_decoded_image_buffer_addr);
-        zbrowser_decoded_image_buffer_addr = 0;
-    }
-    if (zbrowser_links_addr != 0) {
-        kfree((uint8_t *)zbrowser_links_addr);
-        zbrowser_links_addr = 0;
-    }
-    if (zbrowser_line_cache_addr != 0) {
-        kfree((uint8_t *)zbrowser_line_cache_addr);
-        zbrowser_line_cache_addr = 0;
-    }
-    if (zbrowser_line_cache_fg_addr != 0) {
-        kfree((uint8_t *)zbrowser_line_cache_fg_addr);
-        zbrowser_line_cache_fg_addr = 0;
-    }
+    zbrowser_release_buffers();
     print("zbrowser buffer alloc failed");
     return 0;
 }
