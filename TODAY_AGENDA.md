@@ -4,6 +4,38 @@ Date: 2026-05-23
 
 ## Current NetSurf Port Blocker
 
+- Latest 2026-05-24 21:19-21:24 Europe/Berlin zbrowser launch keyboard-focus pass:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"; make build/esp.img build/data.img`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbinput.html ZBROWSER_LAUNCH_REPRO_SENDKEYS='l' ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - autostarted zbrowser opened a visible browser window, but injected keyboard input still behaved like it was falling through to the desktop terminal instead of clearly activating browser chrome
+    - the old launch harness also was not refreshing the kernel image for desktop/input changes, so module-only smoke runs could give stale keyboard/focus results
+  - Small bounded patch landed:
+    - `kernel/ui/desktop.c`: focus newly opened module apps, blur the terminal on open, and stop falling through to terminal typing while a module app owns the active window slot
+    - `kernel/ui/desktop_modules.inc.c`: add a resilient active-module lookup so the topmost module window still owns keyboard routing if explicit focus gets lost
+    - `scripts/zbrowser-launch-repro.sh`: add monitor `sendkey` support plus a reliable load-complete trigger for post-input framebuffer captures
+    - `examples/zbinput.html`: add a stable local keyboard repro page without async asset noise
+  - Exact runtime result after the patch:
+    - after rebuilding `build/esp.img`, the stable `zbinput.html` repro no longer appended the injected `l` to the serial terminal log
+    - the paired framebuffer captures now show the zbrowser address field switching into active edit state after the injected `l`, which is a visible browser response immediately after launch instead of inert keyboard behavior
+    - `./scripts/agent-browser-check.sh` completed successfully in this environment; the self-host leg stayed in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - launch-time keyboard ownership is fixed; the next highest-value visible browser gap returns to page-render completeness, especially the missing stylesheet background image on the representative smoke page
+  - Next concrete patch/verification step:
+    - inspect the `.css-panel` stylesheet `background-image` path on `zbrowser_smoke.html`, then rerun the same launch capture to make the first viewport look more like a normal browser on open
+- Latest 2026-05-24 20:58 Europe/Berlin user bugfix request:
+  - Tenno reported that keyboard input stops working upon launching zbrowser.
+  - Tenno clarified at 21:03 that the keyboard seems to not work at all.
+  - Treat this as the immediate blocker before returning to visual-polish work.
+  - Do not assume this is only a zbrowser focus/return bug; first prove whether keyboard input works at boot/shell/desktop before zbrowser, during zbrowser, and after returning from zbrowser.
+  - Reproduce the global input/launch regression and determine whether input handling, interrupts, focus/window state, console routing, or memory corruption is responsible.
+  - Specifically rule out or eliminate corruption from zbrowser launch, CSS/layout/render buffers, framebuffer writes, heap/stack use, resident module loading, interrupt/IDT/PIC/APIC state, keyboard driver state, console state, and input event queues.
+  - Acceptance: keyboard input must work in a baseline shell/desktop check and remain usable after launching zbrowser; do not mask a corruption bug with a superficial input reset.
+  - Next concrete patch/verification step:
+    - add or extend a focused baseline keyboard plus zbrowser launch/input repro, capture keyboard/input state before and after browser launch, then fix the root cause and rerun the repro plus the normal focused compile/browser checks.
 - Latest 2026-05-24 20:31-20:38 Europe/Berlin thumbnail card pass:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`

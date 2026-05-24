@@ -1949,6 +1949,9 @@ static void desktop_open_module_app(uint32_t index) {
         desktop_clamp_window(&slot->window);
         slot->bounds_ready = 1;
     }
+    desktop_focus_module_app(slot);
+    editor_focused = 0;
+    desktop_terminal_blur();
     desktop_damage_full();
 }
 
@@ -3635,6 +3638,7 @@ void desktop_run(const boot_info_t *info) {
 
     for (;;) {
         key_event_t key;
+        desktop_module_window_t *active_module;
         uint32_t x;
         uint32_t y;
         int buttons;
@@ -3665,14 +3669,18 @@ void desktop_run(const boot_info_t *info) {
                 }
                 continue;
             }
-            if (module_focused != 0 && module_focused->open) {
+            active_module = desktop_active_module_app_window();
+            if (active_module != 0) {
                 cursor_restore();
-                if (desktop_module_app_send_key(module_focused, &key)) {
-                    (void)desktop_tick_module_app(module_focused, 1);
+                if (desktop_module_app_send_key(active_module, &key)) {
+                    (void)desktop_tick_module_app(active_module, 1);
                     cursor_draw_at(x, y);
                     continue;
                 }
                 cursor_draw_at(x, y);
+                if (key.type != KEY_CTRL_Q) {
+                    continue;
+                }
             }
             if (key.type == KEY_CTRL_Q) {
                 exit_requested = 1;

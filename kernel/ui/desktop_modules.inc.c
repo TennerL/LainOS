@@ -48,6 +48,23 @@ static desktop_module_window_t *desktop_top_module_app_window_at(uint32_t x, uin
     return 0;
 }
 
+static desktop_module_window_t *desktop_top_open_module_app_window(void) {
+    for (uint32_t i = DESKTOP_MODULE_APP_WINDOWS_MAX; i > 0u; --i) {
+        desktop_module_window_t *slot = &module_app_windows[i - 1u];
+        if (slot->open) {
+            return slot;
+        }
+    }
+    return 0;
+}
+
+static desktop_module_window_t *desktop_active_module_app_window(void) {
+    if (module_focused != 0 && module_focused->open) {
+        return module_focused;
+    }
+    return desktop_top_open_module_app_window();
+}
+
 static void desktop_focus_module_app(desktop_module_window_t *slot) {
     if (slot != 0 && slot->open) {
         module_focused = slot;

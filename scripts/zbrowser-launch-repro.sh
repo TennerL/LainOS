@@ -42,6 +42,11 @@ fi
 
 timeout_seconds="${ZBROWSER_LAUNCH_REPRO_TIMEOUT_SECONDS:-45}"
 launch_page="${ZBROWSER_LAUNCH_REPRO_PAGE:-zbrowser_smoke.html}"
+send_keys="${ZBROWSER_LAUNCH_REPRO_SENDKEYS:-}"
+send_keys_delay="${ZBROWSER_LAUNCH_REPRO_SENDKEYS_DELAY_SECONDS:-1}"
+post_keys_capture_delay="${ZBROWSER_LAUNCH_REPRO_POST_KEYS_CAPTURE_DELAY_SECONDS:-2}"
+capture_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_CAPTURE_TRIGGER_PATTERN:-zbrowser start-load sync-done}"
+send_keys_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_SENDKEYS_TRIGGER_PATTERN:-zbrowser start-load sync-done}"
 smoke_img="build/zbrowser-launch-repro.data.img"
 smoke_vars="build/OVMF_VARS.zbrowser-launch-repro.fd"
 serial_log="build/zbrowser-launch-repro.serial.log"
@@ -95,6 +100,16 @@ build/tools/lainfs_seed \
 : >"$serial_log"
 rm -f "$monitor_socket" "$screenshot_1" "$screenshot_2"
 
+monitor_send_command() {
+  local command="$1"
+
+  if [ ! -S "$monitor_socket" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$command" | nc -N -U "$monitor_socket" >/dev/null 2>&1
+}
+
 capture_screendump() {
   local delay="$1"
   local output="$2"
@@ -103,9 +118,7 @@ capture_screendump() {
   (
     sleep "$delay"
     while [ "$try" -lt "$attempts" ]; do
-      if [ -S "$monitor_socket" ]; then
-        printf 'screendump %s\n' "$output" | nc -U "$monitor_socket" >/dev/null 2>&1 || true
-      fi
+      monitor_send_command "screendump $output" || true
       if [ -f "$output" ]; then
         exit 0
       fi
@@ -138,8 +151,46 @@ capture_screendump_after_log() {
   ) &
 }
 
-capture_screendump_after_log "zbrowser render-first mode=" "$screenshot_1" 1 35 8
-capture_screendump_after_log "zbrowser render-first mode=" "$screenshot_2" 4 40 8
+send_keys_after_log() {
+  local pattern="$1"
+  local keys_csv="$2"
+  local settle_delay="${3:-0}"
+  local wait_timeout="${4:-35}"
+  (
+    local waited=0
+    local key_name=
+    local key_names=()
+
+    while [ "$waited" -lt "$wait_timeout" ]; do
+      if grep -q "$pattern" "$serial_log" 2>/dev/null; then
+        if [ "$settle_delay" -gt 0 ]; then
+          sleep "$settle_delay"
+        fi
+        IFS=',' read -r -a key_names <<<"$keys_csv"
+        for key_name in "${key_names[@]}"; do
+          key_name="${key_name#"${key_name%%[![:space:]]*}"}"
+          key_name="${key_name%"${key_name##*[![:space:]]}"}"
+          if [ -n "$key_name" ]; then
+            monitor_send_command "sendkey $key_name" || true
+            sleep 1
+          fi
+        done
+        capture_screendump "$post_keys_capture_delay" "$screenshot_2" 8
+        exit 0
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    capture_screendump "$post_keys_capture_delay" "$screenshot_2" 8
+  ) &
+}
+
+capture_screendump_after_log "$capture_trigger_pattern" "$screenshot_1" 1 35 8
+if [ -n "$send_keys" ]; then
+  send_keys_after_log "$send_keys_trigger_pattern" "$send_keys" "$send_keys_delay" 40
+else
+  capture_screendump_after_log "$capture_trigger_pattern" "$screenshot_2" 4 40 8
+fi
 
 qemu_status=0
 if ! timeout "${timeout_seconds}s" qemu-system-x86_64 \
