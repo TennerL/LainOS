@@ -116,14 +116,211 @@ typedef struct {
     int components;
 } image_rgba_frame_t;
 
+typedef struct {
+    int width;
+    int height;
+    int components;
+    int ascii;
+    int bitmap;
+    int max_value;
+    uint32_t data_offset;
+} image_pnm_info_t;
+
+static int image_parse_decimal(const uint8_t *data, uint32_t size, uint32_t *pos, uint32_t *out_value) {
+    uint32_t value;
+    int saw_digit;
+
+    value = 0;
+    saw_digit = 0;
+    while (*pos < size && data[*pos] >= '0' && data[*pos] <= '9') {
+        value = value * 10u + (uint32_t)(data[*pos] - '0');
+        *pos = *pos + 1u;
+        saw_digit = 1;
+    }
+    if (saw_digit == 0) {
+        return 0;
+    }
+    *out_value = value;
+    return 1;
+}
+
+static void image_skip_pnm_ws_and_comments(const uint8_t *data, uint32_t size, uint32_t *pos) {
+    while (*pos < size) {
+        if (data[*pos] == '#') {
+            while (*pos < size && data[*pos] != '\n' && data[*pos] != '\r') {
+                *pos = *pos + 1u;
+            }
+            continue;
+        }
+        if (data[*pos] == ' ' ||
+            data[*pos] == '\t' ||
+            data[*pos] == '\n' ||
+            data[*pos] == '\r' ||
+            data[*pos] == '\f' ||
+            data[*pos] == '\v') {
+            *pos = *pos + 1u;
+            continue;
+        }
+        break;
+    }
+}
+
+static int image_parse_pnm_info(const uint8_t *data, uint32_t size, image_pnm_info_t *out_info) {
+    uint32_t pos;
+    uint32_t width;
+    uint32_t height;
+    uint32_t max_value;
+    int ascii;
+    int bitmap;
+    int components;
+    uint8_t kind;
+
+    if (out_info == 0 || data == 0 || size < 3u || data[0] != 'P') {
+        return IMAGE_ERR_FORMAT;
+    }
+
+    kind = data[1];
+    if (kind < '1' || kind > '6') {
+        return IMAGE_ERR_FORMAT;
+    }
+    ascii = (kind == '1' || kind == '2' || kind == '3');
+    bitmap = (kind == '1' || kind == '4');
+    components = (kind == '3' || kind == '6') ? 3 : 1;
+    pos = 2u;
+
+    image_skip_pnm_ws_and_comments(data, size, &pos);
+    if (image_parse_decimal(data, size, &pos, &width) == 0) {
+        return IMAGE_ERR_FORMAT;
+    }
+    image_skip_pnm_ws_and_comments(data, size, &pos);
+    if (image_parse_decimal(data, size, &pos, &height) == 0) {
+        return IMAGE_ERR_FORMAT;
+    }
+
+    if (bitmap != 0) {
+        max_value = 1u;
+    } else {
+        image_skip_pnm_ws_and_comments(data, size, &pos);
+        if (image_parse_decimal(data, size, &pos, &max_value) == 0 || max_value == 0u || max_value > 65535u) {
+            return IMAGE_ERR_FORMAT;
+        }
+    }
+
+    if (width == 0u || height == 0u || width > 0x7fffffffu || height > 0x7fffffffu) {
+        return IMAGE_ERR_UNSUPPORTED;
+    }
+
+    image_skip_pnm_ws_and_comments(data, size, &pos);
+    if (pos >= size) {
+        return IMAGE_ERR_FORMAT;
+    }
+
+    out_info->width = (int)width;
+    out_info->height = (int)height;
+    out_info->components = components;
+    out_info->ascii = ascii;
+    out_info->bitmap = bitmap;
+    out_info->max_value = (int)max_value;
+    out_info->data_offset = pos;
+    return IMAGE_OK;
+}
+
+static uint8_t image_scale_pnm_sample(uint32_t sample, uint32_t max_value) {
+    if (max_value <= 1u) {
+        return sample == 0u ? 0xffu : 0x00u;
+    }
+    if (sample >= max_value) {
+        return 0xffu;
+    }
+    return (uint8_t)((sample * 255u + max_value / 2u) / max_value);
+}
+
+static int image_load_ascii_pnm(const uint8_t *data, uint32_t size, image_rgba_frame_t *frame) {
+    image_pnm_info_t info;
+    uint32_t pos;
+    uint32_t pixel_count;
+    uint32_t byte_count;
+    stbi_uc *pixels;
+    uint32_t i;
+    int rc;
+
+    rc = image_parse_pnm_info(data, size, &info);
+    if (rc != IMAGE_OK || info.ascii == 0) {
+        return rc == IMAGE_OK ? IMAGE_ERR_FORMAT : rc;
+    }
+
+    pixel_count = (uint32_t)info.width * (uint32_t)info.height;
+    if (pixel_count == 0u || pixel_count > IMAGE_MAX_PIXELS || pixel_count > 0xffffffffu / 4u) {
+        return IMAGE_ERR_UNSUPPORTED;
+    }
+    byte_count = pixel_count * 4u;
+    pixels = image_stbi_malloc(byte_count);
+    if (pixels == 0) {
+        return IMAGE_ERR_OUTPUT;
+    }
+
+    pos = info.data_offset;
+    for (i = 0; i < pixel_count; ++i) {
+        uint32_t r;
+        uint32_t g;
+        uint32_t b;
+        uint8_t gray;
+
+        image_skip_pnm_ws_and_comments(data, size, &pos);
+        if (info.components == 3) {
+            if (image_parse_decimal(data, size, &pos, &r) == 0) {
+                image_stbi_free(pixels);
+                return IMAGE_ERR_FORMAT;
+            }
+            image_skip_pnm_ws_and_comments(data, size, &pos);
+            if (image_parse_decimal(data, size, &pos, &g) == 0) {
+                image_stbi_free(pixels);
+                return IMAGE_ERR_FORMAT;
+            }
+            image_skip_pnm_ws_and_comments(data, size, &pos);
+            if (image_parse_decimal(data, size, &pos, &b) == 0) {
+                image_stbi_free(pixels);
+                return IMAGE_ERR_FORMAT;
+            }
+            pixels[i * 4u] = image_scale_pnm_sample(r, (uint32_t)info.max_value);
+            pixels[i * 4u + 1u] = image_scale_pnm_sample(g, (uint32_t)info.max_value);
+            pixels[i * 4u + 2u] = image_scale_pnm_sample(b, (uint32_t)info.max_value);
+        } else {
+            if (image_parse_decimal(data, size, &pos, &r) == 0) {
+                image_stbi_free(pixels);
+                return IMAGE_ERR_FORMAT;
+            }
+            gray = image_scale_pnm_sample(r, (uint32_t)info.max_value);
+            pixels[i * 4u] = gray;
+            pixels[i * 4u + 1u] = gray;
+            pixels[i * 4u + 2u] = gray;
+        }
+        pixels[i * 4u + 3u] = 0xffu;
+    }
+
+    frame->pixels = pixels;
+    frame->owned_pixels = pixels;
+    frame->width = info.width;
+    frame->height = info.height;
+    frame->components = info.components;
+    return IMAGE_OK;
+}
+
 static int image_load_rgba_frame(const uint8_t *data,
                                  uint32_t size,
                                  image_rgba_frame_t *frame) {
+    image_pnm_info_t pnm_info;
+
     frame->pixels = 0;
     frame->owned_pixels = 0;
     frame->width = 0;
     frame->height = 0;
     frame->components = 0;
+
+    if (image_parse_pnm_info(data, size, &pnm_info) == IMAGE_OK &&
+        pnm_info.ascii != 0) {
+        return image_load_ascii_pnm(data, size, frame);
+    }
 
     frame->owned_pixels = stbi_load_from_memory(data,
                                                 (int)size,
@@ -132,7 +329,7 @@ static int image_load_rgba_frame(const uint8_t *data,
                                                 &frame->components,
                                                 4);
     if (frame->owned_pixels == 0) {
-        return IMAGE_ERR_DECODE;
+        return image_load_ascii_pnm(data, size, frame);
     }
     frame->pixels = frame->owned_pixels;
     return IMAGE_OK;
@@ -173,13 +370,26 @@ int image_probe(const uint8_t *data, uint32_t size, image_info_t *out_image) {
     int width = 0;
     int height = 0;
     int components = 0;
+    image_pnm_info_t pnm_info;
+    int rc;
 
     if (data == 0 || size == 0 || size > 0x7fffffffu) {
         return IMAGE_ERR_INPUT;
     }
 
+    if (image_parse_pnm_info(data, size, &pnm_info) == IMAGE_OK &&
+        pnm_info.ascii != 0) {
+        return image_fill_info(pnm_info.width, pnm_info.height, pnm_info.components, out_image);
+    }
+
     if (!stbi_info_from_memory(data, (int)size, &width, &height, &components)) {
-        return IMAGE_ERR_FORMAT;
+        rc = image_parse_pnm_info(data, size, &pnm_info);
+        if (rc != IMAGE_OK) {
+            return rc == IMAGE_ERR_FORMAT ? IMAGE_ERR_FORMAT : rc;
+        }
+        width = pnm_info.width;
+        height = pnm_info.height;
+        components = pnm_info.components;
     }
 
     return image_fill_info(width, height, components, out_image);
