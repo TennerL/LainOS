@@ -4491,23 +4491,86 @@ int js_copy_string_literal(const uint8_t *script,
     return 1;
 }
 
-int js_append_document_text(uint8_t *document, int size, const uint8_t *text) {
-    if ((uint32_t)(size + 32) >= ZBROWSER_HTTP_CAPACITY) {
-        zbrowser_doc_truncated = 1;
+void js_append_output_text(uint8_t *out, uint32_t capacity, const uint8_t *text) {
+    if (capacity == 0) {
+        return;
+    }
+    if (out[0] != 0) {
+        append_char_limited(out, capacity, 10);
+    }
+    append_text_limited(out, capacity, text);
+    append_char_limited(out, capacity, 10);
+    zbrowser_js_writes = zbrowser_js_writes + 1;
+}
+
+int replace_document_range(uint8_t *document,
+                           int size,
+                           uint32_t start,
+                           uint32_t end,
+                           const uint8_t *text) {
+    uint32_t insert_len;
+    uint32_t remove_len;
+    uint32_t tail_len;
+    uint32_t available_insert;
+    uint32_t new_size;
+    uint32_t i;
+    uint32_t shift;
+
+    if (start > end || (uint32_t)size < end) {
         return size;
     }
-    size = append_text_to_document(document, size, "\n");
-    size = append_text_to_document(document, size, text);
-    size = append_text_to_document(document, size, "\n");
-    zbrowser_js_writes = zbrowser_js_writes + 1;
+
+    insert_len = os_strlen(text);
+    remove_len = end - start;
+    tail_len = (uint32_t)size - end;
+    available_insert = ZBROWSER_HTTP_CAPACITY - 1;
+    if (available_insert < start + tail_len) {
+        available_insert = start + tail_len;
+    }
+    available_insert = available_insert - start - tail_len;
+    if (insert_len > available_insert) {
+        insert_len = available_insert;
+        zbrowser_doc_truncated = 1;
+    }
+
+    new_size = start + insert_len + tail_len;
+    if (insert_len > remove_len) {
+        shift = insert_len - remove_len;
+        i = (uint32_t)size;
+        while (i > end) {
+            i = i - 1;
+            document[i + shift] = document[i];
+        }
+    } else if (insert_len < remove_len) {
+        i = end;
+        while (i < (uint32_t)size) {
+            document[start + insert_len + (i - end)] = document[i];
+            i = i + 1;
+        }
+    }
+
+    i = 0;
+    while (i < insert_len) {
+        document[start + i] = text[i];
+        i = i + 1;
+    }
+    document[new_size] = 0;
+    size = new_size;
     return size;
 }
 
-int zbrowser_execute_inline_script(uint8_t *document, int size, uint32_t script_start, uint32_t script_end) {
+int zbrowser_execute_inline_script(const uint8_t *document,
+                                   uint32_t script_start,
+                                   uint32_t script_end,
+                                   uint8_t *out,
+                                   uint32_t capacity) {
     uint32_t pos;
     uint32_t after;
     uint32_t wrote;
 
+    if (capacity != 0) {
+        out[0] = 0;
+    }
     pos = script_start;
     wrote = 0;
     while (pos < script_end && document[pos] != 0) {
@@ -4522,7 +4585,7 @@ int zbrowser_execute_inline_script(uint8_t *document, int size, uint32_t script_
                                            zbrowser_js_literal,
                                            ZBROWSER_JS_LITERAL_CAPACITY,
                                            &after) != 0) {
-                    size = js_append_document_text(document, size, zbrowser_js_literal);
+                    js_append_output_text(out, capacity, zbrowser_js_literal);
                     wrote = 1;
                     pos = after;
                     continue;
@@ -4539,7 +4602,7 @@ int zbrowser_execute_inline_script(uint8_t *document, int size, uint32_t script_
                                            zbrowser_js_literal,
                                            ZBROWSER_JS_LITERAL_CAPACITY,
                                            &after) != 0) {
-                    size = js_append_document_text(document, size, zbrowser_js_literal);
+                    js_append_output_text(out, capacity, zbrowser_js_literal);
                     wrote = 1;
                     pos = after;
                     continue;
@@ -4556,7 +4619,7 @@ int zbrowser_execute_inline_script(uint8_t *document, int size, uint32_t script_
                                            zbrowser_js_literal,
                                            ZBROWSER_JS_LITERAL_CAPACITY,
                                            &after) != 0) {
-                    size = js_append_document_text(document, size, zbrowser_js_literal);
+                    js_append_output_text(out, capacity, zbrowser_js_literal);
                     wrote = 1;
                     pos = after;
                     continue;
@@ -4585,14 +4648,17 @@ int zbrowser_execute_inline_script(uint8_t *document, int size, uint32_t script_
     if (wrote != 0) {
         zbrowser_js_executed = zbrowser_js_executed + 1;
     }
-    return size;
+    return wrote;
 }
 
 int zbrowser_process_inline_scripts(uint8_t *document, int size) {
     uint32_t pos;
     uint32_t original_size;
+    uint32_t tag_end;
     uint32_t script_start;
     uint32_t script_end;
+    uint32_t wrote;
+    uint32_t replacement_len;
 
     if (size <= 0) {
         return size;
@@ -4613,8 +4679,26 @@ int zbrowser_process_inline_scripts(uint8_t *document, int size) {
                      zb_tag_name_is(document, script_end, "script") != 0)) {
                 script_end = script_end + 1;
             }
-            size = zbrowser_execute_inline_script(document, size, script_start, script_end);
-            pos = script_end;
+            tag_end = script_end;
+            if (tag_end < original_size &&
+                document[tag_end] == 60 &&
+                zb_is_closing_tag(document, tag_end) != 0 &&
+                zb_tag_name_is(document, tag_end, "script") != 0) {
+                tag_end = zb_skip_tag(document, tag_end);
+            }
+            wrote = zbrowser_execute_inline_script(document,
+                                                   script_start,
+                                                   script_end,
+                                                   zbrowser_css_pending_urls,
+                                                   3072);
+            if (wrote != 0) {
+                replacement_len = os_strlen(zbrowser_css_pending_urls);
+                size = replace_document_range(document, size, pos, tag_end, zbrowser_css_pending_urls);
+                original_size = (uint32_t)size;
+                pos = pos + replacement_len;
+            } else {
+                pos = tag_end;
+            }
         } else {
             pos = pos + 1;
         }
