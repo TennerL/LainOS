@@ -948,8 +948,11 @@ int draw_decoded_image_slot(uint32_t slot,
                             uint32_t height,
                             uint32_t y_offset) {
     uint8_t *pixels;
+    uint8_t *row_pixels;
     uint32_t pixel_count;
     uint32_t x_offset;
+    uint32_t full_width;
+    uint32_t row;
 
     x_offset = zbrowser_image_draw_x_offset;
     if (slot >= ZBROWSER_DECODED_IMAGE_SLOT_COUNT ||
@@ -965,10 +968,25 @@ int draw_decoded_image_slot(uint32_t slot,
         return 0;
     }
     pixels = decoded_image_pixels(slot);
-    if (gfx_draw_rect_packed(x, y, width, height, pixels, pixel_count) == 0) {
-        return 1;
+    full_width = zbrowser_decoded_image_widths[slot];
+    if (x_offset == 0 &&
+        y_offset == 0 &&
+        width == full_width) {
+        if (gfx_draw_rect_packed(x, y, width, height, pixels, pixel_count) == 0) {
+            return 1;
+        }
+        return 0;
     }
-    return 0;
+
+    row = 0;
+    while (row < height) {
+        row_pixels = pixels + (((y_offset + row) * full_width) + x_offset) * 4;
+        if (gfx_draw_rect_packed(x, y + row, width, 1, row_pixels, width) != 0) {
+            return 0;
+        }
+        row = row + 1;
+    }
+    return 1;
 }
 
 void remember_image_line_cache(uint32_t start_line, uint32_t line_count) {
@@ -9180,6 +9198,10 @@ void prefetch_background_image(const uint8_t *src) {
                     zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
                 }
             } else {
+                if (zbrowser_flow_box_bg_slot == 9999) {
+                    zbrowser_flow_box_bg_slot = slot;
+                    zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
+                }
                 schedule_image_fetch(slot, zbrowser_url_tmp);
             }
         }

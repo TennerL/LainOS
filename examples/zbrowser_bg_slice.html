@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Background Slice Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.hero {
+  width: 320px;
+  margin: 8px auto 12px auto;
+  padding: 0 24px 12px 24px;
+  color: #202122;
+  background-color: #dde8f4;
+  background-image: url(styles/zbrowser_bg_tall.ppm);
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  border: 1px solid #a2a9b1;
+}
+.copy {
+  margin: 0;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="hero">
+  <p class="copy">Top slice stays red.<br>Second slice should turn blue.</p>
+</div>
+<p class="note">If the left gutter stays red on both lines, background clipping is wrong.</p>
+</body>
+</html>
