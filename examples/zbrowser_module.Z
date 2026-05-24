@@ -3975,13 +3975,10 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
                 image_probe(image_buffer_slot(zbrowser_flow_box_bg_slot),
                             (uint32_t)zbrowser_cached_image_sizes[zbrowser_flow_box_bg_slot],
                             &bg_image) == 0) {
-                if (zbrowser_flow_box_bg_pos_mode_x == ZBROWSER_BG_POS_PERCENT) {
-                    zbrowser_flow_box_bg_pos_x = background_position_offset(zbrowser_flow_box_bg_pos_mode_x,
-                                                                            zbrowser_flow_box_bg_pos_x,
-                                                                            border_w,
-                                                                            bg_image.width);
-                    zbrowser_flow_box_bg_pos_mode_x = ZBROWSER_BG_POS_ABSOLUTE;
-                }
+                /* Keep horizontal percent positioning until paint time so
+                 * narrow boxes can crop centered background images correctly
+                 * instead of collapsing to the left edge once the image is
+                 * already cached. */
                 if (zbrowser_flow_box_bg_pos_mode_y == ZBROWSER_BG_POS_PERCENT && bg_height_base != 0) {
                     zbrowser_flow_box_bg_pos_y = background_position_offset(zbrowser_flow_box_bg_pos_mode_y,
                                                                             zbrowser_flow_box_bg_pos_y,
