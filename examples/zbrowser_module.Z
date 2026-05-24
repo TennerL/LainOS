@@ -9985,6 +9985,7 @@ void load_document(void) {
     int style_prepare_result;
     uint32_t tried_browser_url;
     uint32_t auto_https;
+    struct ImageInfo image;
     struct NetHttpInfo http_info;
 
     buffer = document_buffer();
@@ -10043,6 +10044,15 @@ void load_document(void) {
         if (size > 0) {
             print("zbrowser load-document local-bytes");
             print(size);
+            if (image_probe(buffer, (uint32_t)size, &image) == 0) {
+                zbrowser_size = size;
+                zbrowser_has_document = 1;
+                clear_image_cache();
+                copy_text(zbrowser_status, 96, "loaded local image");
+                zbrowser_loaded = 1;
+                print("zbrowser load-document local-image-fast-path");
+                return;
+            }
             buffer[size] = 0;
             size = zbrowser_normalize_with_netsurf(buffer, size);
             size = zbrowser_process_inline_scripts(buffer, size);
