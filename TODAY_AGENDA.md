@@ -5,6 +5,25 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 19:06-19:15 Europe/Berlin paragraph spacing pass:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_smoke.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the representative smoke-page first frame was already opening reliably, but the first `.stylesheet-note` paragraph was still collapsing directly onto the dark `.css-panel`
+    - that made the top of the page look more like cramped terminal text than a browser layout, even though CSS color and block rendering were otherwise improving
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: give paragraph blocks a one-line default top gap and a one-line default bottom margin when no authored paragraph spacing exists, so normal prose separates cleanly instead of visually sticking to neighboring blocks
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_smoke.html` first-frame capture now shows the stylesheet-driven blue note on its own line below the dark `.css-panel`, making the above-the-fold layout read more like a browser page at open
+    - CSS prepare timings stayed effectively flat in the focused serial trace (`prepare-summary blocks=1 nodes=50 ticks=72`, `precompute-summary ... ticks=57`) compared with the prior smoke run, so the spacing fix did not reintroduce the earlier CSS/performance regressions
+    - `./scripts/agent-browser-check.sh` completed successfully in this environment; the self-host leg stayed in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - the first viewport is cleaner, but the JavaScript-inserted `.stylesheet-note` still is not visibly landing where a browser user would expect it
+  - Next concrete patch/verification step:
+    - fix `document.write()` placement so the generated note is emitted at the script location instead of effectively falling out of the intended flow, then rerun the same `zbrowser_smoke.html` launch capture to confirm both notes are visible above the fold
 - Latest 2026-05-24 18:52-18:56 Europe/Berlin blockquote callout rendering pass:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`

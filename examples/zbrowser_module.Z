@@ -3820,6 +3820,14 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
     }
     top_space = css_spacing_lines(zbrowser_web_margin_t);
     padding_top_space = css_spacing_lines(zbrowser_web_padding_t);
+    if (zb_tag_name_is(html, pos, "p") != 0) {
+        if (top_space == 0 && padding_top_space == 0) {
+            top_space = 1;
+        }
+        if (zbrowser_web_margin_b == 0 && zbrowser_web_padding_b == 0) {
+            zbrowser_css_margin_bottom_space = 1;
+        }
+    }
     if (top_space != 0 || padding_top_space != 0) {
         flush_line();
         /* One-line top margins are common in the UA sheet; reserve them
@@ -3851,7 +3859,9 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
     zbrowser_flow_min_height_px = min_height_px;
     bottom_padding_space = css_spacing_lines(zbrowser_web_padding_b);
     zbrowser_css_bottom_space = bottom_padding_space;
-    zbrowser_css_margin_bottom_space = css_spacing_lines(zbrowser_web_margin_b);
+    if (zbrowser_css_margin_bottom_space == 0) {
+        zbrowser_css_margin_bottom_space = css_spacing_lines(zbrowser_web_margin_b);
+    }
     add_cols = 0;
     px = zbrowser_web_margin_l + zbrowser_web_padding_l + zbrowser_web_border_l + zbrowser_web_text_indent;
     if (px >= 8) {
