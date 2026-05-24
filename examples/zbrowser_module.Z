@@ -5302,6 +5302,19 @@ uint32_t background_position_offset(uint32_t mode,
     return (uint32_t)(((uint64_t)available * value) / 100);
 }
 
+uint32_t background_crop_offset(uint32_t mode,
+                                uint32_t value,
+                                uint32_t box_span,
+                                uint32_t image_span) {
+    uint32_t overflow;
+
+    if (mode != ZBROWSER_BG_POS_PERCENT || image_span <= box_span) {
+        return 0;
+    }
+    overflow = image_span - box_span;
+    return (uint32_t)(((uint64_t)overflow * value) / 100);
+}
+
 uint32_t current_flow_box_pending_flags(void) {
     uint32_t flags;
 
@@ -5358,6 +5371,7 @@ void draw_flow_decoration_at(uint32_t x,
     uint32_t bg_pos_x;
     uint32_t bg_pos_y;
     uint32_t bg_pos_base_y;
+    uint32_t crop_x;
 
     if (w == 0 || h == 0) {
         return;
@@ -5432,6 +5446,10 @@ void draw_flow_decoration_at(uint32_t x,
             }
             if (remaining_h != 0 && y_offset < image.height) {
                 box_rel_x = 0;
+                crop_x = background_crop_offset(zbrowser_flow_draw_bg_pos_mode_x,
+                                                zbrowser_flow_draw_bg_pos_x,
+                                                w,
+                                                image.width);
                 if (repeat_x != 0) {
                     x_offset = repeat_background_offset(box_rel_x,
                                                         bg_pos_x,
@@ -5439,7 +5457,11 @@ void draw_flow_decoration_at(uint32_t x,
                     draw_x = x;
                     remaining_w = w;
                 } else {
-                    if (bg_pos_x >= w) {
+                    if (crop_x != 0) {
+                        x_offset = crop_x;
+                        draw_x = x;
+                        remaining_w = w;
+                    } else if (bg_pos_x >= w) {
                         remaining_w = 0;
                     } else {
                         x_offset = 0;
