@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Thick Border Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.frame {
+  width: 220px;
+  margin: 12px auto;
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border: 6px solid #d33f49;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="frame">
+  <p>Border should be visibly thick on every edge.</p>
+</div>
+<p class="note">If the frame looks hairline, border widths are being dropped.</p>
+</body>
+</html>

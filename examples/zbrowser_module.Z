@@ -4009,6 +4009,10 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
         zbrowser_flow_box_bg_pos_mode_y = parent_box_bg_pos_mode_y;
         zbrowser_flow_box_bg_start_line = parent_box_bg_start_line;
     } else {
+        flags = flags + border_l * 16;
+        flags = flags + border_r * 256;
+        flags = flags + zbrowser_web_border_t * 4096;
+        flags = flags + zbrowser_web_border_b * 65536;
         zbrowser_flow_box_flags = flags;
     }
     if (zbrowser_flow_box_flags != 0 || zbrowser_flow_box_bg_slot != 9999) {
@@ -5364,6 +5368,10 @@ void draw_flow_decoration_at(uint32_t x,
     uint32_t bottom_bits;
     uint32_t repeat_x;
     uint32_t repeat_y;
+    uint32_t left_w;
+    uint32_t right_w;
+    uint32_t top_h;
+    uint32_t bottom_h;
     uint32_t right_x;
     uint32_t bottom_y;
     uint32_t decoded_slot;
@@ -5557,17 +5565,35 @@ void draw_flow_decoration_at(uint32_t x,
         }
     }
     if (border_bits != 0) {
-        if (top_bits != 0) {
-            gfx_fill_rect(x, y, w, 1, zbrowser_flow_draw_border);
+        left_w = (flags / 16) % 16;
+        right_w = (flags / 256) % 16;
+        top_h = (flags / 4096) % 16;
+        bottom_h = (flags / 65536) % 16;
+        if (left_w > w) {
+            left_w = w;
         }
-        gfx_fill_rect(x, y, 1, h, zbrowser_flow_draw_border);
-        if (w > 1) {
-            right_x = x + w - 1;
-            gfx_fill_rect(right_x, y, 1, h, zbrowser_flow_draw_border);
+        if (right_w > w - left_w) {
+            right_w = w - left_w;
         }
-        if (bottom_bits != 0 && h > 1) {
-            bottom_y = y + h - 1;
-            gfx_fill_rect(x, bottom_y, w, 1, zbrowser_flow_draw_border);
+        if (top_h > h) {
+            top_h = h;
+        }
+        if (bottom_h > h - top_h) {
+            bottom_h = h - top_h;
+        }
+        if (top_bits != 0 && top_h != 0) {
+            gfx_fill_rect(x, y, w, top_h, zbrowser_flow_draw_border);
+        }
+        if (left_w != 0) {
+            gfx_fill_rect(x, y, left_w, h, zbrowser_flow_draw_border);
+        }
+        if (right_w != 0) {
+            right_x = x + w - right_w;
+            gfx_fill_rect(right_x, y, right_w, h, zbrowser_flow_draw_border);
+        }
+        if (bottom_bits != 0 && bottom_h != 0) {
+            bottom_y = y + h - bottom_h;
+            gfx_fill_rect(x, bottom_y, w, bottom_h, zbrowser_flow_draw_border);
         }
     }
 }
