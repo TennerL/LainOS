@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Background Position Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.hero {
+  width: 320px;
+  margin: 8px auto 12px auto;
+  padding: 16px 16px 112px 16px;
+  border: 1px solid #a2a9b1;
+  background-color: #dde8f4;
+  background-image: url(styles/zbrowser_bg_tile.ppm);
+  background-repeat: no-repeat;
+  background-position: 240px 64px;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="hero">
+  <p><strong>Background position</strong></p>
+  <p>The gold tile should sit near the lower-right corner, not the top-left edge.</p>
+</div>
+<p class="note">This line should stay outside the box.</p>
+</body>
+</html>
