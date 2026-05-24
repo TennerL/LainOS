@@ -3560,7 +3560,20 @@ int tag_is_right(const uint8_t *html, uint32_t pos) {
     return 0;
 }
 
+int semantic_text_should_preserve_color(const uint8_t *html, uint32_t pos) {
+    if (style_has_text_color(html, pos) != 0) {
+        return 1;
+    }
+    if (zbrowser_text_fg != 0x202122) {
+        return 1;
+    }
+    return 0;
+}
+
 void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
+    uint32_t preserve_color;
+
+    preserve_color = semantic_text_should_preserve_color(html, pos);
     if (load_web_style(html, pos) != 0) {
         zbrowser_text_transform = zbrowser_web_text_transform;
         zbrowser_white_space = zbrowser_web_white_space;
@@ -3580,9 +3593,12 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         if (zbrowser_line_stride < zbrowser_font_scale) {
             zbrowser_line_stride = zbrowser_font_scale;
         }
-        if (zbrowser_web_font_size >= 22) {
+        if (preserve_color == 0 &&
+            zbrowser_web_font_size >= 22) {
             zbrowser_text_fg = 0x000000;
-        } else if (zbrowser_web_font_size > 0 && zbrowser_web_font_size <= 13) {
+        } else if (preserve_color == 0 &&
+                   zbrowser_web_font_size > 0 &&
+                   zbrowser_web_font_size <= 13) {
             zbrowser_text_fg = 0x54595d;
         }
         if (zbrowser_web_direction == WEB_STYLE_DIRECTION_RTL &&
@@ -3604,24 +3620,29 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         return;
     }
     if (load_web_style(html, pos) != 0) {
-        if (zbrowser_web_style_font_weight == WEB_STYLE_FONT_BOLD) {
+        if (preserve_color == 0 &&
+            zbrowser_web_style_font_weight == WEB_STYLE_FONT_BOLD) {
             zbrowser_text_fg = 0x000000;
         }
-        if (zbrowser_web_style_font_style == WEB_STYLE_FONT_STYLE_ITALIC) {
+        if (preserve_color == 0 &&
+            zbrowser_web_style_font_style == WEB_STYLE_FONT_STYLE_ITALIC) {
             zbrowser_text_fg = 0x54595d;
         }
     }
-    if (zb_tag_name_is(html, pos, "b") ||
-        zb_tag_name_is(html, pos, "strong")) {
+    if (preserve_color == 0 &&
+        (zb_tag_name_is(html, pos, "b") ||
+         zb_tag_name_is(html, pos, "strong"))) {
         zbrowser_text_fg = 0x000000;
         return;
     }
-    if (zb_tag_name_is(html, pos, "i") ||
-        zb_tag_name_is(html, pos, "em")) {
+    if (preserve_color == 0 &&
+        (zb_tag_name_is(html, pos, "i") ||
+         zb_tag_name_is(html, pos, "em"))) {
         zbrowser_text_fg = 0x54595d;
         return;
     }
-    if (zb_tag_name_is(html, pos, "small")) {
+    if (preserve_color == 0 &&
+        zb_tag_name_is(html, pos, "small")) {
         zbrowser_text_fg = 0x9aa7b2;
         return;
     }
@@ -3649,7 +3670,9 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
     }
     if (tag_is_native_heading(html, pos) == 0 &&
         tag_has_heading_role(html, pos) != 0) {
-        zbrowser_text_fg = 0x000000;
+        if (preserve_color == 0) {
+            zbrowser_text_fg = 0x000000;
+        }
         if (zbrowser_font_scale < 2) {
             zbrowser_font_scale = 2;
         }
@@ -3667,11 +3690,27 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
     if (zb_attr_value(html, pos, "style", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0) {
         if (css_property_contains(zbrowser_attr, "font-weight", "bold") != 0 ||
             css_property_contains(zbrowser_attr, "font-weight", "700") != 0) {
-            zbrowser_text_fg = 0x000000;
+            if (preserve_color == 0) {
+                zbrowser_text_fg = 0x000000;
+            }
         }
         if (css_property_contains(zbrowser_attr, "font-style", "italic") != 0) {
-            zbrowser_text_fg = 0x54595d;
+            if (preserve_color == 0) {
+                zbrowser_text_fg = 0x54595d;
+            }
         }
+    }
+    if (tag_is_native_heading(html, pos) != 0) {
+        if (preserve_color == 0) {
+            zbrowser_text_fg = 0x000000;
+        }
+        if (zbrowser_font_scale < 2) {
+            zbrowser_font_scale = 2;
+        }
+        if (zbrowser_line_stride < zbrowser_font_scale) {
+            zbrowser_line_stride = zbrowser_font_scale;
+        }
+        return;
     }
     if (tag_class_contains(html, pos, "hatnote") ||
         tag_class_contains(html, pos, "shortdescription") ||
@@ -9514,7 +9553,9 @@ void render_html(const uint8_t *html) {
             } else if (tag_is_prominent_heading(html, pos) != 0) {
                 blank_line();
                 if (!zb_is_closing_tag(html, pos)) {
-                    zbrowser_text_fg = 0x000000;
+                    if (semantic_text_should_preserve_color(html, pos) == 0) {
+                        zbrowser_text_fg = 0x000000;
+                    }
                     zbrowser_text_bg = 0xffffff;
                     zbrowser_text_align = style_text_align(html, pos, 0);
                     if (zb_tag_name_is(html, pos, "h1")) {

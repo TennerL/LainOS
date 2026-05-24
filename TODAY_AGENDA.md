@@ -5,6 +5,25 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 17:30-17:52 Europe/Berlin authored heading color preservation fix:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_smoke.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the representative smoke-page launch was already opening into a recognizable browser window, but its top headline still looked wrong on first view
+    - `web_style_for_tag()` resolved the `<h1>` color correctly (`0xf7d154`) for the smoke page, yet the live framebuffer still painted that heading in black
+    - that made above-the-fold CSS styling feel broken even after the recent image and layout fixes
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: stop the heading/semantic fallback path from forcing authored heading colors back to black during first render
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_smoke.html` first-frame capture now shows the `Z Browser Smoke` heading in its authored gold instead of black, making the page look immediately closer to a normal browser render on open
+    - `./scripts/agent-browser-check.sh` completed successfully in this environment; the self-host leg stayed in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - heading color fidelity is improved, but the first-frame smoke view still has obvious completeness gaps, especially the unreadable/missing text inside the dark `.css-panel` block and the still-missing above-the-fold CSS background image
+  - Next concrete patch/verification step:
+    - inspect why `.css-panel` text is still not painting correctly despite its CSS block styling, then reuse the same smoke launch capture to make that above-the-fold panel obviously readable
 - Latest 2026-05-24 16:40-16:49 Europe/Berlin `srcset` first-candidate fix:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`
