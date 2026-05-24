@@ -9552,8 +9552,8 @@ int should_try_inline_image(const uint8_t *src) {
 
 void first_srcset_url(const uint8_t *srcset, uint8_t *out, uint32_t capacity) {
     uint32_t i;
+    uint32_t out_pos;
 
-    out[0] = 0;
     if (capacity == 0) {
         return;
     }
@@ -9561,15 +9561,21 @@ void first_srcset_url(const uint8_t *srcset, uint8_t *out, uint32_t capacity) {
     while (srcset[i] == 32 || srcset[i] == 9 || srcset[i] == 10 || srcset[i] == 13) {
         i = i + 1;
     }
+    out_pos = 0;
     while (srcset[i] != 0 &&
            srcset[i] != 32 &&
            srcset[i] != 9 &&
            srcset[i] != 10 &&
            srcset[i] != 13 &&
            srcset[i] != 44) {
-        append_char_limited(out, capacity, srcset[i]);
+        if (out_pos + 1 >= capacity) {
+            break;
+        }
+        out[out_pos] = srcset[i];
+        out_pos = out_pos + 1;
         i = i + 1;
     }
+    out[out_pos] = 0;
 }
 
 int image_source_for_tag(const uint8_t *html, uint32_t pos, uint8_t *out, uint32_t capacity) {

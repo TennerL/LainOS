@@ -5,6 +5,27 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 16:40-16:49 Europe/Berlin `srcset` first-candidate fix:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_srcset_gif.html ./scripts/zbrowser-launch-repro.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_smoke.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the dedicated `zbrowser_srcset_gif.html` capture fell back to the image `alt` text instead of drawing the first `srcset` candidate
+    - the main smoke page reported `imgs 4/2`, matching the visibly missing third image path in normal zbrowser content
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: fixed `first_srcset_url()` so it no longer clears aliased input/output buffers before extracting the first candidate URL
+    - `examples/zbrowser_srcset_gif.html`: added a minimal focused repro page for the `srcset`/GIF path
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_srcset_gif.html` first-frame capture now renders the red `GIF` image in its frame instead of falling back to alt text
+    - the same `zbrowser_smoke.html` run now reports `imgs 4/3` instead of `imgs 4/2`, confirming the missing `srcset` image is loading again on the representative smoke page
+    - `./scripts/agent-browser-check.sh` completed successfully in this environment; the self-host leg stayed in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - `srcset` image loading is fixed, but the smoke page first frame still does not make that improvement obvious because the recovered image sits below the initial viewport
+  - Next concrete patch/verification step:
+    - move to the next above-the-fold browser-visible defect on `zbrowser_smoke.html`, most likely CSS background visibility or another first-frame completeness gap that Tenno can notice immediately on open
 - Latest 2026-05-24 16:00-16:09 Europe/Berlin single-core remote image fallback fix:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`

@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Srcset GIF Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.frame {
+  width: 320px;
+  margin: 12px auto;
+  padding: 12px;
+  border: 1px solid #a2a9b1;
+  background: #f8f9fa;
+}
+.frame img {
+  display: block;
+  margin: 0 auto;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="frame">
+  <p>This GIF should render from the first `srcset` candidate.</p>
+  <img srcset="https://dummyimage.com/160x90/ef4444/ffffff.gif&text=GIF 1x, https://dummyimage.com/320x180/ef4444/ffffff.gif&text=GIF 2x" alt="srcset gif image">
+</div>
+<p class="note">If this stays empty, the smoke page will also miss its third image.</p>
+</body>
+</html>
