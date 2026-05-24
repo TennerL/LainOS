@@ -7664,6 +7664,15 @@ void apply_inline_block_scope(const uint8_t *html, uint32_t pos) {
     if (flags != 0) {
         zbrowser_bg_band_active = 1;
     }
+    if (zbrowser_style_stack_depth != 0 &&
+        current_style_has_visible_border() != 0 &&
+        border_b != 0) {
+        zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] =
+            zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] % 256;
+        zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] =
+            zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] +
+            border_b * 256;
+    }
 }
 
 int copy_first_option_label(const uint8_t *html, uint32_t start, uint8_t *dst, uint32_t capacity) {
@@ -9035,6 +9044,12 @@ void render_html(const uint8_t *html) {
                        zbrowser_css_scope_block_flow == 0 &&
                        zbrowser_flow_w_px != 0 &&
                        zbrowser_flow_w_px < default_flow_content_w()) {
+                if (closing_border_bottom != 0) {
+                    /* Inline-block boxes flush before the closing tag pops the
+                     * style scope, so carry the pending bottom edge onto that
+                     * final decorated line instead of dropping the border. */
+                    zbrowser_flow_box_pending_bottom = 1;
+                }
                 flush_line();
             }
             if (zb_is_closing_tag(html, pos) == 0 &&
