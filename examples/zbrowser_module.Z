@@ -1790,6 +1790,12 @@ int css_text_property_value(const uint8_t *style,
     out[0] = 0;
     i = 0;
     while (style[i] != 0) {
+        while (style[i] == 32 || style[i] == 9 || style[i] == 10 || style[i] == 13) {
+            i = i + 1;
+        }
+        if (style[i] == 0) {
+            break;
+        }
         j = 0;
         while (property[j] != 0 && zb_lower_char(style[i + j]) == zb_lower_char(property[j])) {
             j = j + 1;
