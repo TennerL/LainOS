@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Remote Background HTTP Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.hero {
+  width: 320px;
+  margin: 8px auto 12px auto;
+  padding: 20px 24px 56px 24px;
+  color: #ffffff;
+  background: #102033 url(http://10.0.2.2:8000/styles/zbrowser_bg_tile.ppm) center no-repeat;
+  border: 1px solid #102033;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="hero">
+  <p>Remote HTTP background tile should appear behind this text.</p>
+</div>
+<p class="note">This line stays outside the box so late repaints are easy to spot.</p>
+</body>
+</html>

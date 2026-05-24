@@ -19,6 +19,13 @@
 #define CONSOLE_SHADOW_MAX_COLS 512u
 #define CONSOLE_SHADOW_MAX_ROWS 256u
 #define CONSOLE_MAX_CPU_SUPPRESS 32u
+#define CONSOLE_SERIAL_COM1 0x3F8u
+#define CONSOLE_SERIAL_DATA (CONSOLE_SERIAL_COM1 + 0u)
+#define CONSOLE_SERIAL_INT_ENABLE (CONSOLE_SERIAL_COM1 + 1u)
+#define CONSOLE_SERIAL_FIFO_CTRL (CONSOLE_SERIAL_COM1 + 2u)
+#define CONSOLE_SERIAL_LINE_CTRL (CONSOLE_SERIAL_COM1 + 3u)
+#define CONSOLE_SERIAL_MODEM_CTRL (CONSOLE_SERIAL_COM1 + 4u)
+#define CONSOLE_SERIAL_LINE_STATUS (CONSOLE_SERIAL_COM1 + 5u)
 
 typedef struct {
     uint32_t left;
@@ -46,9 +53,48 @@ static void (*console_output_hook)(char ch);
 static char console_shadow[CONSOLE_MAX_PANES][CONSOLE_SHADOW_MAX_ROWS][CONSOLE_SHADOW_MAX_COLS];
 static volatile unsigned int console_write_lock;
 static volatile unsigned int console_suppress_depth[CONSOLE_MAX_CPU_SUPPRESS];
+static uint32_t console_serial_ready;
 
 static uint32_t console_pane_index(const console_pane_t *pane);
 static void console_shadow_clear(uint32_t pane_index);
+
+static inline void console_serial_outb(uint16_t port, uint8_t value) {
+    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint8_t console_serial_inb(uint16_t port) {
+    uint8_t value;
+
+    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static void console_serial_init(void) {
+    console_serial_outb(CONSOLE_SERIAL_INT_ENABLE, 0x00u);
+    console_serial_outb(CONSOLE_SERIAL_LINE_CTRL, 0x80u);
+    console_serial_outb(CONSOLE_SERIAL_DATA, 0x01u);
+    console_serial_outb(CONSOLE_SERIAL_INT_ENABLE, 0x00u);
+    console_serial_outb(CONSOLE_SERIAL_LINE_CTRL, 0x03u);
+    console_serial_outb(CONSOLE_SERIAL_FIFO_CTRL, 0xC7u);
+    console_serial_outb(CONSOLE_SERIAL_MODEM_CTRL, 0x0Bu);
+    console_serial_ready = 1u;
+}
+
+static void console_serial_putc(char ch) {
+    uint32_t guard = 0u;
+
+    if (console_serial_ready == 0u) {
+        return;
+    }
+
+    while ((console_serial_inb(CONSOLE_SERIAL_LINE_STATUS) & 0x20u) == 0u && guard < 1000000u) {
+        ++guard;
+    }
+    if (guard >= 1000000u) {
+        return;
+    }
+    console_serial_outb(CONSOLE_SERIAL_DATA, (uint8_t)ch);
+}
 
 static console_pane_t *active_pane(void) {
     return &console_panes[active_console_pane];
@@ -435,6 +481,7 @@ static void putc_raw(char ch) {
 
     erase_cursor();
     if ((uint8_t)ch < ASCII_FIRST || (uint8_t)ch >= ASCII_FIRST + ASCII_COUNT) return;
+    console_serial_putc(ch);
     if (console_output_hook != 0) {
         console_output_hook(ch);
     }
@@ -495,6 +542,7 @@ void console_init(unsigned long long framebuffer_base,
     active_console_pane = 0;
     console_pane_count = 1;
     cursor_enabled = 1;
+    console_serial_init();
     console_shadow_clear_all();
     fill_screen_color(current_bg_color);
 }
@@ -824,6 +872,7 @@ static void console_puts_unlocked(const char *s) {
     while (*s) {
         char ch = *s++;
         if (ch == '\n') {
+            console_serial_putc('\n');
             if (console_output_hook != 0) {
                 console_output_hook('\n');
             }
@@ -831,6 +880,7 @@ static void console_puts_unlocked(const char *s) {
         } else if (ch == '\t') {
             for (int i = 0; i < 4; ++i) putc_raw(' ');
         } else if (ch == '\b') {
+            console_serial_putc('\b');
             if (console_output_hook != 0) {
                 console_output_hook('\b');
             }

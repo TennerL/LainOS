@@ -70,6 +70,9 @@ static uint32_t partition_start_lba;
 static uint32_t partition_block_count;
 static lainfs_superblock_t super;
 static uint8_t directory[LAINFS_DIR_BLOCKS * LAINFS_BLOCK_SIZE];
+static uint8_t file_block[LAINFS_BLOCK_SIZE];
+
+static int load_image(const char *path, int writable);
 
 static uint32_t read_le32(const uint8_t *p) {
     return ((uint32_t)p[0]) |
@@ -113,6 +116,10 @@ static uint32_t entry_id_from_index(uint32_t index) {
 
 static uint32_t index_from_entry_id(uint32_t entry_id) {
     return entry_id - 1u;
+}
+
+static uint32_t entry_id_from_pointer(const lainfs_dirent_t *entry) {
+    return entry_id_from_index((uint32_t)(((const uint8_t *)entry - directory) / LAINFS_ENTRY_SIZE));
 }
 
 static uint32_t blocks_for_size(uint32_t size) {
@@ -215,6 +222,131 @@ static int entry_extents(const lainfs_dirent_t *entry, lainfs_extent_t *extents,
         return -1;
     }
     *out_count = count;
+    return 0;
+}
+
+static int path_next_component(const char **path, char *component, size_t component_size) {
+    size_t len = 0;
+
+    while (**path == '/' || **path == '\\') {
+        ++*path;
+    }
+    if (**path == '\0') {
+        return 0;
+    }
+
+    while (**path != '\0' && **path != '/' && **path != '\\') {
+        if (len + 1u >= component_size) {
+            return -1;
+        }
+        component[len++] = **path;
+        ++*path;
+    }
+    component[len] = '\0';
+    return 1;
+}
+
+static int find_entry_in_dir(uint32_t parent_id, const char *name, uint32_t type, lainfs_dirent_t **out_entry) {
+    for (uint32_t i = 0; i < LAINFS_MAX_FILES; ++i) {
+        lainfs_dirent_t *entry = dir_entry(i);
+        if (entry->used == type &&
+            entry_parent_id(entry) == parent_id &&
+            strcmp(entry->name, name) == 0) {
+            *out_entry = entry;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int resolve_path(const char *path, lainfs_dirent_t **out_entry) {
+    char component[32];
+    const char *cursor = path;
+    uint32_t parent_id = 0;
+    lainfs_dirent_t *entry = NULL;
+    int status;
+
+    if (path == NULL || out_entry == NULL) {
+        return -1;
+    }
+
+    while ((status = path_next_component(&cursor, component, sizeof(component))) > 0) {
+        if (find_entry_in_dir(parent_id, component, LAINFS_ENTRY_DIR, &entry) == 0) {
+            parent_id = entry_id_from_pointer(entry);
+            while (*cursor == '/' || *cursor == '\\') {
+                ++cursor;
+            }
+            if (*cursor == '\0') {
+                *out_entry = entry;
+                return 0;
+            }
+            continue;
+        }
+
+        if (find_entry_in_dir(parent_id, component, LAINFS_ENTRY_FILE, &entry) != 0) {
+            return -1;
+        }
+        while (*cursor == '/' || *cursor == '\\') {
+            ++cursor;
+        }
+        if (*cursor != '\0') {
+            return -1;
+        }
+        *out_entry = entry;
+        return 0;
+    }
+
+    if (status < 0) {
+        return -1;
+    }
+
+    *out_entry = NULL;
+    return 0;
+}
+
+static int read_file_entry(const lainfs_dirent_t *entry, uint8_t **out_data, uint32_t *out_size) {
+    lainfs_extent_t extents[LAINFS_MAX_EXTENTS];
+    uint32_t extent_count = 0;
+    uint32_t copied = 0;
+    uint8_t *data;
+
+    if (entry == NULL || entry->used != LAINFS_ENTRY_FILE || out_data == NULL || out_size == NULL) {
+        return -1;
+    }
+    if (entry_extents(entry, extents, &extent_count) != 0) {
+        return -1;
+    }
+
+    data = (uint8_t *)malloc(entry->byte_size == 0u ? 1u : entry->byte_size);
+    if (data == NULL) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < extent_count; ++i) {
+        for (uint32_t block = 0; block < extents[i].blocks; ++block) {
+            uint32_t remaining = entry->byte_size - copied;
+            uint32_t chunk = remaining < LAINFS_BLOCK_SIZE ? remaining : LAINFS_BLOCK_SIZE;
+            if (read_blocks(extents[i].start_lba + block, 1, file_block) != 0) {
+                free(data);
+                return -1;
+            }
+            if (chunk != 0u) {
+                memcpy(data + copied, file_block, chunk);
+                copied += chunk;
+            }
+        }
+    }
+
+    *out_data = data;
+    *out_size = entry->byte_size;
+    return 0;
+}
+
+static int command_exists(const char *path) {
+    lainfs_dirent_t *entry = NULL;
+    if (resolve_path(path, &entry) != 0 || entry == NULL) {
+        return 1;
+    }
     return 0;
 }
 
@@ -516,6 +648,58 @@ static int command_repair(const char *path) {
     return 0;
 }
 
+static int command_cat(const char *fs_path) {
+    lainfs_dirent_t *entry = NULL;
+    uint8_t *data = NULL;
+    uint32_t size = 0;
+
+    if (resolve_path(fs_path, &entry) != 0 || entry == NULL || entry->used != LAINFS_ENTRY_FILE) {
+        fprintf(stderr, "lainfs_check_host: file not found: %s\n", fs_path);
+        return 1;
+    }
+    if (read_file_entry(entry, &data, &size) != 0) {
+        fprintf(stderr, "lainfs_check_host: could not read %s\n", fs_path);
+        return 1;
+    }
+
+    if (size != 0u && fwrite(data, 1, size, stdout) != size) {
+        free(data);
+        fprintf(stderr, "lainfs_check_host: could not write %s\n", fs_path);
+        return 1;
+    }
+    free(data);
+    return 0;
+}
+
+static int command_ls(const char *fs_path) {
+    lainfs_dirent_t *entry = NULL;
+    uint32_t parent_id = 0;
+
+    if (fs_path != NULL && fs_path[0] != '\0' &&
+        !(fs_path[0] == '/' && fs_path[1] == '\0') &&
+        !(fs_path[0] == '\\' && fs_path[1] == '\0')) {
+        if (resolve_path(fs_path, &entry) != 0 || entry == NULL || entry->used != LAINFS_ENTRY_DIR) {
+            fprintf(stderr, "lainfs_check_host: directory not found: %s\n", fs_path);
+            return 1;
+        }
+        parent_id = entry_id_from_pointer(entry);
+    }
+
+    for (uint32_t i = 0; i < LAINFS_MAX_FILES; ++i) {
+        lainfs_dirent_t *child = dir_entry(i);
+        if (child->used == 0 || entry_parent_id(child) != parent_id) {
+            continue;
+        }
+        printf("%c %s", child->used == LAINFS_ENTRY_DIR ? 'd' : 'f', child->name);
+        if (child->used == LAINFS_ENTRY_FILE) {
+            printf(" %u", child->byte_size);
+        }
+        printf("\n");
+    }
+
+    return 0;
+}
+
 static void init_empty_image_state(void) {
     partition_start_lba = DATA_PARTITION_START_LBA;
     partition_block_count = SMOKE_IMAGE_BLOCKS - DATA_PARTITION_START_LBA;
@@ -705,8 +889,38 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "smoke") == 0) {
         return command_smoke();
     }
+    if (argc == 4 &&
+        (strcmp(argv[1], "exists") == 0 ||
+         strcmp(argv[1], "cat") == 0)) {
+        if (load_image(argv[2], 0) != 0) {
+            fprintf(stderr, "lainfs_check_host: could not load %s\n", argv[2]);
+            return 1;
+        }
+        status = strcmp(argv[1], "exists") == 0 ? command_exists(argv[3]) : command_cat(argv[3]);
+        if (image) {
+            fclose(image);
+        }
+        return status;
+    }
+    if ((argc == 3 || argc == 4) && strcmp(argv[1], "ls") == 0) {
+        if (load_image(argv[2], 0) != 0) {
+            fprintf(stderr, "lainfs_check_host: could not load %s\n", argv[2]);
+            return 1;
+        }
+        status = command_ls(argc == 4 ? argv[3] : "");
+        if (image) {
+            fclose(image);
+        }
+        return status;
+    }
     if (argc != 3) {
-        fprintf(stderr, "usage: %s check|repair image\n       %s smoke\n", argv[0], argv[0]);
+        fprintf(stderr,
+                "usage: %s check|repair image\n"
+                "       %s exists image path\n"
+                "       %s cat image path\n"
+                "       %s ls image [path]\n"
+                "       %s smoke\n",
+                argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
 
@@ -715,7 +929,13 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[1], "repair") == 0) {
         status = command_repair(argv[2]);
     } else {
-        fprintf(stderr, "usage: %s check|repair image\n       %s smoke\n", argv[0], argv[0]);
+        fprintf(stderr,
+                "usage: %s check|repair image\n"
+                "       %s exists image path\n"
+                "       %s cat image path\n"
+                "       %s ls image [path]\n"
+                "       %s smoke\n",
+                argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
 

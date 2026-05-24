@@ -3,7 +3,7 @@ DEFAULT REL
 
 GLOBAL interrupts_init
 GLOBAL isr_common_stub
-EXTERN console_panic
+EXTERN cpu_exception_handler
 EXTERN timer_irq_handler
 EXTERN mouse_irq_handler
 EXTERN cpu_ipi_handler
@@ -223,10 +223,8 @@ interrupts_init:
 
 isr_common_stub:
     cli
-    lea rsi, [rel fault_msg]
-    call console_panic
-
-SECTION .rodata
-fault_msg db 'CPU exception triggered', 0
+    mov rdi, rsp
+    and rsp, -16
+    call cpu_exception_handler
 
 SECTION .note.GNU-stack noalloc noexec nowrite progbits

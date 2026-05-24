@@ -1,0 +1,153 @@
+#include "kernel_api.Z"
+
+extern int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uint32_t viewport_height);
+extern int netsurf_port_rewrite_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
+extern int netsurf_port_rewrite_render_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
+extern uint32_t netsurf_port_dom_status(void);
+extern uint32_t kernel_task_submit_async_named(void (*fn)(uint8_t *arg), uint8_t *arg, const uint8_t *name);
+extern int kernel_task_async_supported(void);
+extern void kernel_task_wait(uint32_t id);
+extern void kernel_task_release(uint32_t id);
+
+#define ZBROWSER_ASYNC_REPRO_CAPACITY 1048577
+
+global uint64_t zbrowser_async_repro_buffer_addr;
+global uint32_t zbrowser_async_repro_dom_status;
+global uint32_t zbrowser_async_repro_render_dom_status;
+global int zbrowser_async_repro_rewritten_size;
+global int zbrowser_async_repro_style_result;
+
+uint8_t *zbrowser_async_repro_buffer(void) {
+    return (uint8_t *)zbrowser_async_repro_buffer_addr;
+}
+
+int zbrowser_async_repro_style_exit_code(int style_result) {
+    if (style_result >= 0) {
+        return 0;
+    }
+    if (style_result == -1) {
+        return 31;
+    }
+    if (style_result == -2) {
+        return 32;
+    }
+    if (style_result == -3) {
+        return 33;
+    }
+    return 34;
+}
+
+void zbrowser_async_repro_worker(uint8_t *arg) {
+    uint8_t *buffer;
+    int size;
+    int rewritten;
+
+    arg = arg;
+    buffer = zbrowser_async_repro_buffer();
+    if (buffer == 0) {
+        zbrowser_async_repro_style_result = -99;
+        return;
+    }
+
+    print("css-async load\n");
+    size = os_read_file("zbrowser_smoke.html", buffer, ZBROWSER_ASYNC_REPRO_CAPACITY - 1);
+    if (size <= 0) {
+        print("css-async load failed\n");
+        zbrowser_async_repro_style_result = -98;
+        return;
+    }
+    buffer[size] = 0;
+    print("css-async input-bytes=");
+    print(size);
+    print("\n");
+
+    print("css-async rewrite-dom\n");
+    rewritten = netsurf_port_rewrite_html(buffer,
+                                          (uint32_t)size,
+                                          buffer,
+                                          ZBROWSER_ASYNC_REPRO_CAPACITY);
+    zbrowser_async_repro_dom_status = netsurf_port_dom_status();
+    print("css-async dom-status=");
+    print(zbrowser_async_repro_dom_status);
+    print(" rewritten=");
+    print(rewritten);
+    print("\n");
+    if (rewritten > 0) {
+        size = rewritten;
+        buffer[size] = 0;
+    }
+
+    print("css-async rewrite-render-dom\n");
+    rewritten = netsurf_port_rewrite_render_html(buffer,
+                                                 (uint32_t)size,
+                                                 buffer,
+                                                 ZBROWSER_ASYNC_REPRO_CAPACITY);
+    zbrowser_async_repro_render_dom_status = netsurf_port_dom_status();
+    print("css-async render-dom-status=");
+    print(zbrowser_async_repro_render_dom_status);
+    print(" rewritten=");
+    print(rewritten);
+    print("\n");
+    if (rewritten > 0) {
+        size = rewritten;
+        buffer[size] = 0;
+    }
+
+    zbrowser_async_repro_rewritten_size = size;
+    print("css-async prepare-css\n");
+    zbrowser_async_repro_style_result = web_style_prepare_document(buffer, 1024, 768);
+    print("css-async style-result=");
+    print(zbrowser_async_repro_style_result);
+    print("\n");
+}
+
+int zbrowser_async_repro_run(void) {
+    uint8_t *buffer;
+    uint32_t task_id;
+
+    print("css-async alloc\n");
+    zbrowser_async_repro_buffer_addr = (uint64_t)kmalloc(ZBROWSER_ASYNC_REPRO_CAPACITY);
+    if (zbrowser_async_repro_buffer_addr == 0) {
+        print("css-async alloc failed\n");
+        return 11;
+    }
+
+    if (kernel_task_async_supported() == 0) {
+        print("css-async unsupported\n");
+        kfree((uint8_t *)zbrowser_async_repro_buffer_addr);
+        return 12;
+    }
+
+    zbrowser_async_repro_dom_status = 0;
+    zbrowser_async_repro_render_dom_status = 0;
+    zbrowser_async_repro_rewritten_size = 0;
+    zbrowser_async_repro_style_result = -97;
+
+    print("css-async submit\n");
+    task_id = kernel_task_submit_async_named(zbrowser_async_repro_worker, (uint8_t *)0, "cssasyncrepro");
+    if (task_id == 0) {
+        print("css-async submit failed\n");
+        kfree((uint8_t *)zbrowser_async_repro_buffer_addr);
+        return 13;
+    }
+
+    kernel_task_wait(task_id);
+    kernel_task_release(task_id);
+
+    print("css-async final-dom-status=");
+    print(zbrowser_async_repro_dom_status);
+    print(" render-dom-status=");
+    print(zbrowser_async_repro_render_dom_status);
+    print(" rewritten=");
+    print(zbrowser_async_repro_rewritten_size);
+    print(" style-result=");
+    print(zbrowser_async_repro_style_result);
+    print("\n");
+
+    buffer = zbrowser_async_repro_buffer();
+    kfree(buffer);
+    zbrowser_async_repro_buffer_addr = 0;
+    return zbrowser_async_repro_style_exit_code(zbrowser_async_repro_style_result);
+}
+
+return zbrowser_async_repro_run();

@@ -24,3 +24,4 @@ if [ "${#missing_tools[@]}" -ne 0 ]; then
 fi
 
 make
+scripts/zbrowser-selfhost-smoke.sh

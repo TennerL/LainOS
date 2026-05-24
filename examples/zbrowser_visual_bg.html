@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Visual Background Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.hero {
+  width: 320px;
+  margin: 8px auto 12px auto;
+  padding: 20px 24px 56px 24px;
+  color: #ffffff;
+  background: #102033 url(styles/zbrowser_bg_tile.ppm) repeat;
+  border: 1px solid #102033;
+}
+.hero strong {
+  color: #f7d154;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="hero">
+  <p><strong>Background image</strong></p>
+  <p>Gold tile should stay visible around this text.</p>
+</div>
+<p class="note">This line stays outside the box so background spill is easy to spot.</p>
+</body>
+</html>

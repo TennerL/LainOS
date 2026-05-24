@@ -54,7 +54,8 @@ NETSURF_INC := \
 	-Ithird_party/netsurf/src/libcss/include \
 	-Ithird_party/netsurf/src/libdom/include \
 	-Ithird_party/netsurf/src/libdom
-NETSURF_COMMON_CFLAGS = $(KERNEL_CFLAGS) -DNDEBUG -DWITHOUT_ICONV_FILTER -Wno-unused-parameter -Wno-unused-function
+KERNEL_NO_SSE_CFLAGS := -mno-mmx -mno-sse -mno-sse2 -msoft-float
+NETSURF_COMMON_CFLAGS = $(KERNEL_CFLAGS) $(KERNEL_NO_SSE_CFLAGS) -DNDEBUG -DWITHOUT_ICONV_FILTER -Wno-unused-parameter -Wno-unused-function
 NETSURF_PARSERUTILS_CFLAGS = $(NETSURF_COMMON_CFLAGS) -Ithird_party/netsurf/src/libparserutils/src
 NETSURF_HUBBUB_CFLAGS = $(NETSURF_COMMON_CFLAGS) -D_BSD_SOURCE -D_DEFAULT_SOURCE -Ithird_party/netsurf/src/libhubbub/src
 NETSURF_LIBCSS_CFLAGS = $(NETSURF_COMMON_CFLAGS) -D_GNU_SOURCE -D_ALIGNED= -Ithird_party/netsurf/src/libcss/src
@@ -63,6 +64,18 @@ NASMFLAGS := -Iboot/shared/ -Ikernel/include/
 CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER -DBOOT_RES_WIDTH=$(BOOT_RES_WIDTH) -DBOOT_RES_HEIGHT=$(BOOT_RES_HEIGHT)
 KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) $(STB_INC) $(NETSURF_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
 HOST_CFLAGS := -Iboot/shared $(KERNEL_INC) -Ikernel -std=c11 -Wall -Wextra -Wno-unused-function
+KERNEL_CFLAGS_TAG := $(shell printf '%s' '$(KERNEL_CFLAGS)' | sha1sum | cut -c1-12)
+NETSURF_PARSERUTILS_CFLAGS_TAG := $(shell printf '%s' '$(NETSURF_PARSERUTILS_CFLAGS)' | sha1sum | cut -c1-12)
+NETSURF_HUBBUB_CFLAGS_TAG := $(shell printf '%s' '$(NETSURF_HUBBUB_CFLAGS)' | sha1sum | cut -c1-12)
+NETSURF_LIBCSS_CFLAGS_TAG := $(shell printf '%s' '$(NETSURF_LIBCSS_CFLAGS)' | sha1sum | cut -c1-12)
+NETSURF_LIBDOM_CFLAGS_TAG := $(shell printf '%s' '$(NETSURF_LIBDOM_CFLAGS)' | sha1sum | cut -c1-12)
+NETSURF_COMMON_CFLAGS_TAG := $(shell printf '%s' '$(NETSURF_COMMON_CFLAGS)' | sha1sum | cut -c1-12)
+KERNEL_CFLAGS_STAMP := build/.kernel-cflags-$(KERNEL_CFLAGS_TAG)
+NETSURF_PARSERUTILS_CFLAGS_STAMP := build/.netsurf-parserutils-cflags-$(NETSURF_PARSERUTILS_CFLAGS_TAG)
+NETSURF_HUBBUB_CFLAGS_STAMP := build/.netsurf-hubbub-cflags-$(NETSURF_HUBBUB_CFLAGS_TAG)
+NETSURF_LIBCSS_CFLAGS_STAMP := build/.netsurf-libcss-cflags-$(NETSURF_LIBCSS_CFLAGS_TAG)
+NETSURF_LIBDOM_CFLAGS_STAMP := build/.netsurf-libdom-cflags-$(NETSURF_LIBDOM_CFLAGS_TAG)
+NETSURF_COMMON_CFLAGS_STAMP := build/.netsurf-common-cflags-$(NETSURF_COMMON_CFLAGS_TAG)
 LDFLAGS_EFI := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_LIBDIR) $(EFI_CRT0)
 LDLIBS_EFI := -lefi -lgnuefi
 OBJCOPY_EFI_FLAGS := --target efi-app-$(EFI_ARCH) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rela -j .rel -j .reloc
@@ -150,6 +163,9 @@ build:
 
 FORCE:
 
+$(KERNEL_CFLAGS_STAMP) $(NETSURF_PARSERUTILS_CFLAGS_STAMP) $(NETSURF_HUBBUB_CFLAGS_STAMP) $(NETSURF_LIBCSS_CFLAGS_STAMP) $(NETSURF_LIBDOM_CFLAGS_STAMP) $(NETSURF_COMMON_CFLAGS_STAMP): | build
+	@touch $@
+
 $(BUILD_VERSION_H): FORCE | build
 	@old=0; \
 	if [ -f build/build_number.txt ]; then old=$$(cat build/build_number.txt); fi; \
@@ -194,7 +210,9 @@ refresh-ramdisk: build/tools/ramdisk_seed_gen | build
 pxe: refresh-ramdisk
 	$(MAKE) build/pxe/$(PXE_BOOTLOADER)
 
-build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED_H) | build
+build/kernel/ui/weblayout.o build/kernel/ui/netsurf_port.o: KERNEL_CFLAGS += $(KERNEL_NO_SSE_CFLAGS)
+
+build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED_H) $(KERNEL_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
@@ -202,23 +220,23 @@ build/third_party/bearssl/%.o: third_party/bearssl/src/%.c | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(KERNEL_CFLAGS) -Wno-unused-parameter -Wno-unused-function -c $< -o $@
 
-build/third_party/netsurf/libparserutils/%.o: third_party/netsurf/src/libparserutils/%.c | build
+build/third_party/netsurf/libparserutils/%.o: third_party/netsurf/src/libparserutils/%.c $(NETSURF_PARSERUTILS_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(NETSURF_PARSERUTILS_CFLAGS) -c $< -o $@
 
-build/third_party/netsurf/libcss/%.o: third_party/netsurf/src/libcss/%.c | build
+build/third_party/netsurf/libcss/%.o: third_party/netsurf/src/libcss/%.c $(NETSURF_LIBCSS_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(NETSURF_LIBCSS_CFLAGS) -c $< -o $@
 
-build/third_party/netsurf/libhubbub/%.o: third_party/netsurf/src/libhubbub/%.c | build
+build/third_party/netsurf/libhubbub/%.o: third_party/netsurf/src/libhubbub/%.c $(NETSURF_HUBBUB_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(NETSURF_HUBBUB_CFLAGS) -c $< -o $@
 
-build/third_party/netsurf/libdom/%.o: third_party/netsurf/src/libdom/%.c | build
+build/third_party/netsurf/libdom/%.o: third_party/netsurf/src/libdom/%.c $(NETSURF_LIBDOM_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(NETSURF_LIBDOM_CFLAGS) -c $< -o $@
 
-build/third_party/netsurf/libwapcaplet/%.o: third_party/netsurf/src/libwapcaplet/%.c | build
+build/third_party/netsurf/libwapcaplet/%.o: third_party/netsurf/src/libwapcaplet/%.c $(NETSURF_COMMON_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
 	$(CC) $(NETSURF_COMMON_CFLAGS) -c $< -o $@
 

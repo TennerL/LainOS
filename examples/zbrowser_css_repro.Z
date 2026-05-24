@@ -1,0 +1,229 @@
+#include "kernel_api.Z"
+
+struct WebStyle {
+    uint32_t flags;
+    uint32_t text_align;
+    uint32_t position;
+    uint32_t display;
+    uint32_t float_side;
+    uint32_t font_weight;
+    uint32_t font_style;
+    uint32_t left;
+    uint32_t right;
+    uint32_t top;
+    uint32_t bottom;
+    uint32_t width;
+    uint32_t height;
+    uint32_t min_width;
+    uint32_t max_width;
+    uint32_t min_height;
+    uint32_t max_height;
+    uint32_t color;
+    uint32_t background_color;
+    uint32_t margin_left;
+    uint32_t margin_right;
+    uint32_t margin_top;
+    uint32_t margin_bottom;
+    uint32_t padding_left;
+    uint32_t padding_right;
+    uint32_t padding_top;
+    uint32_t padding_bottom;
+    uint32_t border_left;
+    uint32_t border_right;
+    uint32_t border_top;
+    uint32_t border_bottom;
+    uint32_t border_color;
+    uint32_t font_size;
+    uint32_t line_height;
+    uint32_t text_transform;
+    uint32_t white_space;
+    uint32_t list_style_type;
+    uint32_t overflow_x;
+    uint32_t overflow_y;
+    uint32_t box_sizing;
+    uint32_t border_collapse;
+    uint32_t border_spacing_h;
+    uint32_t border_spacing_v;
+    uint32_t text_indent;
+    uint32_t clear_side;
+    uint32_t vertical_align;
+    uint32_t list_style_position;
+    uint32_t caption_side;
+    uint32_t direction;
+    uint32_t table_layout;
+    uint32_t empty_cells;
+    uint32_t opacity;
+    uint32_t z_index;
+    uint32_t letter_spacing;
+    uint32_t word_spacing;
+    uint32_t background_repeat;
+    uint32_t background_position_x;
+    uint32_t background_position_y;
+    uint32_t background_position_mode_x;
+    uint32_t background_position_mode_y;
+};
+
+extern int web_style_for_tag(const uint8_t *html, uint32_t tag_pos, uint32_t viewport_width, uint32_t viewport_height, struct WebStyle *out_style);
+extern int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uint32_t viewport_height);
+extern int netsurf_port_rewrite_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
+extern int netsurf_port_rewrite_render_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity);
+extern uint32_t netsurf_port_dom_status(void);
+
+#define ZBROWSER_REPRO_CAPACITY 1048577
+
+global uint64_t zbrowser_repro_buffer_addr;
+
+uint8_t *zbrowser_repro_buffer(void) {
+    return (uint8_t *)zbrowser_repro_buffer_addr;
+}
+
+int text_starts_at(const uint8_t *text, uint32_t pos, const uint8_t *needle) {
+    uint32_t i;
+
+    i = 0;
+    while (needle[i] != 0) {
+        if (text[pos + i] != needle[i]) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+uint32_t find_text(const uint8_t *text, const uint8_t *needle) {
+    uint32_t pos;
+
+    pos = 0;
+    while (text[pos] != 0) {
+        if (text_starts_at(text, pos, needle) != 0) {
+            return pos;
+        }
+        pos = pos + 1;
+    }
+    return 4294967295;
+}
+
+void print_style_probe(const uint8_t *label, const uint8_t *html, const uint8_t *needle) {
+    uint32_t pos;
+    int rc;
+    struct WebStyle style;
+
+    pos = find_text(html, needle);
+    print("css-repro probe ");
+    print(label);
+    print(" pos=");
+    print(pos);
+    if (pos == 4294967295) {
+        print(" missing\n");
+        return;
+    }
+    rc = web_style_for_tag(html, pos, 1024, 768, &style);
+    print(" rc=");
+    print(rc);
+    if (rc != 0) {
+        print("\n");
+        return;
+    }
+    print(" flags=");
+    print(style.flags);
+    print(" color=");
+    print(style.color);
+    print(" bg=");
+    print(style.background_color);
+    print(" align=");
+    print(style.text_align);
+    print(" size=");
+    print(style.font_size);
+    print(" lh=");
+    print(style.line_height);
+    print("\n");
+}
+
+int zbrowser_repro_style_exit_code(int style_result) {
+    if (style_result >= 0) {
+        return 0;
+    }
+    if (style_result == -1) {
+        return 31;
+    }
+    if (style_result == -2) {
+        return 32;
+    }
+    if (style_result == -3) {
+        return 33;
+    }
+    return 34;
+}
+
+int zbrowser_repro_run(void) {
+    uint8_t *buffer;
+    int size;
+    int rewritten;
+    int style_result;
+
+    print("css-repro alloc\n");
+    zbrowser_repro_buffer_addr = (uint64_t)kmalloc(ZBROWSER_REPRO_CAPACITY);
+    if (zbrowser_repro_buffer_addr == 0) {
+        print("css-repro alloc failed\n");
+        return 11;
+    }
+
+    buffer = zbrowser_repro_buffer();
+    print("css-repro load\n");
+    size = os_read_file("zbrowser_smoke.html", buffer, ZBROWSER_REPRO_CAPACITY - 1);
+    if (size <= 0) {
+        print("css-repro load failed\n");
+        kfree(buffer);
+        return 12;
+    }
+    buffer[size] = 0;
+    print("css-repro input-bytes=");
+    print(size);
+    print("\n");
+
+    print("css-repro rewrite-dom\n");
+    rewritten = netsurf_port_rewrite_html(buffer,
+                                          (uint32_t)size,
+                                          buffer,
+                                          ZBROWSER_REPRO_CAPACITY);
+    print("css-repro dom-status=");
+    print(netsurf_port_dom_status());
+    print(" rewritten=");
+    print(rewritten);
+    print("\n");
+    if (rewritten > 0) {
+        size = rewritten;
+        buffer[size] = 0;
+    }
+
+    print("css-repro rewrite-render-dom\n");
+    rewritten = netsurf_port_rewrite_render_html(buffer,
+                                                 (uint32_t)size,
+                                                 buffer,
+                                                 ZBROWSER_REPRO_CAPACITY);
+    print("css-repro render-dom-status=");
+    print(netsurf_port_dom_status());
+    print(" rewritten=");
+    print(rewritten);
+    print("\n");
+    if (rewritten > 0) {
+        size = rewritten;
+        buffer[size] = 0;
+    }
+
+    print("css-repro prepare-css\n");
+    style_result = web_style_prepare_document(buffer, 1024, 768);
+    print("css-repro style-result=");
+    print(style_result);
+    print("\n");
+    if (style_result >= 0) {
+        print_style_probe("h1", buffer, "<h1>");
+        print_style_probe("css-panel", buffer, "css-panel");
+        print_style_probe("stylesheet-note", buffer, "stylesheet-note");
+    }
+
+    kfree(buffer);
+    return zbrowser_repro_style_exit_code(style_result);
+}
+
+return zbrowser_repro_run();

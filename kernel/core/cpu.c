@@ -207,8 +207,6 @@ typedef struct {
     uint64_t rip;
     uint64_t cs;
     uint64_t rflags;
-    uint64_t rsp;
-    uint64_t ss;
 } cpu_exception_frame_t;
 
 static void cpu_relax(void) {
@@ -288,6 +286,7 @@ static const char *cpu_exception_name(uint64_t vector) {
 
 void cpu_exception_handler(void *frame_ptr) {
     cpu_exception_frame_t *frame = (cpu_exception_frame_t *)frame_ptr;
+    uint64_t saved_rsp = frame != 0 ? (uint64_t)(uintptr_t)frame + sizeof(*frame) : 0u;
 
     fill_screen_color(0x8b0000u);
     console_set_cursor(0, 0);
@@ -307,9 +306,7 @@ void cpu_exception_handler(void *frame_ptr) {
         console_puts(" rflags=0x");
         console_put_hex64(frame->rflags);
         console_puts("\nrsp=0x");
-        console_put_hex64(frame->rsp);
-        console_puts(" ss=0x");
-        console_put_hex64(frame->ss);
+        console_put_hex64(saved_rsp);
         if (frame->vector == 14u) {
             console_puts("\ncr2=0x");
             console_put_hex64(cpu_read_cr2());
