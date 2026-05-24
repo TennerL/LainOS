@@ -521,6 +521,7 @@ global uint32_t zbrowser_render_checkpoint_flow_box_w[512];
 global uint32_t zbrowser_render_checkpoint_flow_box_flags[512];
 global uint32_t zbrowser_render_checkpoint_flow_box_border[512];
 global uint32_t zbrowser_render_checkpoint_flow_box_bg_slot[512];
+global uint32_t zbrowser_render_checkpoint_flow_box_bg_repeat[512];
 global uint32_t zbrowser_render_checkpoint_flow_box_bg_start_line[512];
 global uint32_t zbrowser_render_checkpoint_count;
 global uint32_t zbrowser_line_cache_valid[2048];
@@ -535,6 +536,7 @@ global uint32_t zbrowser_line_cache_box_w[2048];
 global uint32_t zbrowser_line_cache_box_flags[2048];
 global uint32_t zbrowser_line_cache_box_border[2048];
 global uint32_t zbrowser_line_cache_box_bg_slot[2048];
+global uint32_t zbrowser_line_cache_box_bg_repeat[2048];
 global uint32_t zbrowser_line_cache_box_bg_start_line[2048];
 global uint32_t zbrowser_image_candidates;
 global int zbrowser_image_fetch_result;
@@ -569,11 +571,13 @@ global uint32_t zbrowser_flow_box_w_px;
 global uint32_t zbrowser_flow_box_flags;
 global uint32_t zbrowser_flow_box_border;
 global uint32_t zbrowser_flow_box_bg_slot;
+global uint32_t zbrowser_flow_box_bg_repeat;
 global uint32_t zbrowser_flow_box_bg_start_line;
 global uint32_t zbrowser_flow_box_pending_top;
 global uint32_t zbrowser_flow_box_pending_bottom;
 global uint32_t zbrowser_flow_draw_border;
 global uint32_t zbrowser_flow_draw_bg_slot;
+global uint32_t zbrowser_flow_draw_bg_repeat;
 global uint32_t zbrowser_flow_draw_bg_start_line;
 global uint32_t zbrowser_flow_draw_line;
 global uint32_t zbrowser_layout_region;
@@ -676,6 +680,7 @@ global uint32_t zbrowser_style_stack_flow_box_w[64];
 global uint32_t zbrowser_style_stack_flow_box_flags[64];
 global uint32_t zbrowser_style_stack_flow_box_border[64];
 global uint32_t zbrowser_style_stack_flow_box_bg_slot[64];
+global uint32_t zbrowser_style_stack_flow_box_bg_repeat[64];
 global uint32_t zbrowser_style_stack_flow_box_bg_start_line[64];
 global uint32_t zbrowser_style_stack_depth;
 global uint32_t zbrowser_dom_stack_tags[64];
@@ -3212,6 +3217,7 @@ void push_text_style(void) {
     zbrowser_style_stack_flow_box_flags[depth] = zbrowser_flow_box_flags;
     zbrowser_style_stack_flow_box_border[depth] = zbrowser_flow_box_border;
     zbrowser_style_stack_flow_box_bg_slot[depth] = zbrowser_flow_box_bg_slot;
+    zbrowser_style_stack_flow_box_bg_repeat[depth] = zbrowser_flow_box_bg_repeat;
     zbrowser_style_stack_flow_box_bg_start_line[depth] = zbrowser_flow_box_bg_start_line;
     zbrowser_style_stack_depth = depth + 1;
 }
@@ -3266,6 +3272,7 @@ void pop_text_style(void) {
     zbrowser_flow_box_flags = zbrowser_style_stack_flow_box_flags[depth];
     zbrowser_flow_box_border = zbrowser_style_stack_flow_box_border[depth];
     zbrowser_flow_box_bg_slot = zbrowser_style_stack_flow_box_bg_slot[depth];
+    zbrowser_flow_box_bg_repeat = zbrowser_style_stack_flow_box_bg_repeat[depth];
     zbrowser_flow_box_bg_start_line = zbrowser_style_stack_flow_box_bg_start_line[depth];
     set_region(zbrowser_style_stack_region[depth]);
 }
@@ -3647,6 +3654,7 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
     uint32_t parent_box_flags;
     uint32_t parent_box_border;
     uint32_t parent_box_bg_slot;
+    uint32_t parent_box_bg_repeat;
     uint32_t parent_box_bg_start_line;
     uint32_t margin_l;
     uint32_t margin_r;
@@ -3677,6 +3685,7 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
     parent_box_flags = zbrowser_flow_box_flags;
     parent_box_border = zbrowser_flow_box_border;
     parent_box_bg_slot = zbrowser_flow_box_bg_slot;
+    parent_box_bg_repeat = zbrowser_flow_box_bg_repeat;
     parent_box_bg_start_line = zbrowser_flow_box_bg_start_line;
     if (parent_w < 16) {
         return;
@@ -3768,6 +3777,7 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
     zbrowser_flow_w_px = content_w;
     zbrowser_flow_box_border = visible_border_color();
     zbrowser_flow_box_bg_slot = 9999;
+    zbrowser_flow_box_bg_repeat = WEB_STYLE_BG_REPEAT;
     zbrowser_flow_box_bg_start_line = zbrowser_line_no;
     flags = 0;
     if (web_style_has_flag(WEB_STYLE_FLAG_HAS_BG_COLOR) != 0 &&
@@ -3780,6 +3790,7 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
         make_absolute_url(zbrowser_url, zbrowser_style_image_url, zbrowser_url_tmp, ZBROWSER_URL_CAPACITY);
         if (zbrowser_url_tmp[0] != 0) {
             zbrowser_flow_box_bg_slot = find_cached_image_slot(zbrowser_url_tmp);
+            zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
         }
     }
     if (current_style_has_visible_border() != 0) {
@@ -3795,6 +3806,7 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
         zbrowser_flow_box_flags = parent_box_flags;
         zbrowser_flow_box_border = parent_box_border;
         zbrowser_flow_box_bg_slot = parent_box_bg_slot;
+        zbrowser_flow_box_bg_repeat = parent_box_bg_repeat;
         zbrowser_flow_box_bg_start_line = parent_box_bg_start_line;
     } else {
         zbrowser_flow_box_flags = flags;
@@ -5055,6 +5067,7 @@ void clear_flow_box(void) {
     zbrowser_flow_box_flags = 0;
     zbrowser_flow_box_border = 0;
     zbrowser_flow_box_bg_slot = 9999;
+    zbrowser_flow_box_bg_repeat = WEB_STYLE_BG_REPEAT;
     zbrowser_flow_box_bg_start_line = 0;
     zbrowser_flow_box_pending_top = 0;
     zbrowser_flow_box_pending_bottom = 0;
@@ -5097,6 +5110,8 @@ void draw_flow_decoration_at(uint32_t x,
     uint32_t border_bits;
     uint32_t top_bits;
     uint32_t bottom_bits;
+    uint32_t repeat_x;
+    uint32_t repeat_y;
     uint32_t right_x;
     uint32_t bottom_y;
     uint32_t decoded_slot;
@@ -5126,43 +5141,70 @@ void draw_flow_decoration_at(uint32_t x,
         image.height != 0) {
         decoded_slot = ensure_decoded_image_slot(zbrowser_flow_draw_bg_slot, image.width, image.height, bg);
         if (decoded_slot != 9999) {
+            repeat_x = 0;
+            repeat_y = 0;
+            if (zbrowser_flow_draw_bg_repeat == WEB_STYLE_BG_REPEAT ||
+                zbrowser_flow_draw_bg_repeat == WEB_STYLE_BG_REPEAT_X) {
+                repeat_x = 1;
+            }
+            if (zbrowser_flow_draw_bg_repeat == WEB_STYLE_BG_REPEAT ||
+                zbrowser_flow_draw_bg_repeat == WEB_STYLE_BG_REPEAT_Y) {
+                repeat_y = 1;
+            }
             y_offset = 0;
             if (zbrowser_flow_draw_line >= zbrowser_flow_draw_bg_start_line && image.height != 0) {
-                y_offset = ((zbrowser_flow_draw_line - zbrowser_flow_draw_bg_start_line) * h) % image.height;
-            }
-            draw_y = y;
-            remaining_h = h;
-            while (remaining_h != 0) {
-                tile_h = image.height - y_offset;
-                if (tile_h == 0 || tile_h > remaining_h) {
-                    tile_h = remaining_h;
+                y_offset = (zbrowser_flow_draw_line - zbrowser_flow_draw_bg_start_line) * h;
+                if (repeat_y != 0) {
+                    y_offset = y_offset % image.height;
+                } else if (y_offset >= image.height) {
+                    y_offset = image.height;
                 }
-                draw_x = x;
-                remaining_w = w;
-                while (remaining_w != 0) {
-                    tile_w = image.width;
-                    if (tile_w == 0 || tile_w > remaining_w) {
-                        tile_w = remaining_w;
+            }
+            if (y_offset < image.height) {
+                draw_y = y;
+                remaining_h = h;
+                if (repeat_y == 0 && remaining_h > image.height - y_offset) {
+                    remaining_h = image.height - y_offset;
+                }
+                while (remaining_h != 0) {
+                    tile_h = image.height - y_offset;
+                    if (tile_h == 0 || tile_h > remaining_h) {
+                        tile_h = remaining_h;
                     }
-                    if (draw_decoded_image_slot(decoded_slot,
-                                                draw_x,
-                                                draw_y,
-                                                tile_w,
-                                                tile_h,
-                                                y_offset) == 0) {
-                        remaining_w = 0;
-                        remaining_h = 0;
+                    draw_x = x;
+                    remaining_w = w;
+                    if (repeat_x == 0 && remaining_w > image.width) {
+                        remaining_w = image.width;
+                    }
+                    while (remaining_w != 0) {
+                        tile_w = image.width;
+                        if (tile_w == 0 || tile_w > remaining_w) {
+                            tile_w = remaining_w;
+                        }
+                        if (draw_decoded_image_slot(decoded_slot,
+                                                    draw_x,
+                                                    draw_y,
+                                                    tile_w,
+                                                    tile_h,
+                                                    y_offset) == 0) {
+                            remaining_w = 0;
+                            remaining_h = 0;
+                            break;
+                        }
+                        if (repeat_x == 0) {
+                            remaining_w = 0;
+                            break;
+                        }
+                        draw_x = draw_x + tile_w;
+                        remaining_w = remaining_w - tile_w;
+                    }
+                    if (remaining_h == 0 || repeat_y == 0) {
                         break;
                     }
-                    draw_x = draw_x + tile_w;
-                    remaining_w = remaining_w - tile_w;
+                    draw_y = draw_y + tile_h;
+                    remaining_h = remaining_h - tile_h;
+                    y_offset = 0;
                 }
-                if (remaining_h == 0) {
-                    break;
-                }
-                draw_y = draw_y + tile_h;
-                remaining_h = remaining_h - tile_h;
-                y_offset = 0;
             }
         }
     }
@@ -5196,6 +5238,7 @@ void draw_current_flow_decoration(uint32_t line, uint32_t y, uint32_t h, uint32_
     flags = flags | current_flow_box_pending_flags();
     zbrowser_flow_draw_border = zbrowser_flow_box_border;
     zbrowser_flow_draw_bg_slot = zbrowser_flow_box_bg_slot;
+    zbrowser_flow_draw_bg_repeat = zbrowser_flow_box_bg_repeat;
     zbrowser_flow_draw_bg_start_line = zbrowser_flow_box_bg_start_line;
     zbrowser_flow_draw_line = line;
     draw_flow_decoration_at(flow_box_x(),
@@ -5366,6 +5409,7 @@ void remember_render_checkpoint(uint32_t pos) {
     zbrowser_render_checkpoint_flow_box_flags[index] = zbrowser_flow_box_flags;
     zbrowser_render_checkpoint_flow_box_border[index] = zbrowser_flow_box_border;
     zbrowser_render_checkpoint_flow_box_bg_slot[index] = zbrowser_flow_box_bg_slot;
+    zbrowser_render_checkpoint_flow_box_bg_repeat[index] = zbrowser_flow_box_bg_repeat;
     zbrowser_render_checkpoint_flow_box_bg_start_line[index] = zbrowser_flow_box_bg_start_line;
     if (index + 1 > zbrowser_render_checkpoint_count) {
         zbrowser_render_checkpoint_count = index + 1;
@@ -5411,6 +5455,7 @@ int restore_render_checkpoint(uint32_t *pos) {
             zbrowser_flow_box_flags = zbrowser_render_checkpoint_flow_box_flags[index];
             zbrowser_flow_box_border = zbrowser_render_checkpoint_flow_box_border[index];
             zbrowser_flow_box_bg_slot = zbrowser_render_checkpoint_flow_box_bg_slot[index];
+            zbrowser_flow_box_bg_repeat = zbrowser_render_checkpoint_flow_box_bg_repeat[index];
             zbrowser_flow_box_bg_start_line = zbrowser_render_checkpoint_flow_box_bg_start_line[index];
             zbrowser_style_stack_depth = 0;
             zbrowser_dom_stack_depth = 0;
@@ -5601,6 +5646,7 @@ void remember_line_cache(uint32_t line, uint32_t x, uint32_t had_inline) {
     zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags | current_flow_box_pending_flags();
     zbrowser_line_cache_box_border[line] = zbrowser_flow_box_border;
     zbrowser_line_cache_box_bg_slot[line] = zbrowser_flow_box_bg_slot;
+    zbrowser_line_cache_box_bg_repeat[line] = zbrowser_flow_box_bg_repeat;
     zbrowser_line_cache_box_bg_start_line[line] = zbrowser_flow_box_bg_start_line;
 }
 
@@ -5626,6 +5672,7 @@ void remember_blank_line_cache(uint32_t line) {
     zbrowser_line_cache_box_flags[line] = zbrowser_flow_box_flags | current_flow_box_pending_flags();
     zbrowser_line_cache_box_border[line] = zbrowser_flow_box_border;
     zbrowser_line_cache_box_bg_slot[line] = zbrowser_flow_box_bg_slot;
+    zbrowser_line_cache_box_bg_repeat[line] = zbrowser_flow_box_bg_repeat;
     zbrowser_line_cache_box_bg_start_line[line] = zbrowser_flow_box_bg_start_line;
 }
 
@@ -5726,6 +5773,7 @@ int draw_cached_line(uint32_t line) {
         if (box_flags != 0) {
             zbrowser_flow_draw_border = zbrowser_line_cache_box_border[line];
             zbrowser_flow_draw_bg_slot = zbrowser_line_cache_box_bg_slot[line];
+            zbrowser_flow_draw_bg_repeat = zbrowser_line_cache_box_bg_repeat[line];
             zbrowser_flow_draw_bg_start_line = zbrowser_line_cache_box_bg_start_line[line];
             zbrowser_flow_draw_line = line;
             draw_flow_decoration_at(zbrowser_line_cache_box_x[line],
@@ -5741,6 +5789,7 @@ int draw_cached_line(uint32_t line) {
     if (box_flags != 0) {
         zbrowser_flow_draw_border = zbrowser_line_cache_box_border[line];
         zbrowser_flow_draw_bg_slot = zbrowser_line_cache_box_bg_slot[line];
+        zbrowser_flow_draw_bg_repeat = zbrowser_line_cache_box_bg_repeat[line];
         zbrowser_flow_draw_bg_start_line = zbrowser_line_cache_box_bg_start_line[line];
         zbrowser_flow_draw_line = line;
         draw_flow_decoration_at(zbrowser_line_cache_box_x[line],
@@ -8372,16 +8421,17 @@ void render_html(const uint8_t *html) {
                     zbrowser_web_border_t != 0) {
                     zbrowser_flow_box_pending_top = 1;
                 }
-                apply_css_background_band(html, pos);
-                apply_semantic_tag_style(html, pos);
-                apply_css_block_spacing(html, pos);
                 if (style_background_image_url(html, pos, zbrowser_style_image_url, ZBROWSER_URL_CAPACITY) != 0 &&
                     should_try_inline_image(zbrowser_style_image_url) != 0 &&
                     tag_is_page_root(html, pos) == 0) {
                     zbrowser_image_candidates = zbrowser_image_candidates + 1;
-                    /* Fetch CSS background images opportunistically, but do not lay them out like content. */
+                    /* Fetch CSS background images before block spacing runs so
+                     * top padding can paint first-render no-repeat tiles. */
                     prefetch_background_image(zbrowser_style_image_url);
                 }
+                apply_css_background_band(html, pos);
+                apply_semantic_tag_style(html, pos);
+                apply_css_block_spacing(html, pos);
                 if (tag_may_draw_style_block(html, pos) != 0) {
                     draw_style_block_start(html, pos);
                 }
@@ -8959,6 +9009,7 @@ void prefetch_background_image(const uint8_t *src) {
                 if (fetch_image_into_slot(slot, zbrowser_url_tmp) != 0 &&
                     zbrowser_flow_box_bg_slot == 9999) {
                     zbrowser_flow_box_bg_slot = slot;
+                    zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
                 }
             } else {
                 schedule_image_fetch(slot, zbrowser_url_tmp);

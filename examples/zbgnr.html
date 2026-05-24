@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Visual Background No-Repeat Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.swatch {
+  width: 160px;
+  margin: 12px auto;
+  padding: 24px 24px 56px 24px;
+  color: #ffffff;
+  background-color: #102033;
+  background-image: url(styles/zbrowser_bg_tile.ppm);
+  background-repeat: no-repeat;
+  border: 1px solid #102033;
+}
+</style>
+</head>
+<body>
+<div class="swatch">
+  <p>Only one tile should paint in the top-left corner.</p>
+</div>
+</body>
+</html>
