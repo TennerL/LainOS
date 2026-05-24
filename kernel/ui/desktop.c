@@ -1898,6 +1898,10 @@ static void desktop_close_module_app(desktop_module_window_t *slot) {
     }
 }
 
+static int desktop_module_prefers_large_window(const char *name) {
+    return name != 0 && text_ends_with(name, "zbrowser_module.zo");
+}
+
 static void desktop_open_module_app(uint32_t index) {
     desktop_module_window_t *slot;
     const char *name = shell_module_name(index);
@@ -1923,10 +1927,25 @@ static void desktop_open_module_app(uint32_t index) {
     if (!slot->bounds_ready) {
         uint32_t ordinal = (uint32_t)(slot - module_app_windows);
         desktop_make_window(&slot->window);
-        slot->window.x += 72u + ordinal * 24u;
-        slot->window.y += 72u + ordinal * 24u;
-        slot->window.w = slot->window.w > 420u ? 420u : slot->window.w;
-        slot->window.h = slot->window.h > 260u ? 260u : slot->window.h;
+        if (desktop_module_prefers_large_window(name)) {
+            slot->window.x += 24u + ordinal * 16u;
+            slot->window.y += 24u + ordinal * 16u;
+            if (slot->window.w > 960u) {
+                slot->window.w = 960u;
+            }
+            if (slot->window.h > 640u) {
+                slot->window.h = 640u;
+            }
+        } else {
+            slot->window.x += 72u + ordinal * 24u;
+            slot->window.y += 72u + ordinal * 24u;
+            if (slot->window.w > 420u) {
+                slot->window.w = 420u;
+            }
+            if (slot->window.h > 260u) {
+                slot->window.h = 260u;
+            }
+        }
         desktop_clamp_window(&slot->window);
         slot->bounds_ready = 1;
     }
