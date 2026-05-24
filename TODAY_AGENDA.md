@@ -5,6 +5,114 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 15:32-15:49 Europe/Berlin local-image flow-box paint fix:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_visual_ppm.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the local `ppm` image decoded, but the first framebuffer capture showed it detached from its container
+    - the `.frame` background/border only painted on the text line and a later blank line, leaving the image sitting in a broken-looking gap instead of inside a normal browser box
+    - that made simple inline images look visibly incomplete even without involving guest networking
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: added `draw_reserved_flow_lines()` and used it from `render_inline_image()` before image blits so non-positioned images reserve and paint their flow-box background/border lines during first render instead of waiting for a later cached redraw
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_visual_ppm.html` capture now keeps the decoded tile inside the bordered frame with the frame background/border continuous around the image instead of breaking apart around it
+    - the broader `./scripts/agent-browser-check.sh` pass completed in this environment; full rebuild/image generation passed and the self-host leg stayed in the expected KVM-unavailable skip path instead of failing
+  - Current blocker after this pass:
+    - local inline image containers now paint coherently on first render, but remote image loading on the main smoke page is still unresolved and remains the next larger user-visible completeness gap
+  - Next concrete patch/verification step:
+    - pivot back to `examples/zbrowser_smoke.html` and tackle one representative remote-image or general content-completeness defect that is visible in the first launch capture
+- Latest 2026-05-24 14:30-14:48 Europe/Berlin inline-block border overlay fix:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_border_box.html ./scripts/zbrowser-launch-repro.sh`
+  - Focused repro state confirmed before the patch:
+    - the outer `.frame` box already rendered as a full rectangle (`top 832/832`, `bottom 832/832`)
+    - the inline `.badge` box still painted an open top edge in the first framebuffer capture (`top 64/450`, `bottom 450/450`, `left 24/24`, `right 24/24`)
+    - that made the smoke page still look visibly unlike a normal browser even though CSS/layout completed quickly
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: extracted `draw_flow_border_at()` and overlaid flow-box borders after text/link drawing in both live line flushes and cached line redraws, so text background fills no longer erase the top edge of inline-block borders
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_border_box.html` first-frame capture now shows a closed badge rectangle (`top 450/450`, `bottom 450/450`, `left 24/24`, `right 24/24`)
+    - the outer frame box remained intact (`top 832/832`, `bottom 832/832`), so the overlay fix did not regress normal block borders
+  - Current blocker after this pass:
+    - inline-block border closure on the smoke page is fixed; the next visible-browser target should move to another obvious first-frame defect instead of the now-stale centered-background note repro
+  - Next concrete patch/verification step:
+    - inspect `zbrowser_smoke.html` or another representative page for the next clearly visible user-facing defect, preferably around forms, controls, or general page completeness
+- Latest 2026-05-24 11:05-11:12 Europe/Berlin fixed-height visual-fidelity probe:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_visual_bg_center.html ./scripts/zbrowser-launch-repro.sh`
+  - Focused repro state confirmed:
+    - the centered-background page still reaches `zbrowser render-first mode=html` quickly, so this is not a CSS-load responsiveness regression
+    - the first framebuffer capture still has the single centered tile (`gold bbox 350,218 -> 357,225`) but no exact `.note` blue pixels at all
+    - the dark hero box still spans `dark bbox 182,216 -> 525,371`, and the blue note line that should sit below the hero never appears in the capture
+    - libcss still sees the final note paragraph (`css-trace precompute-node node=7 tag=p pos=497`), so the missing note is now more likely in render/layout sequencing than in stylesheet discovery
+  - Small bounded patch attempted and reverted:
+    - `examples/zbrowser_module.Z`: tried treating `height`/`min-height`/`max-height` as full content-box-plus-vertical-padding/border reserve space in `apply_css_block_spacing()`
+    - result: after a clean rebuild/repro the centered-background capture was unchanged, so the patch was reverted instead of leaving speculative layout churn in-tree
+  - Current blocker after this pass:
+    - the fixed-height block repro is still visually wrong, but the failure is not explained by simple min-height reservation math
+  - Next concrete patch/verification step:
+    - add one low-volume trace around `render_html()` / `dom_close_tag()` for the centered repro to prove whether the hero `</div>` pops before the final note `<p>` opens, and log the active text color / flow-box flags at that transition
+    - keep using `examples/zbrowser_visual_bg_center.html` as the focused regression page until the note line renders in blue below the hero box
+- Latest 2026-05-24 06:30-06:47 Europe/Berlin remote background-image slot probe:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbbgimg.html ./scripts/zbrowser-launch-repro.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_remote_bg_http.html ./scripts/zbrowser-launch-repro.sh`
+  - Small bounded work attempted:
+    - `examples/zbrowser_module.Z`: when a CSS background image uses a scheme URL, preserve the chosen image slot on the active flow box before `schedule_image_fetch()` so a later async redraw still knows which background image to paint
+    - Added focused async repro page: `examples/zbrowser_remote_bg_http.html`
+  - Exact runtime result:
+    - the focused compile smoke stayed green
+    - the old `zbbgimg.html` no-repeat background repro still showed only the dark fallback panel in the first framebuffer capture
+    - the new plain-HTTP repro also did not visibly paint the remote tile during the bounded launch repro window
+    - a host `python3 -m http.server 8000` serving `examples/` saw no HTTP requests from the guest during the repro, so the remaining uncertainty is now guest networking / async fetch dispatch, not just paint-slot retention
+  - Current blocker after this pass:
+    - the code now retains a remote CSS background-image slot across redraws, but the headless QEMU repro here still does not prove the fetch path actually runs because the guest never reached the host HTTP server
+  - Next concrete patch/verification step:
+    - add one bounded serial trace around `prefetch_background_image()`, `schedule_image_fetch()`, and `zbrowser_image_worker()` to confirm whether the async background-image fetch is being queued and started at runtime
+    - separately verify guest-to-host HTTP reachability in the launch harness so remote background-image repros are not conflated with network availability
+- Latest 2026-05-24 02:40-03:04 Europe/Berlin local background-image paint probe:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_visual_bg.html ./scripts/zbrowser-launch-repro.sh`
+  - Small bounded work attempted:
+    - `examples/zbrowser_module.Z`: threaded non-root flow-box background-image state through the style stack, render checkpoints, and line cache so block background-image paint can survive normal redraw/cached redraw paths
+    - `examples/zbrowser_module.Z`: switched `fetch_image_into_slot()` from raw `os_http_get_ex()` to `read_url_resource_with_retry()` so local relative images can load through the same path as HTTP images
+    - `examples/zbrowser_module.Z`: made local CSS background-image prefetch synchronous for the current flow box so a local tile can appear on first render instead of waiting for a later async repaint
+    - Added focused repro assets: `examples/zbrowser_visual_bg.html` and `examples/styles/zbrowser_bg_tile.ppm`
+  - Exact runtime result:
+    - the focused compile smoke stayed green
+    - the launch repro still did not show the expected gold tile in the hero box; a direct framebuffer scan of `build/zbrowser-launch-repro-1.ppm` found `0` exact pixels of the tile's gold color `(247, 209, 84)`
+    - the same repro now also exposes a follow-on layout/paint symptom: the dark hero background continues behind the next note line, so the current boundary is not just fetch timing; box end/paint scope is still wrong too
+  - Current blocker after this pass:
+    - local CSS background images are still not visibly painted even after local-resource fetch support was added, so the remaining fault is likely in style/background-image application or in the flow-box paint scope, not just in URL fetching
+  - Next concrete patch/verification step:
+    - add one bounded runtime trace around `style_background_image_url()`, `prefetch_background_image()`, and `draw_flow_decoration_at()` to log the chosen bg slot, `image_probe()` result, and whether the line painter thinks a flow box still owns the background on the next sibling block
+    - keep using the local `zbrowser_visual_bg.html` + `zbrowser_bg_tile.ppm` repro so success is measurable by non-zero gold pixels in the first framebuffer capture
+- Latest 2026-05-24 00:13-00:29 Europe/Berlin self-host compile regression fix:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_SELFHOST_ALLOW_TCG=1 ZBROWSER_SELFHOST_TIMEOUT_SECONDS=180 ./scripts/zbrowser-selfhost-smoke.sh`
+  - Root cause reproduced:
+    - host `zbrowser` compile still passed, but self-host `zinstall zbrowser_module` failed with `unsupported .Z syntax` near EOF while compiling `zbrowser_module.Z`
+    - matching the kernel shell limits on the host showed the failure only when using the real object label prefix (`o120_`) with the shell's `ASM_SOURCE_SIZE=2 MiB`
+    - the actual issue was object-mode asm text size, not `.Z` grammar: `zbrowser_module.Z` now needs about `2131294` bytes of generated asm in self-host mode
+  - Small patch landed:
+    - `kernel/ui/shell.c`: raised `ASM_SOURCE_SIZE` from `2 MiB` to `3 MiB` so the in-OS compiler can hold the current `zbrowser_module.Z` object-mode asm output
+    - `examples/zbrowser_module.Z`: deduplicated the repeated buffer-release block via `zbrowser_release_buffers()` so the failure surface is smaller and cleanup behavior stays consistent
+  - Current verification state:
+    - host smoke passes again: `zbrowser_module.Z -> ... bytes=1232795`, `linked 2 object(s), bytes=595197`
+    - in TCG self-host, the compile blocker itself is cleared: serial now reaches `zbuild: assembling zbrowser_module.Z asm-bytes=2131294`, `saving zbrowser_module.zo object-bytes=1232795`, `built 2 module object(s)`
+    - the full `zbrowser-selfhost-smoke.sh` gate still timed out at `180s` under TCG before `zinstall` finished writing `mods/zbrowser_module.buildlog`, so the harness outcome is still red even though the compile stage now succeeds
+  - Next concrete patch/verification step:
+    - rerun the self-host smoke with a TCG-specific timeout or a more surgical post-buildlog check so the harness no longer treats a slow no-KVM install tail as a compile regression
+    - after that, resume the CSS completeness/performance work with the compile blocker considered fixed
 - Latest 2026-05-24 00:00-00:07 Europe/Berlin external-CSS finalization fix:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`
@@ -359,3 +467,16 @@ Acceptance:
 - Journaled or transactional LainFS metadata writes.
 - Driver fault containment for USB/xHCI and e1000.
 - Better desktop settings persistence UX.
+
+## 2026-05-24 zbrowser NetSurf Note
+
+- Blocker: `examples/zbrowser_visual_bg.html` still paints only the solid `#102033` box color; the repeated tile is not rendered.
+- Focused repros added:
+  - `examples/zbrowser_visual_bg_inline.html`
+  - `examples/zbrowser_visual_ppm.html`
+- Current runtime evidence:
+  - Inline background repro shows `imgs 1/0 imgerr 651/-2`, so the local `styles/zbrowser_bg_tile.ppm` fetch succeeds at 651 bytes but `image_probe()` still reports `IMAGE_ERR_FORMAT`.
+  - Stylesheet/class background repro still shows `imgs 0/0`, so stylesheet-driven background-image discovery is also not reaching the candidate counter on that page.
+- Next step:
+  - Instrument or host-repro `image_probe()` on the exact copied `P3` tile bytes first, then re-run `zbrowser_visual_bg_inline.html`.
+  - After the `P3` tile decodes cleanly, return to `zbrowser_visual_bg.html` and trace why `style_background_image_url()` is missing the `.hero { background: ... url(...) ... }` shorthand from the stylesheet path.

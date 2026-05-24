@@ -1023,6 +1023,34 @@ void remember_image_line_cache(uint32_t start_line, uint32_t line_count) {
     }
 }
 
+void draw_reserved_flow_lines(uint32_t start_line, uint32_t line_count, uint32_t bg) {
+    uint32_t line;
+    uint32_t end_line;
+    uint32_t draw_y;
+    uint32_t line_h;
+
+    line_h = zbrowser_line_height();
+    line = start_line;
+    end_line = start_line + line_count;
+    while (line < end_line && line < ZBROWSER_LINE_CACHE_LINES) {
+        remember_blank_line_cache(line);
+        if (line >= zbrowser_scroll &&
+            zbrowser_should_draw_line(line) != 0) {
+            draw_y = zbrowser_y + (line - zbrowser_scroll) * 12;
+            if (draw_y + line_h < gfx_height()) {
+                draw_current_flow_decoration(line, draw_y, line_h, bg);
+            } else {
+                zbrowser_flow_box_pending_top = 0;
+                zbrowser_flow_box_pending_bottom = 0;
+            }
+        } else {
+            zbrowser_flow_box_pending_top = 0;
+            zbrowser_flow_box_pending_bottom = 0;
+        }
+        line = line + 1;
+    }
+}
+
 void remember_rendered_image_record(uint32_t line,
                                     uint32_t x,
                                     uint32_t width,
@@ -9913,6 +9941,13 @@ int render_inline_image(const uint8_t *html, uint32_t tag_pos, const uint8_t *sr
                 } else {
                     link_index = register_link(src);
                 }
+                line_count = ((drawn_h + 6) / 12) + 1;
+                if (line_count == 0) {
+                    line_count = 1;
+                }
+                if (is_positioned == 0) {
+                    draw_reserved_flow_lines(zbrowser_line_no, line_count, zbrowser_text_bg);
+                }
                 if (zbrowser_page_bg_has_img == 0 || zbrowser_text_bg != zbrowser_page_bg_color) {
                     gfx_fill_rect(draw_x, draw_y, drawn_w, drawn_h, zbrowser_text_bg);
                 }
@@ -9953,18 +9988,15 @@ int render_inline_image(const uint8_t *html, uint32_t tag_pos, const uint8_t *sr
                         }
                     }
                 }
-                line_count = ((drawn_h + 6) / 12) + 1;
-                if (line_count == 0) {
-                    line_count = 1;
-                }
                 if (image_drawn != 0 && is_positioned == 0 && decoded_slot != 9999) {
-                    remember_image_line_cache(zbrowser_line_no, line_count);
                     remember_rendered_image_record(zbrowser_line_no,
                                                    draw_x,
                                                    drawn_w,
                                                    drawn_h,
                                                    slot,
                                                    link_index);
+                } else if (is_positioned == 0) {
+                    remember_image_line_cache(zbrowser_line_no, line_count);
                 }
                 if (link_index != 9999) {
                     link_h = drawn_h;
