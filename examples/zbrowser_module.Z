@@ -9671,7 +9671,12 @@ int schedule_image_fetch(uint32_t slot, const uint8_t *url) {
         return 0;
     }
     if (kernel_task_async_supported() == 0) {
-        return 0;
+        zbrowser_image_load_in_progress = 1;
+        copy_text(zbrowser_status, 96, "fetching image");
+        fetch_image_into_slot(slot, url);
+        zbrowser_image_load_in_progress = 0;
+        request_asset_redraw(1);
+        return 1;
     }
     copy_text(zbrowser_image_task_url, ZBROWSER_URL_CAPACITY, url);
     zbrowser_image_task_slot = slot;

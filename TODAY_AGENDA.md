@@ -5,6 +5,24 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 16:00-16:09 Europe/Berlin single-core remote image fallback fix:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_smoke.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the smoke-page first framebuffer was already opening into a recognizable browser window, but its remote media still looked broken
+    - both main inline images stayed at permanent `image loading` placeholders on the first open because the page load had fallen back to synchronous mode on a 1-core launch, while remote image fetches still required async task support
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: taught `schedule_image_fetch()` to use the same synchronous fallback pattern as document/CSS loading when async tasks are unavailable, then queue a redraw for the newly cached asset
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_smoke.html` first-frame capture now renders the remote PNG figure image and the remote JPG image in-place instead of leaving `image loading` placeholders
+    - `./scripts/agent-browser-check.sh` completed in this environment; the broader build/image pass stayed green and the self-host leg remained in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - single-core synchronous launch now shows real remote inline images, but the smoke page still misses the CSS background image and the `srcset`/GIF case in the first visible frame
+  - Next concrete patch/verification step:
+    - inspect the remaining remote background-image and `srcset`/GIF fetch/decode path on `examples/zbrowser_smoke.html`, reusing the same launch capture to prove the next visible completeness jump
 - Latest 2026-05-24 15:32-15:49 Europe/Berlin local-image flow-box paint fix:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`
