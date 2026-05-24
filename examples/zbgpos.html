@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Background Position Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.swatch {
+  width: 160px;
+  height: 112px;
+  margin: 12px 0;
+  border: 1px solid #102033;
+  background-color: #102033;
+  background-image: url(styles/zbrowser_bg_tile.ppm);
+  background-repeat: no-repeat;
+  background-position: 24px 20px;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="swatch"></div>
+<p class="note">Tile should start 24px from the left and 20px from the top.</p>
+</body>
+</html>

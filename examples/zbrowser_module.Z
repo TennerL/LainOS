@@ -43,6 +43,7 @@
 #define ZBROWSER_LINE_CACHE_COLS 160
 #define ZBROWSER_LINE_CACHE_BYTES 327680
 #define ZBROWSER_LINE_CACHE_FG_BYTES 1310720
+#define ZBROWSER_LINE_CACHE_BG_BYTES 1310720
 #define ZBROWSER_DECODED_IMAGE_BYTES 4194304
 #define ZBROWSER_DECODED_IMAGE_PIXELS 1048576
 #define ZBROWSER_DECODED_IMAGE_SLOT_COUNT 16
@@ -354,6 +355,7 @@ global uint8_t zbrowser_status[96];
 global uint8_t zbrowser_line[256];
 global uint8_t zbrowser_line_segment[256];
 global uint32_t zbrowser_line_fg[256];
+global uint32_t zbrowser_line_bg[256];
 global uint32_t zbrowser_line_len;
 global uint32_t zbrowser_y;
 global uint32_t zbrowser_last_space;
@@ -387,6 +389,7 @@ global uint64_t zbrowser_decoded_image_buffer_addr;
 global uint64_t zbrowser_links_addr;
 global uint64_t zbrowser_line_cache_addr;
 global uint64_t zbrowser_line_cache_fg_addr;
+global uint64_t zbrowser_line_cache_bg_addr;
 global uint32_t zbrowser_link_lines[256];
 global uint32_t zbrowser_link_end_lines[256];
 global uint32_t zbrowser_link_start_cols[256];
@@ -5534,20 +5537,22 @@ void draw_line_text_runs(uint32_t x, uint32_t y) {
     uint32_t i;
     uint32_t fg;
     uint32_t bg;
-    uint32_t scale;
     uint32_t char_w;
+    uint32_t scale;
 
-    bg = text_bg_for_draw();
     scale = zbrowser_clamped_font_scale(zbrowser_font_scale);
     char_w = zbrowser_char_width_for_scale(scale);
-    if (line_has_table_box(zbrowser_line_no) != 0) {
-        bg = 0xffffffff;
-    }
     start = 0;
     while (start < zbrowser_line_len) {
         fg = zbrowser_line_fg[start];
+        bg = zbrowser_line_bg[start];
+        if (line_has_table_box(zbrowser_line_no) != 0) {
+            bg = 0xffffffff;
+        }
         end = start + 1;
-        while (end < zbrowser_line_len && zbrowser_line_fg[end] == fg) {
+        while (end < zbrowser_line_len &&
+               zbrowser_line_fg[end] == fg &&
+               zbrowser_line_bg[end] == bg) {
             end = end + 1;
         }
         i = 0;
@@ -5600,9 +5605,14 @@ uint32_t *line_cache_fg_slot(uint32_t line) {
     return (uint32_t *)zbrowser_line_cache_fg_addr + line * ZBROWSER_LINE_CACHE_COLS;
 }
 
+uint32_t *line_cache_bg_slot(uint32_t line) {
+    return (uint32_t *)zbrowser_line_cache_bg_addr + line * ZBROWSER_LINE_CACHE_COLS;
+}
+
 int line_cache_can_store(uint32_t line, uint32_t had_inline) {
     if (zbrowser_line_cache_addr == 0 ||
         zbrowser_line_cache_fg_addr == 0 ||
+        zbrowser_line_cache_bg_addr == 0 ||
         line >= ZBROWSER_LINE_CACHE_LINES ||
         zbrowser_line_len + 1 >= ZBROWSER_LINE_CACHE_COLS ||
         had_inline != 0 ||
@@ -5615,6 +5625,7 @@ int line_cache_can_store(uint32_t line, uint32_t had_inline) {
 void remember_line_cache(uint32_t line, uint32_t x, uint32_t had_inline) {
     uint8_t *slot;
     uint32_t *fg_slot;
+    uint32_t *bg_slot;
     uint32_t i;
 
     if (line_cache_can_store(line, had_inline) == 0) {
@@ -5623,10 +5634,12 @@ void remember_line_cache(uint32_t line, uint32_t x, uint32_t had_inline) {
 
     slot = line_cache_text_slot(line);
     fg_slot = line_cache_fg_slot(line);
+    bg_slot = line_cache_bg_slot(line);
     i = 0;
     while (i < zbrowser_line_len) {
         slot[i] = zbrowser_line[i];
         fg_slot[i] = zbrowser_line_fg[i];
+        bg_slot[i] = zbrowser_line_bg[i];
         i = i + 1;
     }
     slot[i] = 0;
@@ -5655,6 +5668,7 @@ void remember_blank_line_cache(uint32_t line) {
 
     if (zbrowser_line_cache_addr == 0 ||
         zbrowser_line_cache_fg_addr == 0 ||
+        zbrowser_line_cache_bg_addr == 0 ||
         line >= ZBROWSER_LINE_CACHE_LINES) {
         return;
     }
@@ -5734,11 +5748,13 @@ void draw_cached_line_links(uint32_t line, uint32_t x, uint32_t y, uint32_t len,
 int draw_cached_line(uint32_t line) {
     uint8_t *slot;
     uint32_t *fg_slot;
+    uint32_t *bg_slot;
     uint32_t draw_y;
     uint32_t start;
     uint32_t end;
     uint32_t i;
     uint32_t fg;
+    uint32_t bg;
     uint32_t len;
     uint32_t scale;
     uint32_t char_w;
@@ -5752,6 +5768,7 @@ int draw_cached_line(uint32_t line) {
     if (line >= ZBROWSER_LINE_CACHE_LINES ||
         zbrowser_line_cache_addr == 0 ||
         zbrowser_line_cache_fg_addr == 0 ||
+        zbrowser_line_cache_bg_addr == 0 ||
         zbrowser_line_cache_valid[line] == 0) {
         return 0;
     }
@@ -5801,11 +5818,15 @@ int draw_cached_line(uint32_t line) {
     }
     slot = line_cache_text_slot(line);
     fg_slot = line_cache_fg_slot(line);
+    bg_slot = line_cache_bg_slot(line);
     start = 0;
     while (start < len) {
         fg = fg_slot[start];
+        bg = bg_slot[start];
         end = start + 1;
-        while (end < len && fg_slot[end] == fg) {
+        while (end < len &&
+               fg_slot[end] == fg &&
+               bg_slot[end] == bg) {
             end = end + 1;
         }
         i = 0;
@@ -5819,13 +5840,13 @@ int draw_cached_line(uint32_t line) {
                                draw_y,
                                zbrowser_line_segment,
                                fg,
-                               zbrowser_line_cache_bg[line]);
+                               bg);
         } else {
             draw_text_scaled_at_pixel(zbrowser_line_cache_x[line] + start * char_w,
                                       draw_y,
                                       zbrowser_line_segment,
                                       fg,
-                                      zbrowser_line_cache_bg[line],
+                                      bg,
                                       scale);
         }
         start = end;
@@ -6022,6 +6043,7 @@ void flush_line(void) {
     zbrowser_line_len = 0;
     zbrowser_line[0] = 0;
     zbrowser_line_fg[0] = zbrowser_text_fg;
+    zbrowser_line_bg[0] = text_bg_for_draw();
     zbrowser_last_space = 0;
     if (had_inline != 0) {
         zbrowser_line_no = zbrowser_line_no + 2;
@@ -6397,6 +6419,7 @@ void append_inline_space(void) {
     }
     zbrowser_line[zbrowser_line_len] = 32;
     zbrowser_line_fg[zbrowser_line_len] = zbrowser_text_fg;
+    zbrowser_line_bg[zbrowser_line_len] = text_bg_for_draw();
     zbrowser_line_len = zbrowser_line_len + 1;
 }
 
@@ -6564,11 +6587,13 @@ void shift_line_range_right(uint32_t start, uint32_t end, uint32_t shift) {
         i = i - 1;
         zbrowser_line[i + shift] = zbrowser_line[i];
         zbrowser_line_fg[i + shift] = zbrowser_line_fg[i];
+        zbrowser_line_bg[i + shift] = zbrowser_line_bg[i];
     }
     clear = 0;
     while (clear < shift) {
         zbrowser_line[start + clear] = 32;
         zbrowser_line_fg[start + clear] = zbrowser_text_fg;
+        zbrowser_line_bg[start + clear] = text_bg_for_draw();
         clear = clear + 1;
     }
     shift_line_records_right(start, end, shift);
@@ -7475,6 +7500,7 @@ void emit_char(uint8_t ch) {
         while (i < indent && zbrowser_line_len + 1 < max_cols) {
             zbrowser_line[zbrowser_line_len] = 32;
             zbrowser_line_fg[zbrowser_line_len] = zbrowser_text_fg;
+            zbrowser_line_bg[zbrowser_line_len] = text_bg_for_draw();
             zbrowser_line_len = zbrowser_line_len + 1;
             i = i + 1;
         }
@@ -7487,6 +7513,7 @@ void emit_char(uint8_t ch) {
             while (i < indent && zbrowser_line_len + 1 < max_cols) {
                 zbrowser_line[zbrowser_line_len] = 32;
                 zbrowser_line_fg[zbrowser_line_len] = zbrowser_text_fg;
+                zbrowser_line_bg[zbrowser_line_len] = text_bg_for_draw();
                 zbrowser_line_len = zbrowser_line_len + 1;
                 i = i + 1;
             }
@@ -7495,6 +7522,7 @@ void emit_char(uint8_t ch) {
     if (!(ch == 32 && zbrowser_line_len == 0)) {
         zbrowser_line[zbrowser_line_len] = ch;
         zbrowser_line_fg[zbrowser_line_len] = zbrowser_text_fg;
+        zbrowser_line_bg[zbrowser_line_len] = text_bg_for_draw();
         zbrowser_line_len = zbrowser_line_len + 1;
         if (zbrowser_active_link < zbrowser_link_count) {
             zbrowser_link_end_lines[zbrowser_active_link] = zbrowser_line_no;
@@ -8299,6 +8327,7 @@ void render_html(const uint8_t *html) {
     zbrowser_line[0] = 0;
     zbrowser_line_segment[0] = 0;
     zbrowser_line_fg[0] = zbrowser_page_text_fg;
+    zbrowser_line_bg[0] = zbrowser_page_bg_color;
     zbrowser_last_space = 0;
     zbrowser_line_no = 0;
     zbrowser_article_line_no = 0;
@@ -9968,6 +9997,7 @@ int zbrowser_draw_cached_viewport(void) {
 
     if (zbrowser_line_cache_addr == 0 ||
         zbrowser_line_cache_fg_addr == 0 ||
+        zbrowser_line_cache_bg_addr == 0 ||
         zbrowser_loaded == 0 ||
         zbrowser_load_in_progress != 0 ||
         zbrowser_has_document == 0) {
@@ -10392,6 +10422,10 @@ void zbrowser_release_buffers(void) {
         kfree((uint8_t *)zbrowser_line_cache_fg_addr);
         zbrowser_line_cache_fg_addr = 0;
     }
+    if (zbrowser_line_cache_bg_addr != 0) {
+        kfree((uint8_t *)zbrowser_line_cache_bg_addr);
+        zbrowser_line_cache_bg_addr = 0;
+    }
 }
 
 export void zmodule_unload(void) {
@@ -10417,6 +10451,7 @@ zbrowser_decoded_image_buffer_addr = (uint64_t)kmalloc(ZBROWSER_DECODED_IMAGE_BY
 zbrowser_links_addr = (uint64_t)kmalloc(ZBROWSER_MAX_LINKS * ZBROWSER_LINK_CAPACITY);
 zbrowser_line_cache_addr = (uint64_t)kmalloc(ZBROWSER_LINE_CACHE_BYTES);
 zbrowser_line_cache_fg_addr = (uint64_t)kmalloc(ZBROWSER_LINE_CACHE_FG_BYTES);
+zbrowser_line_cache_bg_addr = (uint64_t)kmalloc(ZBROWSER_LINE_CACHE_BG_BYTES);
 zbrowser_loaded = 0;
 zbrowser_size = 0;
 zbrowser_has_document = 0;
@@ -10509,6 +10544,7 @@ zbrowser_text_align = 0;
 zbrowser_line[0] = 0;
 zbrowser_line_segment[0] = 0;
 zbrowser_line_fg[0] = zbrowser_text_fg;
+zbrowser_line_bg[0] = zbrowser_text_bg;
 zbrowser_style_stack_depth = 0;
 zbrowser_dom_stack_depth = 0;
 zbrowser_column_mode = 0;
@@ -10539,7 +10575,8 @@ copy_text(zbrowser_status, 96, "ready");
 if (zbrowser_doc_buffer_addr == 0 || zbrowser_css_buffer_addr == 0 ||
     zbrowser_css_sel_addr == 0 || zbrowser_css_decl_addr == 0 ||
     zbrowser_image_buffer_addr == 0 || zbrowser_links_addr == 0 ||
-    zbrowser_line_cache_addr == 0 || zbrowser_line_cache_fg_addr == 0) {
+    zbrowser_line_cache_addr == 0 || zbrowser_line_cache_fg_addr == 0 ||
+    zbrowser_line_cache_bg_addr == 0) {
     copy_text(zbrowser_status, 96, "buffer alloc failed");
     zbrowser_release_buffers();
     print("zbrowser buffer alloc failed");
