@@ -6838,6 +6838,45 @@ uint32_t control_x_for_width(uint32_t box_w) {
     return ax + 8;
 }
 
+uint32_t attr_uint_value(const uint8_t *html,
+                         uint32_t pos,
+                         const uint8_t *attr,
+                         uint32_t fallback,
+                         uint32_t min_value,
+                         uint32_t max_value) {
+    uint32_t value;
+    uint32_t i;
+    uint8_t ch;
+
+    if (zb_attr_value(html, pos, attr, zbrowser_attr, ZBROWSER_ATTR_CAPACITY) == 0) {
+        return fallback;
+    }
+    value = 0;
+    i = 0;
+    while (zbrowser_attr[i] != 0) {
+        ch = zbrowser_attr[i];
+        if (ch < 48 || ch > 57) {
+            break;
+        }
+        value = value * 10 + (uint32_t)(ch - 48);
+        if (value > max_value) {
+            value = max_value;
+            break;
+        }
+        i = i + 1;
+    }
+    if (i == 0) {
+        return fallback;
+    }
+    if (value < min_value) {
+        value = min_value;
+    }
+    if (value > max_value) {
+        value = max_value;
+    }
+    return value;
+}
+
 uint32_t input_control_width_for_tag(const uint8_t *html, uint32_t pos) {
     uint32_t width;
     uint32_t chars;
@@ -6875,6 +6914,55 @@ uint32_t input_control_width_for_tag(const uint8_t *html, uint32_t pos) {
         width = 64;
     }
     return width;
+}
+
+uint32_t textarea_control_width_for_tag(const uint8_t *html, uint32_t pos) {
+    uint32_t width;
+    uint32_t cols;
+    uint32_t styled;
+    uint32_t max_w;
+
+    width = 320;
+    cols = attr_uint_value(html, pos, "cols", 0, 8, 80);
+    if (cols != 0) {
+        width = cols * 8 + 20;
+    }
+    styled = image_style_length(html, pos, "width", flow_content_w());
+    if (styled != 0) {
+        width = styled;
+    }
+    if (width > 460) {
+        width = 460;
+    }
+    max_w = 96;
+    if (flow_content_w() > 8) {
+        max_w = flow_content_w();
+    }
+    if (width > max_w) {
+        width = max_w;
+    }
+    if (width < 96) {
+        width = 96;
+    }
+    return width;
+}
+
+uint32_t textarea_control_rows_for_tag(const uint8_t *html, uint32_t pos) {
+    uint32_t rows;
+    uint32_t styled_h;
+
+    rows = attr_uint_value(html, pos, "rows", 3, 2, 12);
+    styled_h = image_style_length(html, pos, "height", 240);
+    if (styled_h >= 20) {
+        rows = (styled_h - 8 + 11) / 12;
+        if (rows < 2) {
+            rows = 2;
+        }
+        if (rows > 12) {
+            rows = 12;
+        }
+    }
+    return rows;
 }
 
 uint32_t button_control_width_for_label(const uint8_t *label) {
@@ -7482,6 +7570,141 @@ void draw_input_control(uint32_t index, const uint8_t *value) {
     zbrowser_input_w[index] = box_w;
     zbrowser_input_h[index] = 20;
     zbrowser_line_no = zbrowser_line_no + 2;
+}
+
+uint32_t draw_textarea_text_line(const uint8_t *value,
+                                 uint32_t start,
+                                 uint32_t max_cols) {
+    uint32_t pos;
+    uint32_t end;
+    uint32_t wrap_pos;
+    uint32_t out_pos;
+    uint8_t ch;
+
+    if (max_cols == 0) {
+        max_cols = 1;
+    }
+    pos = start;
+    while (value[pos] == 13) {
+        pos = pos + 1;
+    }
+    if (value[pos] == 10) {
+        zbrowser_line_segment[0] = 0;
+        return pos + 1;
+    }
+    end = pos;
+    wrap_pos = 9999;
+    while (value[end] != 0 &&
+           value[end] != 10 &&
+           value[end] != 13 &&
+           end - pos < max_cols) {
+        if (value[end] == 32) {
+            wrap_pos = end;
+        }
+        end = end + 1;
+    }
+    if (value[end] != 0 &&
+        value[end] != 10 &&
+        value[end] != 13 &&
+        wrap_pos != 9999 &&
+        wrap_pos > pos) {
+        end = wrap_pos;
+    }
+    out_pos = 0;
+    while (pos < end && out_pos + 1 < ZBROWSER_LINE_CAPACITY) {
+        ch = value[pos];
+        if (ch >= 128) {
+            zbrowser_line_segment[out_pos] = 63;
+            pos = pos + utf8_advance(value, pos);
+        } else {
+            zbrowser_line_segment[out_pos] = ch;
+            pos = pos + 1;
+        }
+        out_pos = out_pos + 1;
+    }
+    while (out_pos > 0 && zbrowser_line_segment[out_pos - 1] == 32) {
+        out_pos = out_pos - 1;
+    }
+    zbrowser_line_segment[out_pos] = 0;
+    while (value[pos] == 32) {
+        pos = pos + 1;
+    }
+    while (value[pos] == 13) {
+        pos = pos + 1;
+    }
+    if (value[pos] == 10) {
+        pos = pos + 1;
+    }
+    return pos;
+}
+
+void draw_textarea_control(const uint8_t *html,
+                           uint32_t pos,
+                           uint32_t index,
+                           const uint8_t *value) {
+    uint32_t h;
+    uint32_t draw_y;
+    uint32_t box_w;
+    uint32_t box_h;
+    uint32_t box_x;
+    uint32_t fill;
+    uint32_t rows;
+    uint32_t line;
+    uint32_t line_pos;
+    uint32_t line_span;
+    uint32_t max_cols;
+
+    flush_line();
+    h = gfx_height();
+    rows = textarea_control_rows_for_tag(html, pos);
+    box_h = rows * 12 + 8;
+    line_span = (box_h + 11) / 12;
+    if (line_span < 2) {
+        line_span = 2;
+    }
+    if (zbrowser_line_no < zbrowser_scroll) {
+        zbrowser_line_no = zbrowser_line_no + line_span;
+        return;
+    }
+
+    draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
+    if (draw_y + box_h + 2 >= h - 18) {
+        zbrowser_line_no = zbrowser_line_no + line_span;
+        return;
+    }
+
+    box_w = textarea_control_width_for_tag(html, pos);
+    box_x = control_x_for_width(box_w);
+    zbrowser_input_lines[index] = zbrowser_line_no;
+    fill = 0xffffff;
+    if (zbrowser_focused_input == index) {
+        fill = 0xeaf3ff;
+    }
+    gfx_fill_rect(box_x, draw_y, box_w, box_h, fill);
+    gfx_draw_rect(box_x, draw_y, box_w, box_h, 0xa2a9b1);
+
+    max_cols = 1;
+    if (box_w > 16) {
+        max_cols = (box_w - 16) / 8;
+        if (max_cols == 0) {
+            max_cols = 1;
+        }
+    }
+    line_pos = 0;
+    line = 0;
+    while (line < rows && value[line_pos] != 0) {
+        line_pos = draw_textarea_text_line(value, line_pos, max_cols);
+        draw_text_at_pixel(box_x + 8, draw_y + 6 + line * 12, zbrowser_line_segment, 0x202122, fill);
+        line = line + 1;
+    }
+    if (zbrowser_focused_input == index) {
+        draw_text_at_pixel(box_x + box_w - 16, draw_y + box_h - 14, "_", 0x3366cc, fill);
+    }
+    zbrowser_input_x[index] = box_x;
+    zbrowser_input_y[index] = draw_y;
+    zbrowser_input_w[index] = box_w;
+    zbrowser_input_h[index] = box_h;
+    zbrowser_line_no = zbrowser_line_no + line_span;
 }
 
 void draw_button_control(const uint8_t *label) {
@@ -9408,8 +9631,7 @@ void render_html(const uint8_t *html) {
                     input_index = register_input(zbrowser_attr, zbrowser_url_tmp);
                     if (input_index != 9999) {
                         input_value = input_value_slot(input_index);
-                        flush_line();
-                        draw_input_control(input_index, input_value);
+                        draw_textarea_control(html, pos, input_index, input_value);
                     }
                     if (transient_style != 0) {
                         pop_text_style();
