@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Centered Background Repro</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202122;
+}
+.hero {
+  width: 320px;
+  height: 160px;
+  margin: 8px auto 12px auto;
+  padding: 16px;
+  color: #ffffff;
+  background: #102033 url(styles/zbrowser_bg_tile.ppm) center no-repeat;
+  border: 1px solid #102033;
+}
+.note {
+  color: #3366cc;
+}
+</style>
+</head>
+<body>
+<div class="hero">
+  <p>Gold tile should stay centered once and not repeat.</p>
+</div>
+<p class="note">This line stays outside the box so clipping is easy to spot.</p>
+</body>
+</html>

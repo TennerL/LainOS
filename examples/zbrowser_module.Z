@@ -528,6 +528,8 @@ global uint32_t zbrowser_render_checkpoint_flow_box_bg_repeat[512];
 global uint32_t zbrowser_render_checkpoint_flow_box_bg_pos_x[512];
 global uint32_t zbrowser_render_checkpoint_flow_box_bg_pos_y[512];
 global uint32_t zbrowser_render_checkpoint_flow_box_bg_start_line[512];
+global uint32_t zbrowser_render_checkpoint_flow_min_height_start_line[512];
+global uint32_t zbrowser_render_checkpoint_flow_min_height_px[512];
 global uint32_t zbrowser_render_checkpoint_count;
 global uint32_t zbrowser_line_cache_valid[2048];
 global uint32_t zbrowser_line_cache_len[2048];
@@ -583,6 +585,8 @@ global uint32_t zbrowser_flow_box_bg_repeat;
 global uint32_t zbrowser_flow_box_bg_pos_x;
 global uint32_t zbrowser_flow_box_bg_pos_y;
 global uint32_t zbrowser_flow_box_bg_start_line;
+global uint32_t zbrowser_flow_min_height_start_line;
+global uint32_t zbrowser_flow_min_height_px;
 global uint32_t zbrowser_flow_box_pending_top;
 global uint32_t zbrowser_flow_box_pending_bottom;
 global uint32_t zbrowser_flow_draw_border;
@@ -696,6 +700,8 @@ global uint32_t zbrowser_style_stack_flow_box_bg_repeat[64];
 global uint32_t zbrowser_style_stack_flow_box_bg_pos_x[64];
 global uint32_t zbrowser_style_stack_flow_box_bg_pos_y[64];
 global uint32_t zbrowser_style_stack_flow_box_bg_start_line[64];
+global uint32_t zbrowser_style_stack_flow_min_height_start_line[64];
+global uint32_t zbrowser_style_stack_flow_min_height_px[64];
 global uint32_t zbrowser_style_stack_depth;
 global uint32_t zbrowser_dom_stack_tags[64];
 global uint32_t zbrowser_dom_stack_depth;
@@ -3256,6 +3262,8 @@ void push_text_style(void) {
     zbrowser_style_stack_flow_box_bg_pos_x[depth] = zbrowser_flow_box_bg_pos_x;
     zbrowser_style_stack_flow_box_bg_pos_y[depth] = zbrowser_flow_box_bg_pos_y;
     zbrowser_style_stack_flow_box_bg_start_line[depth] = zbrowser_flow_box_bg_start_line;
+    zbrowser_style_stack_flow_min_height_start_line[depth] = zbrowser_flow_min_height_start_line;
+    zbrowser_style_stack_flow_min_height_px[depth] = zbrowser_flow_min_height_px;
     zbrowser_style_stack_depth = depth + 1;
 }
 
@@ -3280,6 +3288,8 @@ void pop_text_style(void) {
         zbrowser_css_margin_bottom_space = 0;
         zbrowser_css_scope_block_flow = 0;
         clear_flow_box();
+        zbrowser_flow_min_height_start_line = 0;
+        zbrowser_flow_min_height_px = 0;
         return;
     }
     depth = zbrowser_style_stack_depth - 1;
@@ -3313,6 +3323,8 @@ void pop_text_style(void) {
     zbrowser_flow_box_bg_pos_x = zbrowser_style_stack_flow_box_bg_pos_x[depth];
     zbrowser_flow_box_bg_pos_y = zbrowser_style_stack_flow_box_bg_pos_y[depth];
     zbrowser_flow_box_bg_start_line = zbrowser_style_stack_flow_box_bg_start_line[depth];
+    zbrowser_flow_min_height_start_line = zbrowser_style_stack_flow_min_height_start_line[depth];
+    zbrowser_flow_min_height_px = zbrowser_style_stack_flow_min_height_px[depth];
     set_region(zbrowser_style_stack_region[depth]);
 }
 
@@ -3610,6 +3622,7 @@ uint32_t css_spacing_lines(uint32_t px) {
 
 void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
     uint32_t add_cols;
+    uint32_t min_height_px;
     uint32_t px;
     uint32_t top_space;
     uint32_t bottom_padding_space;
@@ -3617,6 +3630,8 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
     zbrowser_css_bottom_space = 0;
     zbrowser_css_margin_bottom_space = 0;
     zbrowser_css_scope_block_flow = 0;
+    zbrowser_flow_min_height_start_line = zbrowser_line_no;
+    zbrowser_flow_min_height_px = 0;
     if (load_web_style(html, pos) == 0) {
         return;
     }
@@ -3640,6 +3655,22 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
             top_space = top_space - 1;
         }
     }
+    zbrowser_flow_min_height_start_line = zbrowser_line_no;
+    min_height_px = 0;
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_HEIGHT) != 0 &&
+        zbrowser_web_style_height > min_height_px) {
+        min_height_px = zbrowser_web_style_height;
+    }
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_MIN_HEIGHT) != 0 &&
+        zbrowser_web_style_min_height > min_height_px) {
+        min_height_px = zbrowser_web_style_min_height;
+    }
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_MAX_HEIGHT) != 0 &&
+        zbrowser_web_style_max_height != 0 &&
+        min_height_px > zbrowser_web_style_max_height) {
+        min_height_px = zbrowser_web_style_max_height;
+    }
+    zbrowser_flow_min_height_px = min_height_px;
     bottom_padding_space = css_spacing_lines(zbrowser_web_padding_b);
     zbrowser_css_bottom_space = bottom_padding_space;
     zbrowser_css_margin_bottom_space = css_spacing_lines(zbrowser_web_margin_b);
@@ -5118,6 +5149,8 @@ void clear_flow_box(void) {
     zbrowser_flow_box_bg_pos_x = 0;
     zbrowser_flow_box_bg_pos_y = 0;
     zbrowser_flow_box_bg_start_line = 0;
+    zbrowser_flow_min_height_start_line = 0;
+    zbrowser_flow_min_height_px = 0;
     zbrowser_flow_box_pending_top = 0;
     zbrowser_flow_box_pending_bottom = 0;
 }
@@ -5555,6 +5588,8 @@ void remember_render_checkpoint(uint32_t pos) {
     zbrowser_render_checkpoint_flow_box_bg_pos_x[index] = zbrowser_flow_box_bg_pos_x;
     zbrowser_render_checkpoint_flow_box_bg_pos_y[index] = zbrowser_flow_box_bg_pos_y;
     zbrowser_render_checkpoint_flow_box_bg_start_line[index] = zbrowser_flow_box_bg_start_line;
+    zbrowser_render_checkpoint_flow_min_height_start_line[index] = zbrowser_flow_min_height_start_line;
+    zbrowser_render_checkpoint_flow_min_height_px[index] = zbrowser_flow_min_height_px;
     if (index + 1 > zbrowser_render_checkpoint_count) {
         zbrowser_render_checkpoint_count = index + 1;
     }
@@ -5603,6 +5638,8 @@ int restore_render_checkpoint(uint32_t *pos) {
             zbrowser_flow_box_bg_pos_x = zbrowser_render_checkpoint_flow_box_bg_pos_x[index];
             zbrowser_flow_box_bg_pos_y = zbrowser_render_checkpoint_flow_box_bg_pos_y[index];
             zbrowser_flow_box_bg_start_line = zbrowser_render_checkpoint_flow_box_bg_start_line[index];
+            zbrowser_flow_min_height_start_line = zbrowser_render_checkpoint_flow_min_height_start_line[index];
+            zbrowser_flow_min_height_px = zbrowser_render_checkpoint_flow_min_height_px[index];
             zbrowser_style_stack_depth = 0;
             zbrowser_dom_stack_depth = 0;
             zbrowser_table_depth = 0;
@@ -8258,6 +8295,22 @@ void apply_css_scope_end_spacing(void) {
     }
 }
 
+void apply_css_scope_min_height(void) {
+    uint32_t used_px;
+
+    if (zbrowser_flow_min_height_px == 0) {
+        return;
+    }
+    if (zbrowser_line_no < zbrowser_flow_min_height_start_line) {
+        return;
+    }
+    used_px = (zbrowser_line_no - zbrowser_flow_min_height_start_line) * 12;
+    while (used_px < zbrowser_flow_min_height_px) {
+        blank_line();
+        used_px = used_px + 12;
+    }
+}
+
 void apply_css_scope_margin_end_spacing(uint32_t lines) {
     while (lines != 0) {
         blank_line();
@@ -8281,6 +8334,7 @@ void dom_pop_implicit(void) {
         flush_line();
     }
     margin_bottom_space = zbrowser_css_margin_bottom_space;
+    apply_css_scope_min_height();
     apply_css_scope_end_spacing();
     pop_text_style();
     zbrowser_dom_stack_depth = zbrowser_dom_stack_depth - 1;
@@ -8329,6 +8383,7 @@ void dom_close_tag(const uint8_t *html, uint32_t pos) {
         if (zbrowser_dom_stack_tags[match - 1] == tag) {
             while (zbrowser_dom_stack_depth >= match) {
                 margin_bottom_space = zbrowser_css_margin_bottom_space;
+                apply_css_scope_min_height();
                 apply_css_scope_end_spacing();
                 pop_text_style();
                 zbrowser_dom_stack_depth = zbrowser_dom_stack_depth - 1;
