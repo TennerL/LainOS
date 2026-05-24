@@ -3167,6 +3167,11 @@ void reset_page_style(void) {
     zbrowser_page_text_align = 0;
     zbrowser_page_bg_has_img = 0;
     zbrowser_page_bg_url[0] = 0;
+    zbrowser_flow_draw_bg_repeat = WEB_STYLE_BG_REPEAT;
+    zbrowser_flow_draw_bg_pos_x = 0;
+    zbrowser_flow_draw_bg_pos_y = 0;
+    zbrowser_flow_draw_bg_pos_mode_x = ZBROWSER_BG_POS_ABSOLUTE;
+    zbrowser_flow_draw_bg_pos_mode_y = ZBROWSER_BG_POS_ABSOLUTE;
 }
 
 void prepare_page_style(const uint8_t *html) {
@@ -3184,6 +3189,13 @@ void prepare_page_style(const uint8_t *html) {
             zbrowser_page_text_fg = style_text_color(html, pos, zbrowser_page_text_fg);
             zbrowser_page_bg_color = style_background_color(html, pos, zbrowser_page_bg_color);
             zbrowser_page_text_align = style_text_align(html, pos, zbrowser_page_text_align);
+            if (load_web_style(html, pos) != 0) {
+                zbrowser_flow_draw_bg_repeat = zbrowser_web_background_repeat;
+                zbrowser_flow_draw_bg_pos_x = zbrowser_web_background_position_x;
+                zbrowser_flow_draw_bg_pos_y = zbrowser_web_background_position_y;
+                zbrowser_flow_draw_bg_pos_mode_x = zbrowser_web_background_position_mode_x;
+                zbrowser_flow_draw_bg_pos_mode_y = zbrowser_web_background_position_mode_y;
+            }
             if (zb_tag_name_is(html, pos, "body")) {
                 if (zb_attr_value(html, pos, "text", zbrowser_attr, ZBROWSER_ATTR_CAPACITY) != 0 &&
                     css_color_value(zbrowser_attr, &color) != 0) {
@@ -8079,12 +8091,17 @@ void render_page_background_image(void) {
         remember_deferred_image_fetch(zbrowser_page_bg_url);
         return;
     }
-    zbrowser_image_draw_result = image_decode_to_screen_tiled(image_buffer_slot(slot),
-                                                              (uint32_t)zbrowser_cached_image_sizes[slot],
-                                                              0,
-                                                              bg_y,
-                                                              gfx_width(),
-                                                              bg_h);
+    zbrowser_flow_draw_border = 0;
+    zbrowser_flow_draw_bg_slot = slot;
+    zbrowser_flow_draw_bg_start_line = 0;
+    zbrowser_flow_draw_line = 0;
+    zbrowser_image_draw_x_offset = 0;
+    draw_flow_decoration_at(0,
+                            gfx_width(),
+                            bg_y,
+                            bg_h,
+                            zbrowser_page_bg_color,
+                            ZBROWSER_FLOW_BOX_BG);
 }
 
 int anchor_next_is_image(const uint8_t *html, uint32_t pos) {
