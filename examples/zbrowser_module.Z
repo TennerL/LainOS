@@ -5397,6 +5397,62 @@ uint32_t clamp_flow_width(uint32_t width, uint32_t max_width) {
     return width;
 }
 
+void draw_flow_border_at(uint32_t x,
+                         uint32_t w,
+                         uint32_t y,
+                         uint32_t h,
+                         uint32_t flags) {
+    uint32_t border_bits;
+    uint32_t top_bits;
+    uint32_t bottom_bits;
+    uint32_t left_w;
+    uint32_t right_w;
+    uint32_t top_h;
+    uint32_t bottom_h;
+    uint32_t right_x;
+    uint32_t bottom_y;
+
+    if (w == 0 || h == 0) {
+        return;
+    }
+    border_bits = flags & ZBROWSER_FLOW_BOX_BORDER;
+    top_bits = flags & ZBROWSER_FLOW_BOX_BORDER_TOP;
+    bottom_bits = flags & ZBROWSER_FLOW_BOX_BORDER_BOTTOM;
+    if (border_bits == 0) {
+        return;
+    }
+    left_w = (flags / 16) % 16;
+    right_w = (flags / 256) % 16;
+    top_h = (flags / 4096) % 16;
+    bottom_h = (flags / 65536) % 16;
+    if (left_w > w) {
+        left_w = w;
+    }
+    if (right_w > w - left_w) {
+        right_w = w - left_w;
+    }
+    if (top_h > h) {
+        top_h = h;
+    }
+    if (bottom_h > h - top_h) {
+        bottom_h = h - top_h;
+    }
+    if (top_bits != 0 && top_h != 0) {
+        gfx_fill_rect(x, y, w, top_h, zbrowser_flow_draw_border);
+    }
+    if (left_w != 0) {
+        gfx_fill_rect(x, y, left_w, h, zbrowser_flow_draw_border);
+    }
+    if (right_w != 0) {
+        right_x = x + w - right_w;
+        gfx_fill_rect(right_x, y, right_w, h, zbrowser_flow_draw_border);
+    }
+    if (bottom_bits != 0 && bottom_h != 0) {
+        bottom_y = y + h - bottom_h;
+        gfx_fill_rect(x, bottom_y, w, bottom_h, zbrowser_flow_draw_border);
+    }
+}
+
 void draw_flow_decoration_at(uint32_t x,
                              uint32_t w,
                              uint32_t y,
@@ -5405,17 +5461,8 @@ void draw_flow_decoration_at(uint32_t x,
                              uint32_t flags) {
     struct ImageInfo image;
     uint32_t bg_bits;
-    uint32_t border_bits;
-    uint32_t top_bits;
-    uint32_t bottom_bits;
     uint32_t repeat_x;
     uint32_t repeat_y;
-    uint32_t left_w;
-    uint32_t right_w;
-    uint32_t top_h;
-    uint32_t bottom_h;
-    uint32_t right_x;
-    uint32_t bottom_y;
     uint32_t decoded_slot;
     uint32_t y_offset;
     uint32_t x_offset;
@@ -5437,9 +5484,6 @@ void draw_flow_decoration_at(uint32_t x,
         return;
     }
     bg_bits = flags & ZBROWSER_FLOW_BOX_BG;
-    border_bits = flags & ZBROWSER_FLOW_BOX_BORDER;
-    top_bits = flags & ZBROWSER_FLOW_BOX_BORDER_TOP;
-    bottom_bits = flags & ZBROWSER_FLOW_BOX_BORDER_BOTTOM;
     if (bg_bits != 0 &&
         color_is_page_background(bg) == 0) {
         gfx_fill_rect(x, y, w, h, bg);
@@ -5606,38 +5650,7 @@ void draw_flow_decoration_at(uint32_t x,
             }
         }
     }
-    if (border_bits != 0) {
-        left_w = (flags / 16) % 16;
-        right_w = (flags / 256) % 16;
-        top_h = (flags / 4096) % 16;
-        bottom_h = (flags / 65536) % 16;
-        if (left_w > w) {
-            left_w = w;
-        }
-        if (right_w > w - left_w) {
-            right_w = w - left_w;
-        }
-        if (top_h > h) {
-            top_h = h;
-        }
-        if (bottom_h > h - top_h) {
-            bottom_h = h - top_h;
-        }
-        if (top_bits != 0 && top_h != 0) {
-            gfx_fill_rect(x, y, w, top_h, zbrowser_flow_draw_border);
-        }
-        if (left_w != 0) {
-            gfx_fill_rect(x, y, left_w, h, zbrowser_flow_draw_border);
-        }
-        if (right_w != 0) {
-            right_x = x + w - right_w;
-            gfx_fill_rect(right_x, y, right_w, h, zbrowser_flow_draw_border);
-        }
-        if (bottom_bits != 0 && bottom_h != 0) {
-            bottom_y = y + h - bottom_h;
-            gfx_fill_rect(x, bottom_y, w, bottom_h, zbrowser_flow_draw_border);
-        }
-    }
+    draw_flow_border_at(x, w, y, h, flags);
 }
 
 void draw_current_flow_decoration(uint32_t line, uint32_t y, uint32_t h, uint32_t bg) {
@@ -6198,6 +6211,7 @@ int draw_cached_line(uint32_t line) {
     uint32_t line_h;
     uint32_t box_flags;
     uint32_t box_bg_bits;
+    uint32_t box_border_bits;
 
     if (line < zbrowser_scroll) {
         return 1;
@@ -6223,6 +6237,7 @@ int draw_cached_line(uint32_t line) {
         box_bg_bits == 0) {
         box_flags = box_flags + ZBROWSER_FLOW_BOX_BG;
     }
+    box_border_bits = box_flags & ZBROWSER_FLOW_BOX_BORDER;
     if (len == 0) {
         if (box_flags != 0) {
             zbrowser_flow_draw_border = zbrowser_line_cache_box_border[line];
@@ -6298,6 +6313,13 @@ int draw_cached_line(uint32_t line) {
     }
     if (line_has_link_record(line) != 0) {
         draw_cached_line_links(line, zbrowser_line_cache_x[line], draw_y, len, scale);
+    }
+    if (box_border_bits != 0) {
+        draw_flow_border_at(zbrowser_line_cache_box_x[line],
+                            zbrowser_line_cache_box_w[line],
+                            draw_y,
+                            line_h,
+                            box_flags);
     }
     return 1;
 }
@@ -6429,6 +6451,8 @@ void flush_line(void) {
     uint32_t had_inline;
     uint32_t char_w;
     uint32_t line_h;
+    uint32_t flow_flags;
+    uint32_t flow_border_bits;
 
     h = gfx_height();
     if (zbrowser_line_len == 0) {
@@ -6446,6 +6470,8 @@ void flush_line(void) {
         x = flow_content_x() + flow_content_w() - text_w;
     }
     remember_line_cache(zbrowser_line_no, x, had_inline);
+    flow_flags = zbrowser_flow_box_flags | current_flow_box_pending_flags();
+    flow_border_bits = flow_flags & ZBROWSER_FLOW_BOX_BORDER;
     if (zbrowser_line_no >= zbrowser_scroll && zbrowser_should_draw_line(zbrowser_line_no) != 0) {
         draw_y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
         if (draw_y + line_h < h) {
@@ -6483,6 +6509,13 @@ void flush_line(void) {
             }
             draw_inline_controls_on_line(zbrowser_line_no, x, draw_y);
             draw_table_boxes_on_line(zbrowser_line_no, x, draw_y, 1);
+            if (flow_border_bits != 0) {
+                draw_flow_border_at(flow_box_x(),
+                                    flow_box_w(),
+                                    draw_y,
+                                    line_h,
+                                    flow_flags);
+            }
         }
     }
     zbrowser_line_len = 0;
