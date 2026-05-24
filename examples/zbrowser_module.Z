@@ -3404,7 +3404,7 @@ void pop_text_style(void) {
     zbrowser_text_transform = zbrowser_style_stack_transform[depth];
     zbrowser_white_space = zbrowser_style_stack_white_space[depth];
     zbrowser_css_bottom_space = zbrowser_style_stack_bottom_space[depth];
-    zbrowser_css_margin_bottom_space = zbrowser_style_stack_margin_bottom_space[depth];
+    zbrowser_css_margin_bottom_space = zbrowser_style_stack_margin_bottom_space[depth] % 256;
     zbrowser_css_scope_block_flow = zbrowser_style_stack_block_flow[depth];
     zbrowser_flow_x_px = zbrowser_style_stack_flow_x[depth];
     zbrowser_flow_w_px = zbrowser_style_stack_flow_w[depth];
@@ -3720,6 +3720,7 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
     uint32_t add_cols;
     uint32_t min_height_px;
     uint32_t px;
+    uint32_t padding_top_space;
     uint32_t top_space;
     uint32_t bottom_padding_space;
 
@@ -3741,14 +3742,16 @@ void apply_css_block_spacing(const uint8_t *html, uint32_t pos) {
         blank_line();
     }
     top_space = css_spacing_lines(zbrowser_web_margin_t);
-    if (css_spacing_lines(zbrowser_web_padding_t) > top_space) {
-        top_space = css_spacing_lines(zbrowser_web_padding_t);
-    }
-    if (top_space != 0) {
+    padding_top_space = css_spacing_lines(zbrowser_web_padding_t);
+    if (top_space != 0 || padding_top_space != 0) {
         flush_line();
         while (top_space > 1) {
             blank_line();
             top_space = top_space - 1;
+        }
+        while (padding_top_space != 0) {
+            blank_line();
+            padding_top_space = padding_top_space - 1;
         }
     }
     zbrowser_flow_min_height_start_line = zbrowser_line_no;
@@ -4004,6 +4007,15 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
     }
     if (zbrowser_flow_box_flags != 0 || zbrowser_flow_box_bg_slot != 9999) {
         zbrowser_bg_band_active = 1;
+    }
+    if (zbrowser_style_stack_depth != 0) {
+        zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] =
+            zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] % 256;
+        if (current_style_has_visible_border() != 0 && zbrowser_web_border_b != 0) {
+            zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] =
+                zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] +
+                zbrowser_web_border_b * 256;
+        }
     }
 }
 
@@ -8894,6 +8906,7 @@ uint32_t skip_current_element_content(const uint8_t *html, uint32_t pos) {
 }
 
 void render_html(const uint8_t *html) {
+    uint32_t closing_border_bottom;
     uint32_t pos;
     uint32_t advance;
     uint32_t input_index;
@@ -9004,10 +9017,14 @@ void render_html(const uint8_t *html) {
             if (zb_is_closing_tag(html, pos) == 0) {
                 apply_implicit_dom_closes(html, pos);
             }
+            closing_border_bottom = 0;
+            if (zbrowser_style_stack_depth != 0) {
+                closing_border_bottom =
+                    zbrowser_style_stack_margin_bottom_space[zbrowser_style_stack_depth - 1] / 256;
+            }
             if (zb_is_closing_tag(html, pos) != 0 &&
                 tag_is_block_flow(html, pos) != 0) {
-                if (current_style_has_visible_border() != 0 &&
-                    zbrowser_web_border_b != 0) {
+                if (closing_border_bottom != 0) {
                     zbrowser_flow_box_pending_bottom = 1;
                 }
                 flush_line();
