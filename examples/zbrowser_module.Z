@@ -7519,6 +7519,141 @@ void copy_plain_until_close_tag(const uint8_t *html,
     }
 }
 
+uint32_t plain_text_columns(const uint8_t *text) {
+    uint32_t i;
+    uint32_t cols;
+    uint32_t saw_space;
+    uint8_t ch;
+
+    i = 0;
+    cols = 0;
+    saw_space = 1;
+    while (text[i] != 0) {
+        ch = text[i];
+        if (ch == 9 || ch == 10 || ch == 13) {
+            ch = 32;
+        }
+        if (ch == 32) {
+            if (saw_space != 0) {
+                i = i + 1;
+                continue;
+            }
+            saw_space = 1;
+        } else {
+            saw_space = 0;
+        }
+        cols = cols + 1;
+        i = i + 1;
+    }
+    return cols;
+}
+
+void apply_inline_block_scope(const uint8_t *html, uint32_t pos) {
+    uint32_t text_cols;
+    uint32_t char_w;
+    uint32_t border_l;
+    uint32_t border_r;
+    uint32_t border_t;
+    uint32_t border_b;
+    uint32_t padding_l;
+    uint32_t padding_r;
+    uint32_t box_x;
+    uint32_t box_w;
+    uint32_t content_w;
+    uint32_t flags;
+
+    if (style_property_has(html, pos, "display", "inline-block") == 0 &&
+        style_property_has(html, pos, "display", "inline-flex") == 0 &&
+        style_property_has(html, pos, "display", "inline-table") == 0) {
+        return;
+    }
+    if (zb_tag_name_is(html, pos, "span") == 0 &&
+        zb_tag_name_is(html, pos, "a") == 0 &&
+        zb_tag_name_is(html, pos, "button") == 0) {
+        return;
+    }
+    if (zb_tag_name_is(html, pos, "span") != 0) {
+        copy_plain_until_close_tag(html, zb_skip_tag(html, pos), "span", zbrowser_url_tmp, ZBROWSER_URL_CAPACITY);
+    } else if (zb_tag_name_is(html, pos, "a") != 0) {
+        copy_plain_until_close_tag(html, zb_skip_tag(html, pos), "a", zbrowser_url_tmp, ZBROWSER_URL_CAPACITY);
+    } else {
+        copy_plain_until_close_tag(html, zb_skip_tag(html, pos), "button", zbrowser_url_tmp, ZBROWSER_URL_CAPACITY);
+    }
+    text_cols = plain_text_columns(zbrowser_url_tmp);
+    if (text_cols == 0 || load_web_style(html, pos) == 0) {
+        return;
+    }
+    if (zbrowser_line_len != 0) {
+        flush_line();
+    }
+    char_w = zbrowser_char_width();
+    if (char_w == 0) {
+        char_w = 8;
+    }
+    border_l = zbrowser_web_border_l;
+    border_r = zbrowser_web_border_r;
+    border_t = zbrowser_web_border_t;
+    border_b = zbrowser_web_border_b;
+    if (border_l > 3) {
+        border_l = 3;
+    }
+    if (border_r > 3) {
+        border_r = 3;
+    }
+    if (border_t > 3) {
+        border_t = 3;
+    }
+    if (border_b > 3) {
+        border_b = 3;
+    }
+    padding_l = zbrowser_web_padding_l;
+    padding_r = zbrowser_web_padding_r;
+    if (padding_l > 8) {
+        padding_l = 8;
+    }
+    if (padding_r > 8) {
+        padding_r = 8;
+    }
+    content_w = (text_cols + 1) * char_w;
+    box_w = content_w + padding_l + padding_r + border_l + border_r;
+    if (box_w > flow_content_w()) {
+        box_w = flow_content_w();
+    }
+    if (box_w <= border_l + border_r + padding_l + padding_r) {
+        return;
+    }
+    box_x = flow_content_x();
+    if ((web_style_has_flag(WEB_STYLE_FLAG_MARGIN_AUTO_X) != 0 ||
+         web_style_has_flag(WEB_STYLE_FLAG_CENTER_X) != 0) &&
+        flow_content_w() > box_w) {
+        box_x = flow_content_x() + (flow_content_w() - box_w) / 2;
+    }
+    zbrowser_flow_box_x_px = box_x;
+    zbrowser_flow_box_w_px = box_w;
+    zbrowser_flow_x_px = box_x + border_l + padding_l;
+    zbrowser_flow_w_px = box_w - border_l - border_r - padding_l - padding_r;
+    zbrowser_flow_box_border = visible_border_color();
+    zbrowser_flow_box_bg_slot = 9999;
+    zbrowser_flow_box_bg_repeat = WEB_STYLE_BG_REPEAT;
+    zbrowser_flow_box_bg_pos_x = 0;
+    zbrowser_flow_box_bg_pos_y = 0;
+    zbrowser_flow_box_bg_pos_mode_x = ZBROWSER_BG_POS_ABSOLUTE;
+    zbrowser_flow_box_bg_pos_mode_y = ZBROWSER_BG_POS_ABSOLUTE;
+    zbrowser_flow_box_bg_start_line = zbrowser_line_no;
+    flags = border_l * 16 + border_r * 256 + border_t * 4096 + border_b * 65536;
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_BG_COLOR) != 0 &&
+        color_is_page_background(zbrowser_web_style_bg_color) == 0) {
+        flags = flags + ZBROWSER_FLOW_BOX_BG;
+    }
+    if (current_style_has_visible_border() != 0) {
+        flags = flags + ZBROWSER_FLOW_BOX_BORDER;
+    }
+    zbrowser_flow_box_flags = flags;
+    if (flags != 0) {
+        zbrowser_bg_band_active = 1;
+    }
+}
+
 int copy_first_option_label(const uint8_t *html, uint32_t start, uint8_t *dst, uint32_t capacity) {
     uint32_t pos;
 
@@ -8876,6 +9011,14 @@ void render_html(const uint8_t *html) {
                     zbrowser_flow_box_pending_bottom = 1;
                 }
                 flush_line();
+            } else if (zb_is_closing_tag(html, pos) != 0 &&
+                       (zb_tag_name_is(html, pos, "span") != 0 ||
+                        zb_tag_name_is(html, pos, "a") != 0 ||
+                        zb_tag_name_is(html, pos, "button") != 0) &&
+                       zbrowser_css_scope_block_flow == 0 &&
+                       zbrowser_flow_w_px != 0 &&
+                       zbrowser_flow_w_px < default_flow_content_w()) {
+                flush_line();
             }
             if (zb_is_closing_tag(html, pos) == 0 &&
                 tag_is_block_flow(html, pos) != 0) {
@@ -8916,6 +9059,7 @@ void render_html(const uint8_t *html) {
                 }
                 zbrowser_text_bg = style_background_color(html, pos, text_bg_fallback);
                 apply_css_flow_box(html, pos);
+                apply_inline_block_scope(html, pos);
                 if (current_style_has_visible_border() != 0 &&
                     zbrowser_web_border_t != 0) {
                     zbrowser_flow_box_pending_top = 1;
