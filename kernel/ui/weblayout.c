@@ -1968,21 +1968,29 @@ static void web_set_background_position(web_style_state_t *state,
     if (web_parse_box_lengths(value, start, end, viewport_width, viewport_width, viewport_height, &top, &right, &bottom, &left)) {
         state->style.background_position_x = top;
         state->style.background_position_y = right;
+        state->style.background_position_mode_x = WEB_STYLE_BG_POS_ABSOLUTE;
+        state->style.background_position_mode_y = WEB_STYLE_BG_POS_ABSOLUTE;
         return;
     }
     if (web_range_contains_cstr_ci(value, start, end, "center")) {
-        x = viewport_width / 2u;
-        y = viewport_height / 2u;
+        x = 50u;
+        y = 50u;
+        state->style.background_position_mode_x = WEB_STYLE_BG_POS_PERCENT;
+        state->style.background_position_mode_y = WEB_STYLE_BG_POS_PERCENT;
     }
     if (web_range_contains_cstr_ci(value, start, end, "right")) {
-        x = viewport_width;
+        x = 100u;
+        state->style.background_position_mode_x = WEB_STYLE_BG_POS_PERCENT;
     } else if (web_range_contains_cstr_ci(value, start, end, "left")) {
         x = 0;
+        state->style.background_position_mode_x = WEB_STYLE_BG_POS_PERCENT;
     }
     if (web_range_contains_cstr_ci(value, start, end, "bottom")) {
-        y = viewport_height;
+        y = 100u;
+        state->style.background_position_mode_y = WEB_STYLE_BG_POS_PERCENT;
     } else if (web_range_contains_cstr_ci(value, start, end, "top")) {
         y = 0;
+        state->style.background_position_mode_y = WEB_STYLE_BG_POS_PERCENT;
     }
     state->style.background_position_x = x;
     state->style.background_position_y = y;
@@ -3983,6 +3991,8 @@ static void web_state_init(web_style_state_t *state) {
     state->style.background_repeat = WEB_STYLE_BG_REPEAT;
     state->style.background_position_x = 0;
     state->style.background_position_y = 0;
+    state->style.background_position_mode_x = WEB_STYLE_BG_POS_ABSOLUTE;
+    state->style.background_position_mode_y = WEB_STYLE_BG_POS_ABSOLUTE;
     for (uint32_t i = 0; i < WEB_PROP_COUNT; ++i) {
         state->score[i] = 0;
     }
@@ -4178,6 +4188,17 @@ static uint32_t web_css_fixed_unit_to_byte(css_fixed value) {
     }
     if (scaled > 255) {
         return 255;
+    }
+    return (uint32_t)scaled;
+}
+
+static uint32_t web_css_fixed_to_uint(css_fixed value) {
+    int64_t scaled = value >> CSS_RADIX_POINT;
+    if (scaled < 0) {
+        return 0;
+    }
+    if ((uint64_t)scaled > 0xffffffffull) {
+        return 0xffffffffu;
     }
     return (uint32_t)scaled;
 }
@@ -4697,8 +4718,20 @@ static void web_css_apply_computed_style(const web_css_node_t *node,
 
     type = css_computed_background_position(computed, &hlength, &hunit, &vlength, &vunit);
     if (type != CSS_BACKGROUND_POSITION_INHERIT) {
-        state->style.background_position_x = web_css_length_to_px(computed, unit_ctx, hlength, hunit, viewport_width);
-        state->style.background_position_y = web_css_length_to_px(computed, unit_ctx, vlength, vunit, viewport_height);
+        if (hunit == CSS_UNIT_PCT) {
+            state->style.background_position_mode_x = WEB_STYLE_BG_POS_PERCENT;
+            state->style.background_position_x = web_css_fixed_to_uint(hlength);
+        } else {
+            state->style.background_position_mode_x = WEB_STYLE_BG_POS_ABSOLUTE;
+            state->style.background_position_x = web_css_length_to_px(computed, unit_ctx, hlength, hunit, viewport_width);
+        }
+        if (vunit == CSS_UNIT_PCT) {
+            state->style.background_position_mode_y = WEB_STYLE_BG_POS_PERCENT;
+            state->style.background_position_y = web_css_fixed_to_uint(vlength);
+        } else {
+            state->style.background_position_mode_y = WEB_STYLE_BG_POS_ABSOLUTE;
+            state->style.background_position_y = web_css_length_to_px(computed, unit_ctx, vlength, vunit, viewport_height);
+        }
         web_css_set_score(state, WEB_PROP_BACKGROUND_POSITION);
     }
 

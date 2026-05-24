@@ -121,6 +121,9 @@
 #define WEB_STYLE_BG_REPEAT_Y    2u
 #define WEB_STYLE_BG_NO_REPEAT   3u
 
+#define WEB_STYLE_BG_POS_ABSOLUTE 0u
+#define WEB_STYLE_BG_POS_PERCENT  1u
+
 typedef struct {
     uint32_t flags;
     uint32_t text_align;
@@ -180,6 +183,8 @@ typedef struct {
     uint32_t background_repeat;
     uint32_t background_position_x;
     uint32_t background_position_y;
+    uint32_t background_position_mode_x;
+    uint32_t background_position_mode_y;
 } web_style_t;
 
 typedef struct {

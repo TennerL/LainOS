@@ -315,6 +315,8 @@ struct WebStyle {
     uint32_t background_repeat;
     uint32_t background_position_x;
     uint32_t background_position_y;
+    uint32_t background_position_mode_x;
+    uint32_t background_position_mode_y;
 };
 
 struct WebStyleRules {
@@ -684,6 +686,8 @@ global uint32_t zbrowser_web_word_spacing;
 global uint32_t zbrowser_web_background_repeat;
 global uint32_t zbrowser_web_background_position_x;
 global uint32_t zbrowser_web_background_position_y;
+global uint32_t zbrowser_web_background_position_mode_x;
+global uint32_t zbrowser_web_background_position_mode_y;
 global uint32_t zbrowser_style_stack_fg[64];
 global uint32_t zbrowser_style_stack_bg[64];
 global uint32_t zbrowser_style_stack_bg_band[64];
@@ -1235,6 +1239,8 @@ void clear_web_style_cache(void) {
     zbrowser_web_background_repeat = WEB_STYLE_BG_REPEAT;
     zbrowser_web_background_position_x = 0;
     zbrowser_web_background_position_y = 0;
+    zbrowser_web_background_position_mode_x = ZBROWSER_BG_POS_ABSOLUTE;
+    zbrowser_web_background_position_mode_y = ZBROWSER_BG_POS_ABSOLUTE;
 }
 
 void reset_line_cache(void) {
@@ -1430,6 +1436,8 @@ void remember_web_style(uint32_t pos, struct WebStyle *style) {
     zbrowser_web_background_repeat = style->background_repeat;
     zbrowser_web_background_position_x = style->background_position_x;
     zbrowser_web_background_position_y = style->background_position_y;
+    zbrowser_web_background_position_mode_x = style->background_position_mode_x;
+    zbrowser_web_background_position_mode_y = style->background_position_mode_y;
     zbrowser_web_style_cache_valid = 1;
 }
 
@@ -2590,6 +2598,11 @@ int style_background_position(const uint8_t *html, uint32_t pos) {
             zbrowser_flow_box_bg_pos_mode_x = ZBROWSER_BG_POS_PERCENT;
             zbrowser_flow_box_bg_pos_x = 50;
             have_x = 1;
+        }
+        if (have_y == 0) {
+            zbrowser_flow_box_bg_pos_mode_y = ZBROWSER_BG_POS_PERCENT;
+            zbrowser_flow_box_bg_pos_y = 50;
+            have_y = 1;
         }
     }
     if (have_x != 0 || have_y != 0) {
@@ -3931,8 +3944,8 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
     zbrowser_flow_box_bg_repeat = WEB_STYLE_BG_REPEAT;
     zbrowser_flow_box_bg_pos_x = zbrowser_web_background_position_x;
     zbrowser_flow_box_bg_pos_y = zbrowser_web_background_position_y;
-    zbrowser_flow_box_bg_pos_mode_x = ZBROWSER_BG_POS_ABSOLUTE;
-    zbrowser_flow_box_bg_pos_mode_y = ZBROWSER_BG_POS_ABSOLUTE;
+    zbrowser_flow_box_bg_pos_mode_x = zbrowser_web_background_position_mode_x;
+    zbrowser_flow_box_bg_pos_mode_y = zbrowser_web_background_position_mode_y;
     zbrowser_flow_box_bg_start_line = zbrowser_line_no;
     flags = 0;
     if (web_style_has_flag(WEB_STYLE_FLAG_HAS_BG_COLOR) != 0 &&
