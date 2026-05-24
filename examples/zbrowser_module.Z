@@ -8411,12 +8411,11 @@ void draw_quote_bar(void) {
     h = gfx_height();
     if (zbrowser_line_no >= zbrowser_scroll) {
         y = zbrowser_y + (zbrowser_line_no - zbrowser_scroll) * 12;
-        if (y + 24 < h - 18 && gfx_width() > 28 && flow_box_w() > 20) {
-            gfx_fill_rect(flow_box_x() + 4, y, 4, 24, 0x3366cc);
-            gfx_fill_rect(flow_box_x() + 8, y, flow_box_w() - 12, 24, 0xf8f9fa);
+        if (y + 14 < h - 18 && gfx_width() > 28 && flow_box_w() > 20) {
+            gfx_fill_rect(flow_box_x() + 4, y, 4, 14, 0x3366cc);
+            gfx_fill_rect(flow_box_x() + 8, y, flow_box_w() - 12, 14, 0xeaf3ff);
         }
     }
-    zbrowser_line_no = zbrowser_line_no + 1;
 }
 
 void draw_table_row_band(void) {
@@ -9625,7 +9624,9 @@ void render_html(const uint8_t *html) {
                     blank_line();
                 }
             } else if (zb_tag_name_is(html, pos, "blockquote")) {
-                if (zb_is_closing_tag(html, pos) != 0) {
+                if (zb_is_closing_tag(html, pos) == 0) {
+                    draw_quote_bar();
+                } else {
                     blank_line();
                 }
             } else if (zb_tag_name_is(html, pos, "pre")) {

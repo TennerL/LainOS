@@ -5,6 +5,25 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 20:00-20:08 Europe/Berlin blockquote callout band pass:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_smoke.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the representative `zbrowser_smoke.html` launch was already readable, but its blockquote still looked too much like plain body text at first glance
+    - there was already a `draw_quote_bar()` helper in `examples/zbrowser_module.Z`, but the open-tag path was not using it in a way that made the quote itself read like a browser callout
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: wire blockquote open handling through `draw_quote_bar()` and tighten that helper so the quote text sits on the callout band instead of below a spacer line
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_smoke.html` first-frame capture now shows the blockquote on a light blue callout strip with a visible blue left rule, making that lower-viewport block read more like a normal browser quote/callout on open
+    - focused CSS prepare timings stayed in the same range on the smoke repro (`prepare-summary ticks=81`, `precompute-summary ticks=63`, `style-prepare-summary total_ticks=148`), so this visible rendering fix did not reintroduce the earlier CSS/performance regressions
+    - `./scripts/agent-browser-check.sh` completed successfully in this environment; the self-host leg stayed in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - the smoke page quote now reads better, but the `figure.thumb` region still looks structurally off in the first viewport, with too much blank slab around the image/caption block
+  - Next concrete patch/verification step:
+    - inspect the `figure` / `.thumb` flow-box layout path so the thumbnail image/caption block reads closer to a normal browser card in the same `zbrowser_smoke.html` capture
 - Latest 2026-05-24 19:06-19:15 Europe/Berlin paragraph spacing pass:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`
