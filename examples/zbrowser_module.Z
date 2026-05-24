@@ -3826,8 +3826,6 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
     uint32_t parent_box_bg_pos_mode_x;
     uint32_t parent_box_bg_pos_mode_y;
     uint32_t parent_box_bg_start_line;
-    uint32_t bg_height_base;
-    struct ImageInfo bg_image;
     uint32_t margin_l;
     uint32_t margin_r;
     uint32_t padding_l;
@@ -3972,33 +3970,10 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
             zbrowser_flow_box_bg_slot = find_cached_image_slot(zbrowser_url_tmp);
             zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
             style_background_position(html, pos);
-            bg_height_base = zbrowser_flow_min_height_px;
-            if (bg_height_base == 0 && web_style_has_flag(WEB_STYLE_FLAG_HAS_HEIGHT) != 0) {
-                bg_height_base = zbrowser_web_style_height;
-            }
-            if (bg_height_base == 0) {
-                style_length_px_prop(html, pos, "height", 0, &bg_height_base);
-            }
-            if (bg_height_base == 0) {
-                style_length_px_prop(html, pos, "min-height", 0, &bg_height_base);
-            }
-            if (zbrowser_flow_box_bg_slot != 9999 &&
-                zbrowser_cached_image_valids[zbrowser_flow_box_bg_slot] == 1 &&
-                image_probe(image_buffer_slot(zbrowser_flow_box_bg_slot),
-                            (uint32_t)zbrowser_cached_image_sizes[zbrowser_flow_box_bg_slot],
-                            &bg_image) == 0) {
-                /* Keep horizontal percent positioning until paint time so
-                 * narrow boxes can crop centered background images correctly
-                 * instead of collapsing to the left edge once the image is
-                 * already cached. */
-                if (zbrowser_flow_box_bg_pos_mode_y == ZBROWSER_BG_POS_PERCENT && bg_height_base != 0) {
-                    zbrowser_flow_box_bg_pos_y = background_position_offset(zbrowser_flow_box_bg_pos_mode_y,
-                                                                            zbrowser_flow_box_bg_pos_y,
-                                                                            bg_height_base,
-                                                                            bg_image.height);
-                    zbrowser_flow_box_bg_pos_mode_y = ZBROWSER_BG_POS_ABSOLUTE;
-                }
-            }
+            /* Keep horizontal percent positioning until paint time so narrow
+             * boxes can crop centered background images correctly instead of
+             * collapsing to the left edge once the image is already cached. */
+            resolve_flow_box_background_position_y(zbrowser_flow_box_bg_slot);
         }
     }
     if (current_style_has_visible_border() != 0) {
@@ -5326,6 +5301,49 @@ uint32_t background_position_offset(uint32_t mode,
         available = 0;
     }
     return (uint32_t)(((uint64_t)available * value) / 100);
+}
+
+uint32_t current_flow_box_background_height_base(void) {
+    uint32_t bg_height_base;
+
+    bg_height_base = zbrowser_flow_min_height_px;
+    if (bg_height_base == 0 &&
+        web_style_has_flag(WEB_STYLE_FLAG_HAS_HEIGHT) != 0) {
+        bg_height_base = zbrowser_web_style_height;
+    }
+    if (bg_height_base == 0 &&
+        web_style_has_flag(WEB_STYLE_FLAG_HAS_MIN_HEIGHT) != 0) {
+        bg_height_base = zbrowser_web_style_min_height;
+    }
+    if (web_style_has_flag(WEB_STYLE_FLAG_HAS_MAX_HEIGHT) != 0 &&
+        zbrowser_web_style_max_height != 0 &&
+        bg_height_base > zbrowser_web_style_max_height) {
+        bg_height_base = zbrowser_web_style_max_height;
+    }
+    return bg_height_base;
+}
+
+void resolve_flow_box_background_position_y(uint32_t slot) {
+    struct ImageInfo bg_image;
+    uint32_t bg_height_base;
+
+    if (slot == 9999 ||
+        zbrowser_flow_box_bg_pos_mode_y != ZBROWSER_BG_POS_PERCENT ||
+        zbrowser_cached_image_valids[slot] != 1 ||
+        image_probe(image_buffer_slot(slot),
+                    (uint32_t)zbrowser_cached_image_sizes[slot],
+                    &bg_image) != 0) {
+        return;
+    }
+    bg_height_base = current_flow_box_background_height_base();
+    if (bg_height_base == 0) {
+        return;
+    }
+    zbrowser_flow_box_bg_pos_y = background_position_offset(zbrowser_flow_box_bg_pos_mode_y,
+                                                            zbrowser_flow_box_bg_pos_y,
+                                                            bg_height_base,
+                                                            bg_image.height);
+    zbrowser_flow_box_bg_pos_mode_y = ZBROWSER_BG_POS_ABSOLUTE;
 }
 
 uint32_t background_crop_offset(uint32_t mode,
@@ -9491,6 +9509,7 @@ void prefetch_background_image(const uint8_t *src) {
                     zbrowser_flow_box_bg_slot == 9999) {
                     zbrowser_flow_box_bg_slot = slot;
                     zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
+                    resolve_flow_box_background_position_y(slot);
                 }
             } else {
                 if (zbrowser_flow_box_bg_slot == 9999) {
