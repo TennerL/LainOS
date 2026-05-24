@@ -7141,6 +7141,12 @@ void draw_style_block_start(const uint8_t *html, uint32_t pos) {
     if (border_visible == 0 && has_bg == 0) {
         return;
     }
+    if (tag_is_block_flow(html, pos) != 0) {
+        /* Block boxes already use the flow-decoration path for full-height
+         * backgrounds and borders. The old starter panel only paints the
+         * first strip, which leaves bracket-like borders at the top. */
+        return;
+    }
     flush_line();
     h = gfx_height();
     if (flow_box_w() <= 4) {
