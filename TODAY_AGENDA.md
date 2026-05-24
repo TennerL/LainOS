@@ -5,6 +5,25 @@ Date: 2026-05-23
 ## Current NetSurf Port Blocker
 
 - Branch: `zbrowser-netsurf-port`
+- Latest 2026-05-24 18:52-18:56 Europe/Berlin blockquote callout rendering pass:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_smoke.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the representative smoke-page first frame was already opening into a recognizable browser view, but its blockquote still rendered as a raw `>` line hack
+    - that made one of the intended callout elements look obviously unlike a normal browser, even after the image/layout fixes
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: convert blockquotes into real callout bands by reusing the existing flow-box background band, adding a persistent blue left rule, and removing the raw `> ` prefix hack
+    - `examples/zbrowser_remote_bg_large.html`: added a focused remote-background repro page during investigation; it confirmed large centered remote backgrounds were already painting correctly and is kept as a useful browser visual check
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_smoke.html` first-frame capture now shows the blockquote as a boxed callout with a blue left bar instead of a plain text `>` prefix, which is immediately visible in the lower half of the first viewport
+    - `./scripts/agent-browser-check.sh` completed successfully in this environment; the self-host leg stayed in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - the smoke page is more polished, but the first-frame `.css-panel` still looks incomplete and the JavaScript-inserted stylesheet note is not yet clearly visible as a distinct browser-rendered block
+  - Next concrete patch/verification step:
+    - inspect the above-the-fold `.css-panel` / adjacent note layout so the stylesheet note and JavaScript-inserted note become clearly separated and readable in the first smoke capture
 - Latest 2026-05-24 17:30-17:52 Europe/Berlin authored heading color preservation fix:
   - Focused checks run in this pass:
     - `./scripts/zbrowser-compile-smoke.sh`

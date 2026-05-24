@@ -3572,8 +3572,10 @@ int semantic_text_should_preserve_color(const uint8_t *html, uint32_t pos) {
 
 void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
     uint32_t preserve_color;
+    uint32_t flow_border_bits;
 
     preserve_color = semantic_text_should_preserve_color(html, pos);
+    flow_border_bits = zbrowser_flow_box_flags & ZBROWSER_FLOW_BOX_BORDER;
     if (load_web_style(html, pos) != 0) {
         zbrowser_text_transform = zbrowser_web_text_transform;
         zbrowser_white_space = zbrowser_web_white_space;
@@ -3666,6 +3668,14 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         zbrowser_text_fg = 0x202122;
         zbrowser_text_bg = 0xf8f9fa;
         activate_background_band();
+        if (flow_border_bits == 0) {
+            zbrowser_flow_box_flags = zbrowser_flow_box_flags + ZBROWSER_FLOW_BOX_BORDER + 16;
+            zbrowser_flow_box_border = 0x3366cc;
+        }
+        zbrowser_content_indent_cols = zbrowser_content_indent_cols + 2;
+        if (zbrowser_content_indent_cols > 18) {
+            zbrowser_content_indent_cols = 18;
+        }
         return;
     }
     if (tag_is_native_heading(html, pos) == 0 &&
@@ -5404,6 +5414,24 @@ uint32_t current_flow_box_background_height_base(void) {
     return bg_height_base;
 }
 
+uint32_t estimated_flow_box_background_height_px(void) {
+    uint32_t base;
+    uint32_t content_height;
+
+    base = current_flow_box_background_height_base();
+    content_height = zbrowser_web_line_height;
+    if (content_height == 0) {
+        content_height = zbrowser_line_height();
+    }
+    if (content_height == 0) {
+        content_height = 12;
+    }
+    if (zbrowser_web_padding_t + zbrowser_web_padding_b + content_height > base) {
+        base = zbrowser_web_padding_t + zbrowser_web_padding_b + content_height;
+    }
+    return base;
+}
+
 void resolve_flow_box_background_position_y(uint32_t slot) {
     struct ImageInfo bg_image;
     uint32_t bg_height_base;
@@ -5416,7 +5444,7 @@ void resolve_flow_box_background_position_y(uint32_t slot) {
                     &bg_image) != 0) {
         return;
     }
-    bg_height_base = current_flow_box_background_height_base();
+    bg_height_base = estimated_flow_box_background_height_px();
     if (bg_height_base == 0) {
         return;
     }
@@ -9503,10 +9531,7 @@ void render_html(const uint8_t *html) {
                     blank_line();
                 }
             } else if (zb_tag_name_is(html, pos, "blockquote")) {
-                if (!zb_is_closing_tag(html, pos)) {
-                    draw_quote_bar();
-                    emit_text("> ");
-                } else {
+                if (zb_is_closing_tag(html, pos) != 0) {
                     blank_line();
                 }
             } else if (zb_tag_name_is(html, pos, "pre")) {
@@ -10018,10 +10043,11 @@ void prefetch_background_image(const uint8_t *src) {
         slot = find_empty_image_slot();
         if (slot != 9999) {
             if (has_scheme(zbrowser_url_tmp) == 0) {
-                if (fetch_image_into_slot(slot, zbrowser_url_tmp) != 0 &&
-                    zbrowser_flow_box_bg_slot == 9999) {
-                    zbrowser_flow_box_bg_slot = slot;
-                    zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
+                if (fetch_image_into_slot(slot, zbrowser_url_tmp) != 0) {
+                    if (zbrowser_flow_box_bg_slot == 9999) {
+                        zbrowser_flow_box_bg_slot = slot;
+                        zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
+                    }
                     resolve_flow_box_background_position_y(slot);
                 }
             } else {
@@ -10030,6 +10056,9 @@ void prefetch_background_image(const uint8_t *src) {
                     zbrowser_flow_box_bg_repeat = zbrowser_web_background_repeat;
                 }
                 schedule_image_fetch(slot, zbrowser_url_tmp);
+                if (zbrowser_cached_image_valids[slot] == 1) {
+                    resolve_flow_box_background_position_y(slot);
+                }
             }
         }
     }
