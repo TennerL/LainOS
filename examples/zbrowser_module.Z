@@ -10766,8 +10766,6 @@ void zbrowser_scroll_by(int delta) {
 }
 
 export void zmodule_redraw(void) {
-    uint64_t render_started;
-    uint64_t render_ticks;
     int rendered_image;
 
     if (zbrowser_enabled == 0) {
@@ -10794,28 +10792,12 @@ export void zmodule_redraw(void) {
         return;
     }
     if (zbrowser_has_document != 0) {
-        render_started = 0;
-        render_ticks = 0;
         rendered_image = 0;
-        if (zbrowser_render_after_load != 0) {
-            render_started = ticks();
-        }
         rendered_image = render_image_if_supported(document_buffer(), (uint32_t)zbrowser_size);
         if (rendered_image == 0) {
             render_html(document_buffer());
         }
         if (zbrowser_render_after_load != 0) {
-            if (ticks() >= render_started) {
-                render_ticks = ticks() - render_started;
-            }
-            print("zbrowser render-first mode=");
-            if (rendered_image != 0) {
-                print("image");
-            } else {
-                print("html");
-            }
-            print(" ticks=");
-            print(render_ticks);
             zbrowser_render_after_load = 0;
         }
     } else {
