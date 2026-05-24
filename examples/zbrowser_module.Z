@@ -8703,6 +8703,7 @@ void render_html(const uint8_t *html) {
     uint32_t input_index;
     uint32_t line_limit;
     uint32_t skip_pos;
+    uint32_t text_bg_fallback;
     uint32_t transient_style;
     uint8_t *input_value;
     uint8_t ch;
@@ -8845,7 +8846,14 @@ void render_html(const uint8_t *html) {
             }
             if (zb_is_closing_tag(html, pos) == 0) {
                 zbrowser_text_fg = style_text_color(html, pos, zbrowser_text_fg);
-                zbrowser_text_bg = style_background_color(html, pos, zbrowser_text_bg);
+                text_bg_fallback = zbrowser_text_bg;
+                if (tag_is_block_flow(html, pos) != 0 &&
+                    zbrowser_flow_box_flags == 0 &&
+                    zbrowser_flow_box_bg_slot == 9999 &&
+                    zbrowser_bg_band_active == 0) {
+                    text_bg_fallback = zbrowser_page_bg_color;
+                }
+                zbrowser_text_bg = style_background_color(html, pos, text_bg_fallback);
                 apply_css_flow_box(html, pos);
                 if (current_style_has_visible_border() != 0 &&
                     zbrowser_web_border_t != 0) {
