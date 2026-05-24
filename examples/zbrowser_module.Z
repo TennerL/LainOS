@@ -3754,9 +3754,15 @@ void apply_semantic_tag_style(const uint8_t *html, uint32_t pos) {
         activate_background_band();
         return;
     }
+    if (tag_class_contains(html, pos, "thumb")) {
+        zbrowser_text_fg = 0x202122;
+        zbrowser_text_bg = 0xf8f9fa;
+        zbrowser_text_align = 1;
+        activate_background_band();
+        return;
+    }
     if (tag_class_contains(html, pos, "infobox") ||
         tag_class_contains(html, pos, "toc") ||
-        tag_class_contains(html, pos, "thumb") ||
         tag_class_contains(html, pos, "navbox") ||
         tag_class_contains(html, pos, "sidebar")) {
         zbrowser_text_fg = 0x202122;
@@ -4007,9 +4013,15 @@ void apply_css_flow_box(const uint8_t *html, uint32_t pos) {
         zbrowser_web_style_min_width < parent_w) {
         border_w = zbrowser_web_style_min_width;
     }
+    if (tag_class_contains(html, pos, "thumb") != 0 &&
+        web_style_has_flag(WEB_STYLE_FLAG_HAS_WIDTH) == 0 &&
+        border_w > 360) {
+        border_w = 360;
+    }
     border_w = clamp_flow_width(border_w, parent_w);
     if ((web_style_has_flag(WEB_STYLE_FLAG_MARGIN_AUTO_X) != 0 ||
-         web_style_has_flag(WEB_STYLE_FLAG_CENTER_X) != 0) &&
+         web_style_has_flag(WEB_STYLE_FLAG_CENTER_X) != 0 ||
+         tag_class_contains(html, pos, "thumb") != 0) &&
         parent_w > border_w) {
         border_x = parent_x + (parent_w - border_w) / 2;
     } else if (zbrowser_web_style_float == WEB_STYLE_FLOAT_RIGHT &&
@@ -8829,6 +8841,7 @@ int tag_affects_text_style(const uint8_t *html, uint32_t pos) {
         zb_tag_name_is(html, pos, "section") ||
         zb_tag_name_is(html, pos, "article") ||
         zb_tag_name_is(html, pos, "details") ||
+        zb_tag_name_is(html, pos, "figure") ||
         zb_tag_name_is(html, pos, "main") ||
         zb_tag_name_is(html, pos, "menu") ||
         zb_tag_name_is(html, pos, "nav") ||

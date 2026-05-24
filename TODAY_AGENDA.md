@@ -4,6 +4,26 @@ Date: 2026-05-23
 
 ## Current NetSurf Port Blocker
 
+- Latest 2026-05-24 20:31-20:38 Europe/Berlin thumbnail card pass:
+  - Focused checks run in this pass:
+    - `./scripts/zbrowser-compile-smoke.sh`
+    - `ZBROWSER_LAUNCH_REPRO_PAGE=zbrowser_smoke.html ./scripts/zbrowser-launch-repro.sh`
+    - `./scripts/agent-browser-check.sh`
+  - Focused repro state confirmed before the patch:
+    - the representative smoke-page first frame still showed the `figure.thumb` region as a giant light-gray slab
+    - the PNG sat awkwardly on the left edge, so the image/caption block did not read like a browser thumbnail card on open
+  - Small bounded patch landed:
+    - `examples/zbrowser_module.Z`: make `<figure>` participate in the text/style scope stack
+    - `examples/zbrowser_module.Z`: treat `.thumb` blocks as centered thumbnail cards by default, with centered inline content and a bounded width when no authored width is present
+  - Exact runtime result after the patch:
+    - focused compile smoke stayed green
+    - the same `zbrowser_smoke.html` first-frame capture now shows the PNG centered inside a narrower thumb card, with the caption grouped under it instead of stretching across a broad slab
+    - CSS prepare timings stayed in the same range on the smoke repro (`prepare-summary ticks=70`, `precompute-summary ticks=57`, `style-prepare-summary total_ticks=131`)
+    - `./scripts/agent-browser-check.sh` completed successfully in this environment; the self-host leg stayed in the expected KVM-unavailable skip path
+  - Current blocker after this pass:
+    - the above-the-fold `.css-panel` still does not look like it is painting its authored stylesheet background image, so the top of the smoke page still feels incomplete as a browser render
+  - Next concrete patch/verification step:
+    - inspect the stylesheet background-image path for `.css-panel`, then rerun the same `zbrowser_smoke.html` launch capture to confirm the authored panel background becomes visibly more browser-like on open
 - Branch: `zbrowser-netsurf-port`
 - Latest 2026-05-24 20:00-20:08 Europe/Berlin blockquote callout band pass:
   - Focused checks run in this pass:
