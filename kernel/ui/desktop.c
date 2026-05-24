@@ -3671,6 +3671,15 @@ void desktop_run(const boot_info_t *info) {
             }
             active_module = desktop_active_module_app_window();
             if (active_module != 0) {
+                if (key.type == KEY_CTRL_W) {
+                    cursor_restore();
+                    desktop_blur_module_app();
+                    editor_focused = 0;
+                    desktop_terminal_focus();
+                    desktop_redraw_all();
+                    cursor_draw_at(x, y);
+                    continue;
+                }
                 cursor_restore();
                 if (desktop_module_app_send_key(active_module, &key)) {
                     (void)desktop_tick_module_app(active_module, 1);
