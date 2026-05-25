@@ -20,6 +20,25 @@ void console_put_char_at_screen(unsigned int col, unsigned int row, char ch);
 void console_put_dec_at_screen(unsigned int col, unsigned int row, unsigned long long value);
 void console_draw_text_at_pixel(unsigned int x, unsigned int y, const char *text, unsigned int fg, unsigned int bg);
 void console_draw_text_scaled_at_pixel(unsigned int x, unsigned int y, const char *text, unsigned int fg, unsigned int bg, unsigned int scale);
+void console_draw_text_sized_at_pixel(unsigned int x,
+                                      unsigned int y,
+                                      const char *text,
+                                      unsigned int fg,
+                                      unsigned int bg,
+                                      unsigned int glyph_width,
+                                      unsigned int glyph_height,
+                                      unsigned int advance,
+                                      int bold,
+                                      int italic);
+void console_draw_codepoint_sized_at_pixel(unsigned int x,
+                                           unsigned int y,
+                                           unsigned int codepoint,
+                                           unsigned int fg,
+                                           unsigned int bg,
+                                           unsigned int glyph_width,
+                                           unsigned int glyph_height,
+                                           int bold,
+                                           int italic);
 unsigned int console_rows(void);
 unsigned int console_columns(void);
 void console_clear_line(unsigned int row);
@@ -90,6 +109,7 @@ int console_split_enabled(void);
 unsigned int console_active_pane(void);
 
 void cpu_init_tables(void);
+void cpu_enable_fpu_sse(void);
 void cpu_detect_topology(const boot_info_t *info);
 unsigned int cpu_start_secondary_cores(void);
 unsigned int cpu_core_count(void);

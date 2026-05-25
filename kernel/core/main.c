@@ -352,6 +352,8 @@ void kernel_main(boot_info_t *info) {
     boot_stage("console ready");
     boot_stage("cpu tables");
     cpu_init_tables();
+    boot_stage("fpu/sse");
+    cpu_enable_fpu_sse();
     boot_stage("cpu topology");
     cpu_detect_topology(info);
     boot_stage("secondary CPUs");

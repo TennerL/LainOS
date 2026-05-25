@@ -252,6 +252,29 @@ static const uint8_t font_data[ASCII_COUNT][8] = {
     {0x31,0x6B,0x46,0x00,0x00,0x00,0x00,0x00}
 };
 
+typedef enum {
+    CONSOLE_ACCENT_NONE = 0,
+    CONSOLE_ACCENT_DIAERESIS,
+    CONSOLE_ACCENT_ACUTE,
+    CONSOLE_ACCENT_GRAVE,
+    CONSOLE_ACCENT_CIRCUMFLEX,
+    CONSOLE_ACCENT_TILDE,
+    CONSOLE_ACCENT_RING,
+    CONSOLE_ACCENT_CEDILLA,
+    CONSOLE_ACCENT_SLASH
+} console_accent_t;
+
+static const uint8_t console_glyph_sharp_s[8] = {0x38,0x6C,0x66,0x7C,0x66,0x66,0x7C,0x60};
+static const uint8_t console_glyph_ae[8] = {0x00,0x00,0x76,0x1B,0x7F,0xD8,0x7E,0x00};
+static const uint8_t console_glyph_AE[8] = {0x3F,0x6C,0xCC,0xFC,0xCC,0xCC,0xCF,0x00};
+static const uint8_t console_glyph_oe[8] = {0x00,0x00,0x76,0xDB,0xDB,0xD8,0x76,0x00};
+static const uint8_t console_glyph_OE[8] = {0x3F,0x66,0xC0,0xFC,0xC0,0x66,0x3F,0x00};
+static const uint8_t console_glyph_thorn[8] = {0x60,0x60,0x7C,0x66,0x66,0x7C,0x60,0x60};
+static const uint8_t console_glyph_THORN[8] = {0x60,0x60,0x7C,0x66,0x66,0x7C,0x60,0x00};
+static const uint8_t console_glyph_eth[8] = {0x0C,0x38,0x0C,0x3E,0x66,0x66,0x3C,0x00};
+static const uint8_t console_glyph_ETH[8] = {0x78,0x6C,0x66,0xF6,0x66,0x6C,0x78,0x00};
+static const uint8_t console_glyph_question[8] = {0x3C,0x66,0x06,0x0C,0x18,0x00,0x18,0x00};
+
 void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     graphics_put_pixel(x, y, color);
 }
@@ -709,6 +732,259 @@ static void console_put_char_scaled_at_pixel_colors(uint32_t x,
     }
 }
 
+static const uint8_t *console_glyph_for_codepoint(uint32_t codepoint,
+                                                  console_accent_t *accent) {
+    char base = '?';
+
+    if (accent != 0) {
+        *accent = CONSOLE_ACCENT_NONE;
+    }
+
+    if (codepoint >= ASCII_FIRST && codepoint < ASCII_FIRST + ASCII_COUNT) {
+        return font_data[codepoint - ASCII_FIRST];
+    }
+
+    switch (codepoint) {
+    case 0x00a0u: base = ' '; break;
+    case 0x00a1u: base = '!'; break;
+    case 0x00a2u: base = 'c'; break;
+    case 0x00a3u: base = 'L'; break;
+    case 0x00a5u: base = 'Y'; break;
+    case 0x00a9u: base = 'C'; break;
+    case 0x00abu: base = '<'; break;
+    case 0x00adu: base = '-'; break;
+    case 0x00aeu: base = 'R'; break;
+    case 0x00b0u: base = 'o'; break;
+    case 0x00b1u: base = '+'; break;
+    case 0x00b2u: base = '2'; break;
+    case 0x00b3u: base = '3'; break;
+    case 0x00b5u: base = 'u'; break;
+    case 0x00b7u: base = '.'; break;
+    case 0x00bbu: base = '>'; break;
+    case 0x00bcu: base = '1'; break;
+    case 0x00bdu: base = '1'; break;
+    case 0x00beu: base = '3'; break;
+    case 0x00bfu: base = '?'; break;
+    case 0x00c0u: case 0x00e0u: base = codepoint < 0x00e0u ? 'A' : 'a'; if (accent) *accent = CONSOLE_ACCENT_GRAVE; break;
+    case 0x00c1u: case 0x00e1u: base = codepoint < 0x00e0u ? 'A' : 'a'; if (accent) *accent = CONSOLE_ACCENT_ACUTE; break;
+    case 0x00c2u: case 0x00e2u: base = codepoint < 0x00e0u ? 'A' : 'a'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x00c3u: case 0x00e3u: base = codepoint < 0x00e0u ? 'A' : 'a'; if (accent) *accent = CONSOLE_ACCENT_TILDE; break;
+    case 0x00c4u: case 0x00e4u: base = codepoint < 0x00e0u ? 'A' : 'a'; if (accent) *accent = CONSOLE_ACCENT_DIAERESIS; break;
+    case 0x00c5u: case 0x00e5u: base = codepoint < 0x00e0u ? 'A' : 'a'; if (accent) *accent = CONSOLE_ACCENT_RING; break;
+    case 0x00c6u: return console_glyph_AE;
+    case 0x00e6u: return console_glyph_ae;
+    case 0x00c7u: case 0x00e7u: base = codepoint < 0x00e0u ? 'C' : 'c'; if (accent) *accent = CONSOLE_ACCENT_CEDILLA; break;
+    case 0x00c8u: case 0x00e8u: base = codepoint < 0x00e0u ? 'E' : 'e'; if (accent) *accent = CONSOLE_ACCENT_GRAVE; break;
+    case 0x00c9u: case 0x00e9u: base = codepoint < 0x00e0u ? 'E' : 'e'; if (accent) *accent = CONSOLE_ACCENT_ACUTE; break;
+    case 0x00cau: case 0x00eau: base = codepoint < 0x00e0u ? 'E' : 'e'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x00cbu: case 0x00ebu: base = codepoint < 0x00e0u ? 'E' : 'e'; if (accent) *accent = CONSOLE_ACCENT_DIAERESIS; break;
+    case 0x00ccu: case 0x00ecu: base = codepoint < 0x00e0u ? 'I' : 'i'; if (accent) *accent = CONSOLE_ACCENT_GRAVE; break;
+    case 0x00cdu: case 0x00edu: base = codepoint < 0x00e0u ? 'I' : 'i'; if (accent) *accent = CONSOLE_ACCENT_ACUTE; break;
+    case 0x00ceu: case 0x00eeu: base = codepoint < 0x00e0u ? 'I' : 'i'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x00cfu: case 0x00efu: base = codepoint < 0x00e0u ? 'I' : 'i'; if (accent) *accent = CONSOLE_ACCENT_DIAERESIS; break;
+    case 0x00d0u: return console_glyph_ETH;
+    case 0x00f0u: return console_glyph_eth;
+    case 0x00d1u: case 0x00f1u: base = codepoint < 0x00e0u ? 'N' : 'n'; if (accent) *accent = CONSOLE_ACCENT_TILDE; break;
+    case 0x00d2u: case 0x00f2u: base = codepoint < 0x00e0u ? 'O' : 'o'; if (accent) *accent = CONSOLE_ACCENT_GRAVE; break;
+    case 0x00d3u: case 0x00f3u: base = codepoint < 0x00e0u ? 'O' : 'o'; if (accent) *accent = CONSOLE_ACCENT_ACUTE; break;
+    case 0x00d4u: case 0x00f4u: base = codepoint < 0x00e0u ? 'O' : 'o'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x00d5u: case 0x00f5u: base = codepoint < 0x00e0u ? 'O' : 'o'; if (accent) *accent = CONSOLE_ACCENT_TILDE; break;
+    case 0x00d6u: case 0x00f6u: base = codepoint < 0x00e0u ? 'O' : 'o'; if (accent) *accent = CONSOLE_ACCENT_DIAERESIS; break;
+    case 0x00d7u: base = 'x'; break;
+    case 0x00d8u: case 0x00f8u: base = codepoint < 0x00e0u ? 'O' : 'o'; if (accent) *accent = CONSOLE_ACCENT_SLASH; break;
+    case 0x00d9u: case 0x00f9u: base = codepoint < 0x00e0u ? 'U' : 'u'; if (accent) *accent = CONSOLE_ACCENT_GRAVE; break;
+    case 0x00dau: case 0x00fau: base = codepoint < 0x00e0u ? 'U' : 'u'; if (accent) *accent = CONSOLE_ACCENT_ACUTE; break;
+    case 0x00dbu: case 0x00fbu: base = codepoint < 0x00e0u ? 'U' : 'u'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x00dcu: case 0x00fcu: base = codepoint < 0x00e0u ? 'U' : 'u'; if (accent) *accent = CONSOLE_ACCENT_DIAERESIS; break;
+    case 0x00ddu: case 0x00fdu: base = codepoint < 0x00e0u ? 'Y' : 'y'; if (accent) *accent = CONSOLE_ACCENT_ACUTE; break;
+    case 0x00deu: return console_glyph_THORN;
+    case 0x00feu: return console_glyph_thorn;
+    case 0x00dfu: return console_glyph_sharp_s;
+    case 0x00ffu: base = 'y'; if (accent) *accent = CONSOLE_ACCENT_DIAERESIS; break;
+    case 0x0152u: return console_glyph_OE;
+    case 0x0153u: return console_glyph_oe;
+    case 0x0160u: base = 'S'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x0161u: base = 's'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x0178u: base = 'Y'; if (accent) *accent = CONSOLE_ACCENT_DIAERESIS; break;
+    case 0x017du: base = 'Z'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x017eu: base = 'z'; if (accent) *accent = CONSOLE_ACCENT_CIRCUMFLEX; break;
+    case 0x2013u: case 0x2014u: base = '-'; break;
+    case 0x2018u: case 0x2019u: base = '\''; break;
+    case 0x201cu: case 0x201du: base = '"'; break;
+    case 0x2022u: base = '*'; break;
+    case 0x2026u: base = '.'; break;
+    case 0x20acu: base = 'E'; break;
+    default: return console_glyph_question;
+    }
+
+    return font_data[(uint8_t)base - ASCII_FIRST];
+}
+
+static void console_draw_accent(uint32_t x,
+                                uint32_t y,
+                                uint32_t glyph_width,
+                                uint32_t glyph_height,
+                                uint32_t fg,
+                                console_accent_t accent) {
+    uint32_t cx = x + glyph_width / 2u;
+    uint32_t top = y;
+    uint32_t row = glyph_height > 10u ? glyph_height / 10u : 0u;
+
+    if (accent == CONSOLE_ACCENT_NONE || glyph_width < 3u || glyph_height < 4u) {
+        return;
+    }
+
+    switch (accent) {
+    case CONSOLE_ACCENT_DIAERESIS:
+        put_pixel(x + glyph_width / 3u, top + row, fg);
+        put_pixel(x + (glyph_width * 2u) / 3u, top + row, fg);
+        if (glyph_height >= 14u) {
+            put_pixel(x + glyph_width / 3u, top + row + 1u, fg);
+            put_pixel(x + (glyph_width * 2u) / 3u, top + row + 1u, fg);
+        }
+        break;
+    case CONSOLE_ACCENT_ACUTE:
+        put_pixel(cx, top + row, fg);
+        if (cx + 1u < x + glyph_width) {
+            put_pixel(cx + 1u, top + row, fg);
+        }
+        if (row + 1u < glyph_height) {
+            put_pixel(cx > x ? cx - 1u : cx, top + row + 1u, fg);
+        }
+        break;
+    case CONSOLE_ACCENT_GRAVE:
+        put_pixel(cx > x ? cx - 1u : cx, top + row, fg);
+        if (row + 1u < glyph_height && cx + 1u < x + glyph_width) {
+            put_pixel(cx + 1u, top + row + 1u, fg);
+        }
+        break;
+    case CONSOLE_ACCENT_CIRCUMFLEX:
+        put_pixel(cx, top + row, fg);
+        if (row + 1u < glyph_height) {
+            if (cx > x) {
+                put_pixel(cx - 1u, top + row + 1u, fg);
+            }
+            if (cx + 1u < x + glyph_width) {
+                put_pixel(cx + 1u, top + row + 1u, fg);
+            }
+        }
+        break;
+    case CONSOLE_ACCENT_TILDE:
+        if (cx > x) {
+            put_pixel(cx - 1u, top + row, fg);
+        }
+        put_pixel(cx, top + row + 1u, fg);
+        if (cx + 1u < x + glyph_width) {
+            put_pixel(cx + 1u, top + row, fg);
+        }
+        break;
+    case CONSOLE_ACCENT_RING:
+        if (cx > x) {
+            put_pixel(cx - 1u, top + row, fg);
+        }
+        if (cx + 1u < x + glyph_width) {
+            put_pixel(cx + 1u, top + row, fg);
+        }
+        put_pixel(cx, top + row + 1u, fg);
+        break;
+    case CONSOLE_ACCENT_CEDILLA:
+        put_pixel(cx, y + glyph_height - 1u, fg);
+        if (cx > x) {
+            put_pixel(cx - 1u, y + glyph_height - 2u, fg);
+        }
+        break;
+    case CONSOLE_ACCENT_SLASH:
+        for (uint32_t i = 0; i < glyph_height && i < glyph_width; ++i) {
+            put_pixel(x + glyph_width - 1u - ((i * glyph_width) / glyph_height), y + i, fg);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static void console_put_codepoint_sized_at_pixel_colors(uint32_t x,
+                                                        uint32_t y,
+                                                        uint32_t codepoint,
+                                                        uint32_t fg,
+                                                        uint32_t bg,
+                                                        uint32_t glyph_width,
+                                                        uint32_t glyph_height,
+                                                        int bold,
+                                                        int italic) {
+    const uint8_t *glyph_bits;
+    console_accent_t accent = CONSOLE_ACCENT_NONE;
+    uint32_t out_y;
+    uint32_t out_x;
+    uint32_t slant;
+
+    if (glyph_width == 0u || glyph_height == 0u) {
+        return;
+    }
+    if (glyph_width > 64u) {
+        glyph_width = 64u;
+    }
+    if (glyph_height > 96u) {
+        glyph_height = 96u;
+    }
+
+    glyph_bits = console_glyph_for_codepoint(codepoint, &accent);
+    for (out_y = 0; out_y < glyph_height; ++out_y) {
+        uint32_t glyph_row = (out_y * FONT_H) / glyph_height;
+        uint8_t bits = glyph_bits[glyph_row];
+
+        slant = 0u;
+        if (italic != 0 && glyph_height > 8u) {
+            slant = ((glyph_height - 1u - out_y) * (glyph_width / 4u + 1u)) / glyph_height;
+        }
+
+        for (out_x = 0; out_x < glyph_width; ++out_x) {
+            uint32_t source_x = out_x > slant ? out_x - slant : 0u;
+            uint32_t glyph_col = (source_x * FONT_W) / glyph_width;
+            int draw_pixel = 0;
+            uint32_t color = bg;
+
+            if (glyph_col >= FONT_W) {
+                glyph_col = FONT_W - 1u;
+            }
+            if ((bits & (1u << (7u - glyph_col))) != 0u) {
+                color = fg;
+                draw_pixel = 1;
+            } else if (bg != 0xffffffffu) {
+                draw_pixel = 1;
+            }
+
+            if (draw_pixel != 0) {
+                put_pixel(x + out_x, y + out_y, color);
+                if (bold != 0 && color == fg && out_x + 1u < glyph_width) {
+                    put_pixel(x + out_x + 1u, y + out_y, color);
+                }
+            }
+        }
+    }
+    console_draw_accent(x, y, glyph_width, glyph_height, fg, accent);
+}
+
+static void console_put_char_sized_at_pixel_colors(uint32_t x,
+                                                   uint32_t y,
+                                                   char ch,
+                                                   uint32_t fg,
+                                                   uint32_t bg,
+                                                   uint32_t glyph_width,
+                                                   uint32_t glyph_height,
+                                                   int bold,
+                                                   int italic) {
+    console_put_codepoint_sized_at_pixel_colors(x,
+                                                y,
+                                                (uint8_t)ch,
+                                                fg,
+                                                bg,
+                                                glyph_width,
+                                                glyph_height,
+                                                bold,
+                                                italic);
+}
+
 static void console_put_char_at_pixel(uint32_t x, uint32_t y, char ch) {
     console_put_char_at_pixel_colors(x, y, ch, current_fg_color, current_bg_color);
 }
@@ -806,6 +1082,59 @@ void console_draw_text_scaled_at_pixel(unsigned int x,
         console_put_char_scaled_at_pixel_colors(px, y, *text++, fg, bg, scale);
         px += FONT_W * scale;
     }
+}
+
+void console_draw_text_sized_at_pixel(unsigned int x,
+                                      unsigned int y,
+                                      const char *text,
+                                      unsigned int fg,
+                                      unsigned int bg,
+                                      unsigned int glyph_width,
+                                      unsigned int glyph_height,
+                                      unsigned int advance,
+                                      int bold,
+                                      int italic) {
+    uint32_t px = x;
+
+    if (text == 0 || glyph_width == 0u || glyph_height == 0u) {
+        return;
+    }
+    if (advance == 0u) {
+        advance = glyph_width;
+    }
+
+    while (*text) {
+        console_put_char_sized_at_pixel_colors(px,
+                                               y,
+                                               *text++,
+                                               fg,
+                                               bg,
+                                               glyph_width,
+                                               glyph_height,
+                                               bold,
+                                               italic);
+        px += advance;
+    }
+}
+
+void console_draw_codepoint_sized_at_pixel(unsigned int x,
+                                           unsigned int y,
+                                           unsigned int codepoint,
+                                           unsigned int fg,
+                                           unsigned int bg,
+                                           unsigned int glyph_width,
+                                           unsigned int glyph_height,
+                                           int bold,
+                                           int italic) {
+    console_put_codepoint_sized_at_pixel_colors(x,
+                                                y,
+                                                codepoint,
+                                                fg,
+                                                bg,
+                                                glyph_width,
+                                                glyph_height,
+                                                bold,
+                                                italic);
 }
 
 void console_clear_line(unsigned int row) {

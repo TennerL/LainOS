@@ -59,6 +59,19 @@ On Debian/Ubuntu-like systems:
 sudo apt install gcc make nasm binutils qemu-system-x86 ovmf gnu-efi dosfstools mtools gdisk xorriso
 ```
 
+On macOS with Homebrew, install GNU-EFI plus GNU binutils and prefer the GNU
+tool names:
+
+```bash
+brew install gnu-efi x86_64-elf-binutils nasm qemu mtools dosfstools gdisk xorriso
+make CC="clang --target=x86_64-unknown-elf" \
+     LD=x86_64-elf-ld \
+     OBJCOPY=x86_64-elf-objcopy
+```
+
+If you have `x86_64-elf-gcc`, the Makefile will prefer it automatically for
+kernel and EFI objects while still using the native compiler for host tools.
+
 If your GNU-EFI paths differ, override them:
 
 ```bash
@@ -111,6 +124,13 @@ resolution 1024 768
 The loader searches lainfs devices for `bootres.cfg` and applies the requested
 mode if firmware exposes it.
 
+The QEMU run targets also expose a matching high-resolution GOP-friendly VGA
+device by default. Override the virtual display and loader request together with:
+
+```bash
+make QEMU_VIDEO_WIDTH=1920 QEMU_VIDEO_HEIGHT=1080 run
+```
+
 ## Run
 
 Default QEMU boot from the FAT32 ESP image:
@@ -130,8 +150,34 @@ make run-bootdisk-gpt
 make run-iso
 ```
 
-`run.sh` is also available and currently boots the ISO with `-smp 4`, the data
-image, and an E1000 NIC using local `OVMF_CODE.fd` / `OVMF_VARS.fd` files.
+`run.sh` is also available and boots the ISO with the data image, an E1000 NIC,
+local `OVMF_CODE.fd` / `OVMF_VARS.fd` files, and a 1280x720 framebuffer request
+by default. Override it with:
+
+```bash
+FB_WIDTH=1920 FB_HEIGHT=1080 ./run.sh
+```
+
+When building in a Linux container and running QEMU from macOS, build first in
+the container:
+
+```bash
+make BOOT_RES_WIDTH=1920 BOOT_RES_HEIGHT=1080 all
+```
+
+Then run from macOS:
+
+```bash
+RUN_BUILD=0 FB_WIDTH=1920 FB_HEIGHT=1080 ./run.sh
+```
+
+On Intel macOS, `run.sh` automatically asks QEMU for `hvf` acceleration. On
+Apple Silicon, an x86_64 guest falls back to TCG translation, so it will be far
+slower than a real x86_64 PC. For that case, lower the framebuffer size first:
+
+```bash
+RUN_BUILD=0 FB_WIDTH=1280 FB_HEIGHT=720 QEMU_SMP=4 ./run.sh
+```
 
 Verify the EFI binary:
 

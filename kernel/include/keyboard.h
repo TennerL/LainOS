@@ -1,6 +1,8 @@
 #ifndef KEYBOARD_H
 #define KEYBOARD_H
 
+#include <stdint.h>
+
 typedef enum {
     KEY_NONE,
     KEY_CHAR,
@@ -33,5 +35,6 @@ keyboard_layout_t keyboard_get_layout(void);
 const char *keyboard_layout_name(keyboard_layout_t layout);
 int keyboard_poll_key(key_event_t *out);
 key_event_t keyboard_read_key(void);
+void keyboard_apply_usb_boot_report(const uint8_t *report, unsigned int report_len);
 
 #endif

@@ -1,4 +1,5 @@
 #include "usb.h"
+#include "keyboard.h"
 #include "kernel.h"
 #include "mouse.h"
 #include "pci.h"
@@ -14,6 +15,7 @@
 #define USB_DEVICE_DESCRIPTOR_SIZE 18u
 #define USB_CONFIG_DESCRIPTOR_CAPACITY 1024u
 #define USB_MOUSE_REPORT_SIZE 16u
+#define USB_KEYBOARD_REPORT_SIZE 8u
 #define USB_HID_REPORT_DESCRIPTOR_CAPACITY 256u
 #define USB_ENDPOINT_MAX_PACKET_MASK 0x07FFu
 #define USB_LATE_ENUM_INITIAL_DELAY_SECONDS 8u
@@ -126,6 +128,7 @@ static uint8_t xhci_device_descriptors[USB_MAX_XHCI_SLOTS + 1u][USB_DEVICE_DESCR
 static uint8_t xhci_config_descriptor[USB_CONFIG_DESCRIPTOR_CAPACITY] __attribute__((aligned(64)));
 static uint8_t xhci_hid_report_descriptor[USB_HID_REPORT_DESCRIPTOR_CAPACITY] __attribute__((aligned(64)));
 static uint8_t xhci_mouse_report[USB_MOUSE_REPORT_SIZE] __attribute__((aligned(64)));
+static uint8_t xhci_keyboard_report[USB_KEYBOARD_REPORT_SIZE] __attribute__((aligned(64)));
 static uint32_t xhci_transfer_enqueue[USB_MAX_XHCI_SLOTS + 1u];
 static uint32_t xhci_transfer_cycle[USB_MAX_XHCI_SLOTS + 1u];
 static uint32_t xhci_transfer_link_update_pending[USB_MAX_XHCI_SLOTS + 1u];
@@ -140,6 +143,11 @@ static uint32_t xhci_mouse_slot;
 static uint32_t xhci_mouse_dci;
 static uint32_t xhci_mouse_report_size;
 static uint32_t xhci_mouse_pending;
+static usb_controller_info_t *xhci_keyboard_controller;
+static uint32_t xhci_keyboard_slot;
+static uint32_t xhci_keyboard_dci;
+static uint32_t xhci_keyboard_report_size;
+static uint32_t xhci_keyboard_pending;
 static uint32_t xhci_late_enum_attempts;
 static unsigned long long xhci_next_late_enum_tick;
 
@@ -979,6 +987,59 @@ static int xhci_find_boot_mouse(uint32_t config_size,
     return -1;
 }
 
+static int xhci_find_boot_keyboard(uint32_t config_size,
+                                   uint8_t *configuration_value,
+                                   uint8_t *interface_number,
+                                   uint8_t *endpoint_address,
+                                   uint16_t *max_packet,
+                                   uint8_t *interval) {
+    uint32_t offset = 0;
+    uint8_t current_interface = 0;
+    uint8_t current_protocol = 0;
+    int in_hid_interface = 0;
+
+    if (config_size < 9u || xhci_config_descriptor[1] != 2u) {
+        return -1;
+    }
+
+    *configuration_value = xhci_config_descriptor[5];
+    while (offset + 2u <= config_size) {
+        uint8_t length = xhci_config_descriptor[offset];
+        uint8_t type = xhci_config_descriptor[offset + 1u];
+
+        if (length < 2u || offset + length > config_size) {
+            break;
+        }
+
+        if (type == 4u && length >= 9u) {
+            current_interface = xhci_config_descriptor[offset + 2u];
+            current_protocol = xhci_config_descriptor[offset + 7u];
+            in_hid_interface = xhci_config_descriptor[offset + 5u] == 3u;
+        } else if (type == 5u && length >= 7u && in_hid_interface && current_protocol == 1u) {
+            uint8_t address = xhci_config_descriptor[offset + 2u];
+            uint8_t attributes = xhci_config_descriptor[offset + 3u];
+            if ((address & 0x80u) != 0 && (attributes & 0x03u) == 3u) {
+                uint16_t endpoint_max_packet =
+                    usb_endpoint_max_packet_size(read_le16(&xhci_config_descriptor[offset + 4u]));
+
+                if (endpoint_max_packet == 0u || endpoint_max_packet > USB_KEYBOARD_REPORT_SIZE) {
+                    endpoint_max_packet = USB_KEYBOARD_REPORT_SIZE;
+                }
+
+                *interface_number = current_interface;
+                *endpoint_address = address;
+                *max_packet = endpoint_max_packet;
+                *interval = xhci_config_descriptor[offset + 6u];
+                return 0;
+            }
+        }
+
+        offset += length;
+    }
+
+    return -1;
+}
+
 static int32_t sign_extend_bits(uint32_t value, uint32_t bits) {
     uint32_t sign;
 
@@ -1282,6 +1343,70 @@ static int xhci_configure_interrupt_in_endpoint(usb_controller_info_t *info,
     return 0;
 }
 
+static int xhci_try_configure_boot_keyboard(usb_controller_info_t *info, uint32_t slot_id, uint32_t speed) {
+    uint32_t config_size = 0;
+    uint8_t configuration_value = 0;
+    uint8_t interface_number = 0;
+    uint8_t endpoint_address = 0;
+    uint16_t max_packet = 0;
+    uint8_t interval = 0;
+    uint32_t dci = 0;
+
+    if (xhci_keyboard_controller != 0) {
+        return -1;
+    }
+    if (xhci_get_config_descriptor(info, slot_id, &config_size) != 0) {
+        return -1;
+    }
+    if (xhci_find_boot_keyboard(config_size,
+                                &configuration_value,
+                                &interface_number,
+                                &endpoint_address,
+                                &max_packet,
+                                &interval) != 0) {
+        return -1;
+    }
+
+    if (xhci_control_transfer(info,
+                              slot_id,
+                              usb_setup_packet(0x00u, 0x09u, configuration_value, 0, 0),
+                              0,
+                              0,
+                              0) != 0) {
+        return -1;
+    }
+
+    (void)xhci_control_transfer(info,
+                                slot_id,
+                                usb_setup_packet(0x21u, 0x0Bu, 0u, interface_number, 0),
+                                0,
+                                0,
+                                0);
+    (void)xhci_control_transfer(info,
+                                slot_id,
+                                usb_setup_packet(0x21u, 0x0Au, 0u, interface_number, 0),
+                                0,
+                                0,
+                                0);
+
+    if (xhci_configure_interrupt_in_endpoint(info,
+                                             slot_id,
+                                             speed,
+                                             endpoint_address,
+                                             max_packet,
+                                             interval,
+                                             &dci) != 0) {
+        return -1;
+    }
+
+    xhci_keyboard_controller = info;
+    xhci_keyboard_slot = slot_id;
+    xhci_keyboard_dci = dci;
+    xhci_keyboard_report_size = max_packet;
+    xhci_keyboard_pending = 0;
+    return 0;
+}
+
 static int xhci_try_configure_boot_mouse(usb_controller_info_t *info, uint32_t slot_id, uint32_t speed) {
     uint32_t config_size = 0;
     uint8_t configuration_value = 0;
@@ -1451,6 +1576,11 @@ static void xhci_reset_connected_ports(usb_controller_info_t *info, uint64_t opb
     xhci_mouse_dci = 0;
     xhci_mouse_report_size = 0;
     xhci_mouse_pending = 0;
+    xhci_keyboard_controller = 0;
+    xhci_keyboard_slot = 0;
+    xhci_keyboard_dci = 0;
+    xhci_keyboard_report_size = 0;
+    xhci_keyboard_pending = 0;
 
     if (max_ports > 255u) {
         max_ports = 255u;
@@ -1502,7 +1632,9 @@ static void xhci_reset_connected_ports(usb_controller_info_t *info, uint64_t opb
                     info->enum_stage = 6;
                     if (xhci_get_device_descriptor(info, slot_id) == 0) {
                         info->enum_stage = 7;
-                        (void)xhci_try_configure_boot_mouse(info, slot_id, speed);
+                        if (xhci_try_configure_boot_keyboard(info, slot_id, speed) != 0) {
+                            (void)xhci_try_configure_boot_mouse(info, slot_id, speed);
+                        }
                     }
         } else {
             info->enum_completion_code = info->last_completion_code;
@@ -1707,6 +1839,16 @@ void usb_init(void) {
 
     controller_count = 0;
     xhci_count = 0;
+    xhci_mouse_controller = 0;
+    xhci_mouse_slot = 0;
+    xhci_mouse_dci = 0;
+    xhci_mouse_report_size = 0;
+    xhci_mouse_pending = 0;
+    xhci_keyboard_controller = 0;
+    xhci_keyboard_slot = 0;
+    xhci_keyboard_dci = 0;
+    xhci_keyboard_report_size = 0;
+    xhci_keyboard_pending = 0;
     xhci_late_enum_attempts = 0;
     xhci_next_late_enum_tick = 0;
     pci_scan(visit_pci, 0);
@@ -2025,7 +2167,9 @@ static void xhci_try_late_mouse_enumeration(void) {
     unsigned long long now;
     unsigned int hz;
 
-    if (xhci_mouse_controller != 0 || xhci_late_enum_attempts >= USB_LATE_ENUM_MAX_ATTEMPTS) {
+    if (xhci_mouse_controller != 0 ||
+        xhci_keyboard_controller != 0 ||
+        xhci_late_enum_attempts >= USB_LATE_ENUM_MAX_ATTEMPTS) {
         return;
     }
 
@@ -2053,35 +2197,74 @@ static void xhci_try_late_mouse_enumeration(void) {
 }
 
 void usb_poll(void) {
-    if (xhci_mouse_controller == 0 ||
-        xhci_mouse_slot == 0 ||
-        xhci_mouse_dci == 0 ||
-        xhci_mouse_report_size == 0) {
+    if ((xhci_mouse_controller == 0 ||
+         xhci_mouse_slot == 0 ||
+         xhci_mouse_dci == 0 ||
+         xhci_mouse_report_size == 0) &&
+        (xhci_keyboard_controller == 0 ||
+         xhci_keyboard_slot == 0 ||
+         xhci_keyboard_dci == 0 ||
+         xhci_keyboard_report_size == 0)) {
         xhci_try_late_mouse_enumeration();
         return;
     }
 
-    if (xhci_mouse_pending) {
-        for (uint32_t i = 0; i < 8u; ++i) {
+    if (xhci_mouse_pending || xhci_keyboard_pending) {
+        for (uint32_t i = 0; i < 16u; ++i) {
             xhci_trb_t event;
+            uint32_t slot;
+            uint32_t completion;
 
             if (!xhci_next_event(&event)) {
                 break;
             }
 
-            xhci_update_erdp(xhci_mouse_controller);
-            if (trb_type(&event) != XHCI_TRB_TYPE_TRANSFER_EVENT ||
-                (event.control >> 24) != xhci_mouse_slot) {
+            slot = event.control >> 24;
+            if (slot == xhci_mouse_slot && xhci_mouse_controller != 0) {
+                xhci_update_erdp(xhci_mouse_controller);
+            } else if (slot == xhci_keyboard_slot && xhci_keyboard_controller != 0) {
+                xhci_update_erdp(xhci_keyboard_controller);
+            } else if (xhci_mouse_controller != 0) {
+                xhci_update_erdp(xhci_mouse_controller);
+            } else if (xhci_keyboard_controller != 0) {
+                xhci_update_erdp(xhci_keyboard_controller);
+            }
+
+            if (trb_type(&event) != XHCI_TRB_TYPE_TRANSFER_EVENT) {
                 continue;
             }
 
-            xhci_mouse_controller->last_completion_code = event.status >> 24;
-            xhci_mouse_controller->mouse_last_completion_code = event.status >> 24;
+            completion = event.status >> 24;
+            if (slot == xhci_keyboard_slot &&
+                xhci_keyboard_controller != 0 &&
+                xhci_keyboard_pending) {
+                xhci_keyboard_controller->last_completion_code = completion;
+                xhci_finish_transfer_link_update(xhci_keyboard_slot, event.parameter);
+                xhci_keyboard_pending = 0;
+                if (completion == XHCI_TRB_COMPLETION_SUCCESS ||
+                    completion == XHCI_TRB_COMPLETION_SHORT_PACKET) {
+                    uint32_t residual = event.status & XHCI_TRB_TRANSFER_LENGTH_MASK;
+                    uint32_t transferred = xhci_keyboard_report_size > residual ?
+                                           xhci_keyboard_report_size - residual :
+                                           xhci_keyboard_report_size;
+                    keyboard_apply_usb_boot_report(xhci_keyboard_report, transferred);
+                }
+                continue;
+            }
+
+            if (slot != xhci_mouse_slot ||
+                xhci_mouse_controller == 0 ||
+                !xhci_mouse_pending) {
+                continue;
+            }
+
+            xhci_mouse_controller->last_completion_code = completion;
+            xhci_mouse_controller->mouse_last_completion_code = completion;
             xhci_finish_transfer_link_update(xhci_mouse_slot, event.parameter);
             xhci_mouse_pending = 0;
             xhci_mouse_controller->mouse_pending = 0;
-            if ((event.status >> 24) == XHCI_TRB_COMPLETION_SUCCESS ||
-                (event.status >> 24) == XHCI_TRB_COMPLETION_SHORT_PACKET) {
+            if (completion == XHCI_TRB_COMPLETION_SUCCESS ||
+                completion == XHCI_TRB_COMPLETION_SHORT_PACKET) {
                 uint32_t residual = event.status & XHCI_TRB_TRANSFER_LENGTH_MASK;
                 uint32_t transferred = xhci_mouse_report_size > residual ?
                                        xhci_mouse_report_size - residual :
@@ -2156,11 +2339,14 @@ void usb_poll(void) {
                     ++xhci_mouse_controller->mouse_report_count;
                 }
             }
-            break;
         }
     }
 
-    if (!xhci_mouse_pending) {
+    if (xhci_mouse_controller != 0 &&
+        xhci_mouse_slot != 0 &&
+        xhci_mouse_dci != 0 &&
+        xhci_mouse_report_size != 0 &&
+        !xhci_mouse_pending) {
         zero_bytes(xhci_mouse_report, sizeof(xhci_mouse_report));
         xhci_enqueue_transfer_trb(xhci_mouse_slot,
                                   phys_addr(xhci_mouse_report),
@@ -2170,6 +2356,21 @@ void usb_poll(void) {
         xhci_ring_doorbell(xhci_mouse_controller, xhci_mouse_slot, xhci_mouse_dci);
         xhci_mouse_pending = 1;
         xhci_mouse_controller->mouse_pending = 1;
+    }
+
+    if (xhci_keyboard_controller != 0 &&
+        xhci_keyboard_slot != 0 &&
+        xhci_keyboard_dci != 0 &&
+        xhci_keyboard_report_size != 0 &&
+        !xhci_keyboard_pending) {
+        zero_bytes(xhci_keyboard_report, sizeof(xhci_keyboard_report));
+        xhci_enqueue_transfer_trb(xhci_keyboard_slot,
+                                  phys_addr(xhci_keyboard_report),
+                                  xhci_keyboard_report_size,
+                                  (XHCI_TRB_TYPE_NORMAL << XHCI_TRB_TYPE_SHIFT) |
+                                  XHCI_TRB_IOC);
+        xhci_ring_doorbell(xhci_keyboard_controller, xhci_keyboard_slot, xhci_keyboard_dci);
+        xhci_keyboard_pending = 1;
     }
 }
 

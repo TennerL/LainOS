@@ -23,6 +23,11 @@ int image_decode_rgb24(const uint8_t *data,
                        uint8_t *rgb,
                        uint32_t rgb_capacity,
                        image_info_t *out_image);
+int image_decode_rgba32(const uint8_t *data,
+                        uint32_t size,
+                        uint8_t *rgba,
+                        uint32_t rgba_capacity,
+                        image_info_t *out_image);
 int image_decode_to_screen(const uint8_t *data,
                            uint32_t size,
                            uint32_t origin_x,

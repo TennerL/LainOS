@@ -4,6 +4,8 @@
 #include "kernel.h"
 #include "kmem.h"
 #include "libc.h"
+#include "netsurf_browser.h"
+#include "netsurf_frontend.h"
 #include "netsurf_port.h"
 #include "registry.h"
 #include "shell.h"
@@ -117,6 +119,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("gfx_clear", graphics_clear),
     KERNEL_EXPORT("image_probe", image_probe),
     KERNEL_EXPORT("image_decode_rgb24", image_decode_rgb24),
+    KERNEL_EXPORT("image_decode_rgba32", image_decode_rgba32),
     KERNEL_EXPORT("image_decode_to_screen", image_decode_to_screen),
     KERNEL_EXPORT("image_decode_to_screen_scaled", image_decode_to_screen_scaled),
     KERNEL_EXPORT("image_decode_scaled_to_packed", image_decode_scaled_to_packed),
@@ -139,6 +142,22 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("netsurf_port_rewrite_render_html", netsurf_port_rewrite_render_html),
     KERNEL_EXPORT("netsurf_port_style_hint_for_tag", netsurf_port_style_hint_for_tag),
     KERNEL_EXPORT("netsurf_port_status", netsurf_port_status),
+    KERNEL_EXPORT("netsurf_kernel_layout_table", netsurf_kernel_layout_table),
+    KERNEL_EXPORT("netsurf_kernel_plotter_table", netsurf_kernel_plotter_table),
+    KERNEL_EXPORT("netsurf_kernel_redraw_context", netsurf_kernel_redraw_context),
+    KERNEL_EXPORT("netsurf_kernel_plot_stats_reset", netsurf_kernel_plot_stats_reset),
+    KERNEL_EXPORT("netsurf_kernel_plot_stats_snapshot", netsurf_kernel_plot_stats_snapshot),
+    KERNEL_EXPORT("netsurf_kernel_frontend_smoke", netsurf_kernel_frontend_smoke),
+    KERNEL_EXPORT("netsurf_kernel_frontend_status", netsurf_kernel_frontend_status),
+    KERNEL_EXPORT("netsurf_browser_render_html", netsurf_browser_render_html),
+    KERNEL_EXPORT("netsurf_browser_render_html_view", netsurf_browser_render_html_view),
+    KERNEL_EXPORT("netsurf_browser_prepare_html_view", netsurf_browser_prepare_html_view),
+    KERNEL_EXPORT("netsurf_browser_mouse_html_view", netsurf_browser_mouse_html_view),
+    KERNEL_EXPORT("netsurf_browser_key_event", netsurf_browser_key_event),
+    KERNEL_EXPORT("netsurf_browser_consume_navigation", netsurf_browser_consume_navigation),
+    KERNEL_EXPORT("netsurf_browser_invalidate_cache", netsurf_browser_invalidate_cache),
+    KERNEL_EXPORT("netsurf_browser_poll", netsurf_browser_poll),
+    KERNEL_EXPORT("netsurf_browser_status", netsurf_browser_status),
     KERNEL_EXPORT("jpg_probe", jpg_probe),
     KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
     KERNEL_EXPORT("jpg_decode_to_screen", jpg_decode_to_screen),
@@ -242,6 +261,10 @@ int kernel_export_value(const char *name, uint64_t *out) {
     }
     if (kernel_export_streq(name, "image_decode_rgb24")) {
         *out = (uint64_t)(uintptr_t)image_decode_rgb24;
+        return 0;
+    }
+    if (kernel_export_streq(name, "image_decode_rgba32")) {
+        *out = (uint64_t)(uintptr_t)image_decode_rgba32;
         return 0;
     }
     if (kernel_export_streq(name, "image_decode_to_screen")) {

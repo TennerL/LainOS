@@ -16,6 +16,12 @@
 [submodule "third_party/netsurf/src/libwapcaplet"]
 	path = third_party/netsurf/src/libwapcaplet
 	url = https://github.com/netsurf-browser/libwapcaplet.git
+[submodule "third_party/netsurf/src/libsvgtiny"]
+	path = third_party/netsurf/src/libsvgtiny
+	url = https://github.com/netsurf-browser/libsvgtiny.git
 [submodule "third_party/netsurf/src/netsurf"]
 	path = third_party/netsurf/src/netsurf
 	url = https://github.com/netsurf-browser/netsurf.git
+[submodule "third_party/expat"]
+	path = third_party/expat
+	url = https://github.com/libexpat/libexpat.git

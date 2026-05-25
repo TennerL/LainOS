@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "lainfs.h"
 #include "keyboard.h"
+#include "libc.h"
 #include "mouse.h"
 #include "usb.h"
 
@@ -13,6 +14,7 @@
 #define SC_RSHIFT 0x36
 #define SC_RALT 0x38
 #define SC_CAPSLOCK 0x3A
+#define KEYBOARD_QUEUE_SIZE 32u
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t value;
@@ -55,6 +57,10 @@ static int ctrl_down;
 static int altgr_down;
 static int extended_scancode; 
 static keyboard_layout_t current_layout;
+static key_event_t key_queue[KEYBOARD_QUEUE_SIZE];
+static volatile unsigned int key_queue_head;
+static volatile unsigned int key_queue_tail;
+static uint8_t usb_last_report[8];
 
 static char apply_alpha_case(char ch) {
     if (ch < 'a' || ch > 'z') return ch;
@@ -190,6 +196,174 @@ const char *keyboard_layout_name(keyboard_layout_t layout) {
     return "us";
 }
 
+static int keyboard_queue_push(key_event_t key) {
+    unsigned long flags;
+    unsigned int next;
+
+    if (key.type == KEY_NONE) {
+        return 0;
+    }
+
+    flags = irq_save();
+    next = (key_queue_head + 1u) % KEYBOARD_QUEUE_SIZE;
+    if (next == key_queue_tail) {
+        irq_restore(flags);
+        return -1;
+    }
+
+    key_queue[key_queue_head] = key;
+    key_queue_head = next;
+    irq_restore(flags);
+    return 0;
+}
+
+static int keyboard_queue_pop(key_event_t *out) {
+    unsigned long flags;
+
+    flags = irq_save();
+    if (key_queue_tail == key_queue_head) {
+        irq_restore(flags);
+        return 0;
+    }
+
+    *out = key_queue[key_queue_tail];
+    key_queue_tail = (key_queue_tail + 1u) % KEYBOARD_QUEUE_SIZE;
+    irq_restore(flags);
+    return 1;
+}
+
+static uint8_t usb_hid_to_set1_scancode(uint8_t code) {
+    static const uint8_t letters[] = {
+        0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23,
+        0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19,
+        0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D,
+        0x15, 0x2C,
+    };
+    static const uint8_t digits[] = {
+        0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+        0x0A, 0x0B,
+    };
+
+    if (code >= 0x04u && code <= 0x1Du) {
+        return letters[code - 0x04u];
+    }
+    if (code >= 0x1Eu && code <= 0x27u) {
+        return digits[code - 0x1Eu];
+    }
+
+    switch (code) {
+        case 0x28: return 0x1C;
+        case 0x29: return 0x01;
+        case 0x2A: return 0x0E;
+        case 0x2B: return 0x0F;
+        case 0x2C: return 0x39;
+        case 0x2D: return 0x0C;
+        case 0x2E: return 0x0D;
+        case 0x2F: return 0x1A;
+        case 0x30: return 0x1B;
+        case 0x31: return 0x2B;
+        case 0x32: return 0x2B;
+        case 0x33: return 0x27;
+        case 0x34: return 0x28;
+        case 0x35: return 0x29;
+        case 0x36: return 0x33;
+        case 0x37: return 0x34;
+        case 0x38: return 0x35;
+        case 0x39: return SC_CAPSLOCK;
+        default: return 0;
+    }
+}
+
+static int usb_report_contains_key(const uint8_t *report, uint8_t code) {
+    for (unsigned int i = 2u; i < 8u; ++i) {
+        if (report[i] == code) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int usb_hid_key_to_event(uint8_t hid_code, key_event_t *out) {
+    uint8_t code;
+    char ch;
+
+    *out = (key_event_t){ KEY_NONE, 0 };
+
+    switch (hid_code) {
+        case 0x4F: *out = (key_event_t){ KEY_RIGHT, 0 }; return 1;
+        case 0x50: *out = (key_event_t){ KEY_LEFT, 0 }; return 1;
+        case 0x51: *out = (key_event_t){ KEY_DOWN, 0 }; return 1;
+        case 0x52: *out = (key_event_t){ KEY_UP, 0 }; return 1;
+        default: break;
+    }
+
+    code = usb_hid_to_set1_scancode(hid_code);
+    if (code == 0u) {
+        return 0;
+    }
+
+    if (code == SC_CAPSLOCK) {
+        caps_lock_on = !caps_lock_on;
+        return 0;
+    }
+
+    if (ctrl_down) {
+        switch (code) {
+            case 0x12: *out = (key_event_t){ KEY_CTRL_E, 0 }; return 1;
+            case 0x1F: *out = (key_event_t){ KEY_CTRL_S, 0 }; return 1;
+            case 0x10: *out = (key_event_t){ KEY_CTRL_Q, 0 }; return 1;
+            case 0x11: *out = (key_event_t){ KEY_CTRL_W, 0 }; return 1;
+            default: break;
+        }
+    }
+
+    switch (code) {
+        case 0x01: *out = (key_event_t){ KEY_ESC, 0 }; return 1;
+        case 0x1C: *out = (key_event_t){ KEY_ENTER, '\n' }; return 1;
+        case 0x0E: *out = (key_event_t){ KEY_BACKSPACE, '\b' }; return 1;
+        case 0x0F: *out = (key_event_t){ KEY_TAB, '\t' }; return 1;
+        default: break;
+    }
+
+    ch = scancode_to_ascii(code);
+    if (ch) {
+        *out = (key_event_t){ KEY_CHAR, ch };
+        return 1;
+    }
+
+    return 0;
+}
+
+void keyboard_apply_usb_boot_report(const uint8_t *report, unsigned int report_len) {
+    uint8_t normalized[8] = {0};
+
+    if (report == 0 || report_len < 3u) {
+        return;
+    }
+    if (report_len > sizeof(normalized)) {
+        report_len = sizeof(normalized);
+    }
+    memcpy(normalized, report, report_len);
+
+    shift_down = (normalized[0] & 0x22u) != 0u;
+    ctrl_down = (normalized[0] & 0x11u) != 0u;
+    altgr_down = (normalized[0] & 0x40u) != 0u;
+
+    for (unsigned int i = 2u; i < 8u; ++i) {
+        key_event_t key;
+        uint8_t code = normalized[i];
+
+        if (code == 0u || code == 1u || usb_report_contains_key(usb_last_report, code)) {
+            continue;
+        }
+        if (usb_hid_key_to_event(code, &key)) {
+            (void)keyboard_queue_push(key);
+        }
+    }
+
+    memcpy(usb_last_report, normalized, sizeof(usb_last_report));
+}
+
 static int keyboard_decode_event(uint8_t status, uint8_t sc, key_event_t *out) {
     key_event_t none = { KEY_NONE, 0 };
     *out = none;
@@ -280,6 +454,9 @@ void keyboard_init(void) {
     altgr_down = 0;
     extended_scancode = 0;
     current_layout = KEYBOARD_LAYOUT_US;
+    key_queue_head = 0;
+    key_queue_tail = 0;
+    memset(usb_last_report, 0, sizeof(usb_last_report));
     while (ps2_has_data()) {
         (void)inb(PS2_DATA_PORT);
     }
@@ -295,6 +472,9 @@ int keyboard_poll_key(key_event_t *out) {
     }
 
     *out = none;
+    if (keyboard_queue_pop(out)) {
+        return 1;
+    }
     while (ps2_read_data_atomic(&status, &sc)) {
         if (keyboard_decode_event(status, sc, out)) {
             return 1;
@@ -387,11 +567,18 @@ key_event_t keyboard_read_key(void) {
     key_event_t none = { KEY_NONE, 0 };
 
     for (;;) {
+        key_event_t queued = none;
+        if (keyboard_queue_pop(&queued)) {
+            return queued;
+        }
         while (!ps2_has_data()) {
             console_cursor_tick();
             statusbar_update_if_due();
             shell_modules_tick();
             usb_poll();
+            if (keyboard_queue_pop(&queued)) {
+                return queued;
+            }
             (void)kernel_task_poll();
             status_cpu_enter_idle();
             __asm__ __volatile__("sti; hlt");

@@ -164,7 +164,7 @@ static int tls_build_http_request(const char *path,
     APPEND_TEXT(path);
     APPEND_TEXT(" HTTP/1.0\r\nHost: ");
     APPEND_TEXT(host);
-    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/css,text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,*/*;q=0.5\r\nAccept-Encoding: identity\r\nUser-Agent: Mozilla/5.0 (X11; LainOS x86_64) LainOS-ZBrowser/0.1 NetSurf/3.12 (+https://github.com/TennerL/LainOS)\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_TEXT
 #undef APPEND_CH
@@ -181,11 +181,11 @@ int net_tls_http_get(uint32_t index,
                      uint32_t out_capacity,
                      uint32_t *out_size,
                      net_http_info_t *info) {
-    br_ssl_client_context *cc;
-    br_x509_minimal_context *xc;
-    uint8_t *iobuf;
-    uint8_t *rxbuf;
-    char request[512];
+    br_ssl_client_context *cc = 0;
+    br_x509_minimal_context *xc = 0;
+    uint8_t *iobuf = 0;
+    uint8_t *rxbuf = 0;
+    char *request = 0;
     uint32_t request_len;
     uint32_t request_pos = 0;
     int request_flushed = 0;
@@ -207,9 +207,17 @@ int net_tls_http_get(uint32_t index,
     }
     out[0] = '\0';
 
-    if (tls_build_http_request(path, host, request, sizeof(request)) != 0) {
+    request = (char *)kmalloc(NET_HTTP_REQUEST_SIZE);
+    if (request == 0) {
+        result = -11;
+        net_http_parse_info(0, 0, 0, 0, 0, result, info);
+        goto cleanup;
+    }
+
+    if (tls_build_http_request(path, host, request, NET_HTTP_REQUEST_SIZE) != 0) {
+        result = -2;
         net_http_parse_info(0, 0, 0, 0, 0, -2, info);
-        return -2;
+        goto cleanup;
     }
     request_len = tls_strlen(request);
 
@@ -409,6 +417,7 @@ int net_tls_http_get(uint32_t index,
 
 cleanup:
     net_tcp_stream_close();
+    kfree(request);
     kfree(rxbuf);
     kfree(iobuf);
     kfree(xc);

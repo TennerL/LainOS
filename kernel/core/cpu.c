@@ -44,6 +44,16 @@
 #define LAPIC_ICR_STARTUP 0x600u
 #define LAPIC_ICR_LEVEL_ASSERT 0x4000u
 #define LAPIC_ICR_TRIGGER_LEVEL 0x8000u
+#define CPU_CPUID_EDX_FPU (1u << 0)
+#define CPU_CPUID_EDX_FXSR (1u << 24)
+#define CPU_CPUID_EDX_SSE (1u << 25)
+#define CPU_CPUID_EDX_SSE2 (1u << 26)
+#define CPU_CR0_MP (1ull << 1)
+#define CPU_CR0_EM (1ull << 2)
+#define CPU_CR0_TS (1ull << 3)
+#define CPU_CR0_NE (1ull << 5)
+#define CPU_CR4_OSFXSR (1ull << 9)
+#define CPU_CR4_OSXMMEXCPT (1ull << 10)
 
 struct __attribute__((packed)) gdtr64 {
     uint16_t limit;
@@ -587,6 +597,7 @@ void cpu_ap_entry(void) {
     unsigned int apic_id;
 
     cpu_init_tables();
+    cpu_enable_fpu_sse();
     lapic_enable();
     apic_id = lapic_current_id();
     core_index = cpu_index_for_lapic_id(apic_id);
@@ -623,6 +634,48 @@ static void cpu_cpuid(uint32_t leaf, uint32_t subleaf, uint32_t *a, uint32_t *b,
     if (d != 0) {
         *d = edx;
     }
+}
+
+static int cpu_has_fpu_sse(void) {
+    uint32_t max_leaf;
+    uint32_t edx;
+
+    cpu_cpuid(0u, 0u, &max_leaf, 0, 0, 0);
+    if (max_leaf < 1u) {
+        return 0;
+    }
+
+    cpu_cpuid(1u, 0u, 0, 0, 0, &edx);
+    return (edx & (CPU_CPUID_EDX_FPU |
+                   CPU_CPUID_EDX_FXSR |
+                   CPU_CPUID_EDX_SSE |
+                   CPU_CPUID_EDX_SSE2)) ==
+           (CPU_CPUID_EDX_FPU |
+            CPU_CPUID_EDX_FXSR |
+            CPU_CPUID_EDX_SSE |
+            CPU_CPUID_EDX_SSE2);
+}
+
+void cpu_enable_fpu_sse(void) {
+    uint64_t cr0;
+    uint64_t cr4;
+    uint32_t mxcsr __attribute__((aligned(16))) = 0x1F80u;
+
+    if (!cpu_has_fpu_sse()) {
+        return;
+    }
+
+    __asm__ __volatile__("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~(CPU_CR0_EM | CPU_CR0_TS);
+    cr0 |= CPU_CR0_MP | CPU_CR0_NE;
+    __asm__ __volatile__("mov %0, %%cr0" :: "r"(cr0) : "memory");
+
+    __asm__ __volatile__("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= CPU_CR4_OSFXSR | CPU_CR4_OSXMMEXCPT;
+    __asm__ __volatile__("mov %0, %%cr4" :: "r"(cr4) : "memory");
+
+    __asm__ __volatile__("fninit");
+    __asm__ __volatile__("ldmxcsr %0" :: "m"(mxcsr));
 }
 
 static unsigned int cpu_cpuid_logical_count(void) {

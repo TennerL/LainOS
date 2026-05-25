@@ -3,47 +3,52 @@
 mkdir mods
 cd mods
 
-cp R:/examples/hwdash_module.Z hwdash_module.Z
-cp R:/examples/hwdash_module.zbuild hwdash_module.zbuild
+//cp R:/examples/hwdash_module.Z hwdash_module.Z
+//cp R:/examples/hwdash_module.zbuild hwdash_module.zbuild
 
 cp R:/examples/taskmgr_module.Z taskmgr_module.Z
 cp R:/examples/taskmgr_module.zbuild taskmgr_module.zbuild
 
 cp R:/examples/filemgr_module.Z filemgr_module.Z
 cp R:/examples/filemgr_module.zbuild filemgr_module.zbuild
-zclean zbrowser_module
+//zclean zbrowser_module
 rm zbrowser_module.Z
 rm zbrowser_html.Z
 rm zbrowser_html_api.Z
 rm zbrowser_module.zbuild
+rm zbrowser_netsurf.Z
+rm zbrowser_netsurf.zbuild
 rm zbrowser_smoke.html
-cp R:/examples/zbrowser_module.Z zbrowser_module.Z
-cp R:/examples/zbrowser_html.Z zbrowser_html.Z
-cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
-cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
-cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
+//cp R:/examples/zbrowser_module.Z zbrowser_module.Z
+//cp R:/examples/zbrowser_html.Z zbrowser_html.Z
+//cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
+//cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
+cp R:/examples/zbrowser_netsurf.Z zbrowser_netsurf.Z
+cp R:/examples/zbrowser_netsurf.zbuild zbrowser_netsurf.zbuild
+//cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
 
 cp R:/examples/personalize_module.Z personalize_module.Z
 cp R:/examples/personalize_module.zbuild personalize_module.zbuild
 
-cp R:/examples/image_viewer_module.Z image_viewer_module.Z
-cp R:/examples/image_viewer.zbuild image_viewer.zbuild
+//cp R:/examples/image_viewer_module.Z image_viewer_module.Z
+//cp R:/examples/image_viewer.zbuild image_viewer.zbuild
 cp R:/examples/kernel_api.Z kernel_api.Z
 
 //zinstall hwdash_module
 zinstall taskmgr_module
 zinstall filemgr_module
-zinstall zbrowser_module
+//zinstall zbrowser_module
+zinstall zbrowser_netsurf
 zinstall personalize_module
-zinstall image_viewer
+//zinstall image_viewer
 
-bgcolor 0x0035063E
+clear
 
 net reset
 // net ip 192.168.2.84 255.255.255.0 192.168.2.1
 net ip 192.168.178.96 255.255.255.0 192.168.178.1
 net dns 1.1.1.1
-net dhcp
+//net dhcp
 
 keymap de
 clear

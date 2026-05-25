@@ -83,8 +83,8 @@ typedef struct {
     uint32_t order;
 } web_style_state_t;
 
-#define WEB_STYLE_MAX_CACHED_RULES 1024u
-#define WEB_CSS_MAX_NODES 8192u
+#define WEB_STYLE_MAX_CACHED_RULES 4096u
+#define WEB_CSS_MAX_NODES 16384u
 #define WEB_CSS_MAX_STACK 96u
 #define WEB_CSS_MAX_CLASSES 16u
 #define WEB_CSS_TRACE_DETAIL_NODE_LIMIT 32u
@@ -1289,15 +1289,32 @@ static void web_set_display(web_style_state_t *state, const uint8_t *value, uint
                             WEB_STYLE_FLAG_DISPLAY_TABLE_CELL);
     if (web_range_contains_cstr_ci(value, start, end, "none")) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_NONE;
+    } else if (web_range_contains_cstr_ci(value, start, end, "inline-grid") ||
+               web_range_contains_cstr_ci(value, start, end, "grid") ||
+               web_range_contains_cstr_ci(value, start, end, "flow-root") ||
+               web_range_contains_cstr_ci(value, start, end, "-webkit-box") ||
+               web_range_contains_cstr_ci(value, start, end, "box") ||
+               web_range_contains_cstr_ci(value, start, end, "inline-block")) {
+        state->style.display = WEB_STYLE_DISPLAY_BLOCK;
     } else if (web_range_contains_cstr_ci(value, start, end, "flex")) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_FLEX;
         state->style.display = WEB_STYLE_DISPLAY_FLEX;
     } else if (web_range_contains_cstr_ci(value, start, end, "table-cell")) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_CELL;
         state->style.display = WEB_STYLE_DISPLAY_TABLE_CELL;
+    } else if (web_range_contains_cstr_ci(value, start, end, "table-caption")) {
+        state->style.display = WEB_STYLE_DISPLAY_BLOCK;
+    } else if (web_range_contains_cstr_ci(value, start, end, "table-row-group") ||
+               web_range_contains_cstr_ci(value, start, end, "table-header-group") ||
+               web_range_contains_cstr_ci(value, start, end, "table-footer-group")) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_ROW;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE_ROW;
     } else if (web_range_contains_cstr_ci(value, start, end, "table-row")) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_ROW;
         state->style.display = WEB_STYLE_DISPLAY_TABLE_ROW;
+    } else if (web_range_contains_cstr_ci(value, start, end, "inline-table")) {
+        state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE;
+        state->style.display = WEB_STYLE_DISPLAY_TABLE;
     } else if (web_range_contains_cstr_ci(value, start, end, "table")) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE;
         state->style.display = WEB_STYLE_DISPLAY_TABLE;
@@ -4281,14 +4298,19 @@ static void web_css_apply_computed_style(const web_css_node_t *node,
     } else if (type == CSS_DISPLAY_LIST_ITEM) {
         state->style.display = WEB_STYLE_DISPLAY_LIST_ITEM;
         web_css_set_score(state, WEB_PROP_DISPLAY);
-    } else if (type == CSS_DISPLAY_BLOCK) {
+    } else if (type == CSS_DISPLAY_BLOCK ||
+               type == CSS_DISPLAY_RUN_IN ||
+               type == CSS_DISPLAY_INLINE_BLOCK ||
+               type == CSS_DISPLAY_GRID ||
+               type == CSS_DISPLAY_INLINE_GRID) {
         state->style.display = WEB_STYLE_DISPLAY_BLOCK;
         web_css_set_score(state, WEB_PROP_DISPLAY);
     } else if (type == CSS_DISPLAY_FLEX || type == CSS_DISPLAY_INLINE_FLEX) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_FLEX;
         state->style.display = WEB_STYLE_DISPLAY_FLEX;
         web_css_set_score(state, WEB_PROP_DISPLAY);
-    } else if (type == CSS_DISPLAY_TABLE) {
+    } else if (type == CSS_DISPLAY_TABLE ||
+               type == CSS_DISPLAY_INLINE_TABLE) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE;
         state->style.display = WEB_STYLE_DISPLAY_TABLE;
         web_css_set_score(state, WEB_PROP_DISPLAY);
@@ -4299,10 +4321,12 @@ static void web_css_apply_computed_style(const web_css_node_t *node,
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_ROW;
         state->style.display = WEB_STYLE_DISPLAY_TABLE_ROW;
         web_css_set_score(state, WEB_PROP_DISPLAY);
-    } else if (type == CSS_DISPLAY_TABLE_CELL ||
-               type == CSS_DISPLAY_TABLE_CAPTION) {
+    } else if (type == CSS_DISPLAY_TABLE_CELL) {
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_TABLE_CELL;
         state->style.display = WEB_STYLE_DISPLAY_TABLE_CELL;
+        web_css_set_score(state, WEB_PROP_DISPLAY);
+    } else if (type == CSS_DISPLAY_TABLE_CAPTION) {
+        state->style.display = WEB_STYLE_DISPLAY_BLOCK;
         web_css_set_score(state, WEB_PROP_DISPLAY);
     }
 
@@ -4840,6 +4864,7 @@ static void web_apply_netsurf_hints(const uint8_t *html, uint32_t tag_pos, web_s
     uint32_t display = NETSURF_PORT_HINT_DISPLAY_UNKNOWN;
     uint32_t role = NETSURF_PORT_HINT_ROLE_NONE;
     uint32_t flags = 0;
+    int document_flow = 0;
 
     if (state == NULL ||
         netsurf_port_style_hint_for_tag(html, tag_pos, &display, &role, &flags) == 0) {
@@ -4850,10 +4875,46 @@ static void web_apply_netsurf_hints(const uint8_t *html, uint32_t tag_pos, web_s
         state->style.flags |= WEB_STYLE_FLAG_DISPLAY_NONE;
         return;
     }
-    if (display != NETSURF_PORT_HINT_DISPLAY_UNKNOWN) {
-        web_set_display_hint(state, display, 0, 0);
+    if (display != NETSURF_PORT_HINT_DISPLAY_UNKNOWN &&
+        (state->style.flags & WEB_STYLE_FLAG_DISPLAY_NONE) == 0u) {
+        web_set_display_hint(state, display, 65534u, 1);
     }
-    (void)role;
+    if (display == NETSURF_PORT_HINT_DISPLAY_BLOCK ||
+        display == NETSURF_PORT_HINT_DISPLAY_LIST_ITEM ||
+        role == NETSURF_PORT_HINT_ROLE_PRIMARY ||
+        role == NETSURF_PORT_HINT_ROLE_HEADING ||
+        role == NETSURF_PORT_HINT_ROLE_LIST) {
+        document_flow = 1;
+    }
+    if (role == NETSURF_PORT_HINT_ROLE_CHROME ||
+        role == NETSURF_PORT_HINT_ROLE_TABLE ||
+        role == NETSURF_PORT_HINT_ROLE_ROW ||
+        role == NETSURF_PORT_HINT_ROLE_CELL ||
+        role == NETSURF_PORT_HINT_ROLE_MEDIA ||
+        role == NETSURF_PORT_HINT_ROLE_FORM) {
+        document_flow = 0;
+    }
+    if (document_flow != 0) {
+        state->style.flags &= ~(WEB_STYLE_FLAG_HAS_POSITION |
+                                WEB_STYLE_FLAG_HAS_LEFT |
+                                WEB_STYLE_FLAG_HAS_RIGHT |
+                                WEB_STYLE_FLAG_HAS_TOP |
+                                WEB_STYLE_FLAG_HAS_BOTTOM |
+                                WEB_STYLE_FLAG_HAS_WIDTH |
+                                WEB_STYLE_FLAG_HAS_MIN_WIDTH |
+                                WEB_STYLE_FLAG_HAS_MAX_WIDTH |
+                                WEB_STYLE_FLAG_FLOAT_LEFT |
+                                WEB_STYLE_FLAG_FLOAT_RIGHT);
+        state->style.position = WEB_STYLE_POS_STATIC;
+        state->style.float_side = WEB_STYLE_FLOAT_NONE;
+        state->style.left = 0;
+        state->style.right = 0;
+        state->style.top = 0;
+        state->style.bottom = 0;
+        state->style.width = 0;
+        state->style.min_width = 0;
+        state->style.max_width = 0;
+    }
 }
 
 static void web_apply_inline_style(const uint8_t *html,
@@ -4923,8 +4984,8 @@ static void web_css_precompute_styles(const uint8_t *html,
         }
         ++selected_nodes;
         hint_started = timer_ticks();
-        web_apply_netsurf_hints(html, node->tag_pos, &state);
         web_apply_presentational_attrs(html, node->tag_pos, &state, viewport_width, viewport_height);
+        web_apply_netsurf_hints(html, node->tag_pos, &state);
         web_apply_hidden_attrs(html, node->tag_pos, &state);
         hint_ticks += timer_ticks() - hint_started;
         node->cached_style = state.style;
@@ -4968,7 +5029,6 @@ int web_style_for_cached_rules(const uint8_t *html,
     }
     web_style_state_t state;
     web_state_init(&state);
-    web_apply_netsurf_hints(html, tag_pos, &state);
     web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
     if (rules != NULL && rules->selectors != 0 && rules->decls != 0 &&
         rules->selector_stride != 0 && rules->decl_stride != 0) {
@@ -4990,6 +5050,7 @@ int web_style_for_cached_rules(const uint8_t *html,
         }
     }
     web_apply_inline_style(html, tag_pos, &state, viewport_width, viewport_height);
+    web_apply_netsurf_hints(html, tag_pos, &state);
     web_apply_hidden_attrs(html, tag_pos, &state);
     *out_style = state.style;
     return 0;
@@ -5017,8 +5078,8 @@ int web_style_for_tag(const uint8_t *html,
     web_style_state_t state;
     web_state_init(&state);
     if (node != NULL && web_css_style_for_node(node, viewport_width, viewport_height, &state) == 0) {
-        web_apply_netsurf_hints(html, tag_pos, &state);
         web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
+        web_apply_netsurf_hints(html, tag_pos, &state);
         web_apply_hidden_attrs(html, tag_pos, &state);
         *out_style = state.style;
         node->cached_style = state.style;
@@ -5027,7 +5088,6 @@ int web_style_for_tag(const uint8_t *html,
         node->style_viewport_height = viewport_height;
         return 0;
     }
-    web_apply_netsurf_hints(html, tag_pos, &state);
     web_apply_presentational_attrs(html, tag_pos, &state, viewport_width, viewport_height);
     if (web_cached_html == html &&
         web_cached_viewport_width == viewport_width &&
@@ -5037,6 +5097,7 @@ int web_style_for_tag(const uint8_t *html,
         web_scan_style_blocks(html, tag_pos, &state, viewport_width, viewport_height);
     }
     web_apply_inline_style(html, tag_pos, &state, viewport_width, viewport_height);
+    web_apply_netsurf_hints(html, tag_pos, &state);
     web_apply_hidden_attrs(html, tag_pos, &state);
     *out_style = state.style;
     return 0;

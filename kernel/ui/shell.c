@@ -3989,11 +3989,12 @@ int shell_api_http_get(const char *url, char *buffer, uint32_t capacity) {
 
 int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_http_info_t *info) {
     uint32_t size = 0;
-    char current_url[256];
-    char next_url[256];
+    char *current_url = 0;
+    char *next_url = 0;
     net_http_info_t local_info;
     net_http_info_t *fetch_info = info != 0 ? info : &local_info;
     int status;
+    int result;
 
     if (info != 0) {
         for (uint32_t i = 0; i < sizeof(*info); ++i) {
@@ -4013,13 +4014,26 @@ int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_
         return -2;
     }
 
-    copy_text_limited(current_url, sizeof(current_url), url);
+    current_url = (char *)kmalloc(NET_HTTP_URL_SIZE);
+    next_url = (char *)kmalloc(NET_HTTP_URL_SIZE);
+    if (current_url == 0 || next_url == 0) {
+        if (info != 0) {
+            info->error = -11;
+        }
+        kfree(current_url);
+        kfree(next_url);
+        return -11;
+    }
+
+    copy_text_limited(current_url, NET_HTTP_URL_SIZE, url);
     for (uint32_t redirects = 0; redirects < 5u; ++redirects) {
         for (uint32_t i = 0; i < sizeof(*fetch_info); ++i) {
             ((uint8_t *)fetch_info)[i] = 0;
         }
         status = net_http_get_ex(0, current_url, buffer, capacity, &size, fetch_info);
         if (status != 0) {
+            kfree(current_url);
+            kfree(next_url);
             return status;
         }
         if (fetch_info->status_code >= 300u &&
@@ -4028,10 +4042,12 @@ int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_
             if (shell_http_make_redirect_url(current_url,
                                              fetch_info->location,
                                              next_url,
-                                             sizeof(next_url)) != 0) {
+                                             NET_HTTP_URL_SIZE) != 0) {
+                kfree(current_url);
+                kfree(next_url);
                 return -13;
             }
-            copy_text_limited(current_url, sizeof(current_url), next_url);
+            copy_text_limited(current_url, NET_HTTP_URL_SIZE, next_url);
             continue;
         }
         break;
@@ -4039,12 +4055,17 @@ int shell_api_http_get_ex(const char *url, char *buffer, uint32_t capacity, net_
     if (fetch_info->status_code >= 300u &&
         fetch_info->status_code < 400u &&
         fetch_info->location[0] != '\0') {
+        kfree(current_url);
+        kfree(next_url);
         return -13;
     }
     if (size < capacity) {
         buffer[size] = '\0';
     }
-    return (int)size;
+    result = (int)size;
+    kfree(current_url);
+    kfree(next_url);
+    return result;
 }
 
 int shell_api_rename(const char *old_path, const char *new_path) {

@@ -1899,7 +1899,9 @@ static void desktop_close_module_app(desktop_module_window_t *slot) {
 }
 
 static int desktop_module_prefers_large_window(const char *name) {
-    return name != 0 && text_ends_with(name, "zbrowser_module.zo");
+    return name != 0 &&
+           (text_ends_with(name, "zbrowser_module.zo") ||
+            text_ends_with(name, "zbrowser_netsurf.zo"));
 }
 
 static void desktop_open_module_app(uint32_t index) {
@@ -1971,6 +1973,10 @@ static int desktop_open_module_app_by_name(const char *name, int load_from_mods)
             text_copy_limited(module_path,
                               sizeof(module_path),
                               "/mods/zbrowser_html.zo /mods/zbrowser_module.zo");
+        } else if (text_equals(name, "zbrowser_netsurf.zo")) {
+            text_copy_limited(module_path,
+                              sizeof(module_path),
+                              "/mods/zbrowser_netsurf.zo");
         } else {
             desktop_mods_path_for_name(name, module_path, sizeof(module_path));
         }
@@ -3615,10 +3621,6 @@ void desktop_run(const boot_info_t *info) {
         return;
     }
 
-    if (!mouse_enabled()) {
-        (void)mouse_init();
-    }
-
     console_cursor_enable(0);
     desktop_terminal_open();
     desktop_redraw_all();
@@ -4619,6 +4621,11 @@ static void desktop_try_zbrowser_autostart(void) {
     if (desktop_open_module_app_by_name("zbrowser_module.zo", 1) != 0) {
         console_puts("desktop: zbrowser autostart failed\n");
         return;
+    }
+    desktop_blur_module_app();
+    editor_focused = 0;
+    if (terminal_open) {
+        desktop_terminal_focus();
     }
     console_puts("desktop: zbrowser autostart opened\n");
 }

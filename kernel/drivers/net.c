@@ -2240,7 +2240,7 @@ static int net_build_http_request(const char *path,
         APPEND_DEC(parts[2]); APPEND_CH('.');
         APPEND_DEC(parts[3]);
     }
-    APPEND_TEXT("\r\nAccept: text/html,image/*,*/*\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS-ZBrowser/0.1\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/css,text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,*/*;q=0.5\r\nAccept-Encoding: identity\r\nUser-Agent: Mozilla/5.0 (X11; LainOS x86_64) LainOS-ZBrowser/0.1 NetSurf/3.12 (+https://github.com/TennerL/LainOS)\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_DEC
 #undef APPEND_TEXT
@@ -2503,10 +2503,10 @@ int net_http_get_ex(uint32_t index,
     uint32_t ip = 0;
     uint16_t port = 80u;
     const char *path = 0;
-    char host[128];
+    char host[NET_HTTP_HOST_SIZE];
     uint8_t mac[6];
     uint32_t arp_ip = 0;
-    char request[512];
+    char *request;
     uint32_t request_size;
     int is_https = 0;
     net_http_info_t final_info;
@@ -2550,7 +2550,14 @@ int net_http_get_ex(uint32_t index,
         return -3;
     }
 
-    if (net_build_http_request(path, ip, host, request, sizeof(request)) != 0) {
+    request = (char *)kmalloc(NET_HTTP_REQUEST_SIZE);
+    if (request == 0) {
+        net_http_parse_info(0, 0, 0, 0, 0, -11, info);
+        return -11;
+    }
+
+    if (net_build_http_request(path, ip, host, request, NET_HTTP_REQUEST_SIZE) != 0) {
+        kfree(request);
         net_http_parse_info(0, 0, 0, 0, 0, -2, info);
         return -2;
     }
@@ -2571,6 +2578,7 @@ int net_http_get_ex(uint32_t index,
     tcp_get.info = info;
 
     if (net_send_tcp(index, mac, ip, tcp_get.local_port, port, tcp_get.seq, 0, 0x02u, 0, 0) != 0) {
+        kfree(request);
         tcp_get.active = 0;
         net_http_parse_info(0, 0, 0, 0, 0, -4, info);
         return -4;
@@ -2578,6 +2586,7 @@ int net_http_get_ex(uint32_t index,
     ++tcp_get.seq;
 
     if (net_wait_for_tcp_connected(index) != 0) {
+        kfree(request);
         tcp_get.active = 0;
         net_http_parse_info(tcp_get.header,
                             tcp_get.header_size,
@@ -2599,6 +2608,7 @@ int net_http_get_ex(uint32_t index,
                      0x18u,
                      request,
                      request_size) != 0) {
+        kfree(request);
         tcp_get.active = 0;
         net_http_parse_info(tcp_get.header,
                             tcp_get.header_size,
@@ -2610,6 +2620,7 @@ int net_http_get_ex(uint32_t index,
         return -4;
     }
     tcp_get.seq += request_size;
+    kfree(request);
 
     if (net_wait_for_tcp_done(index) != 0) {
         tcp_get.active = 0;
