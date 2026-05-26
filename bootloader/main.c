@@ -16,6 +16,7 @@
 #define MBR_PARTITION_TABLE_OFFSET 446u
 #define MBR_PARTITION_ENTRY_SIZE 16u
 #define MBR_SIGNATURE_OFFSET 510u
+#define MBR_PARTITION_TYPE_LAINFS 0x99u
 
 #ifndef BOOT_RES_WIDTH
 #define BOOT_RES_WIDTH 0
@@ -29,11 +30,12 @@ typedef void (*kernel_entry_t)(boot_info_t *boot_info);
 
 __attribute__((noreturn)) static void jump_to_kernel(void *entry_point, boot_info_t *boot_info) {
     __asm__ __volatile__(
+        "mov %1, %%rax\n\t"
         "mov %0, %%rdi\n\t"
-        "jmp *%1\n\t"
+        "jmp *%%rax\n\t"
         :
         : "r"(boot_info), "r"(entry_point)
-        : "rdi", "memory"
+        : "rax", "rdi", "memory"
     );
 
     __builtin_unreachable();
@@ -363,6 +365,23 @@ static EFI_STATUS reserve_kernel_pages(EFI_SYSTEM_TABLE *SystemTable, const elf_
     return status;
 }
 
+static void boot_memcpy(void *dest, const void *src, UINTN size) {
+    UINT8 *d = (UINT8 *)dest;
+    const UINT8 *s = (const UINT8 *)src;
+
+    for (UINTN i = 0; i < size; ++i) {
+        d[i] = s[i];
+    }
+}
+
+static void boot_memset(void *dest, UINT8 value, UINTN size) {
+    UINT8 *d = (UINT8 *)dest;
+
+    for (UINTN i = 0; i < size; ++i) {
+        d[i] = value;
+    }
+}
+
 static EFI_STATUS load_elf_kernel(void *file_buffer, UINTN file_size, const elf_load_plan_t *plan) {
     EFI_STATUS status;
     elf_load_plan_t check_plan;
@@ -378,33 +397,69 @@ static EFI_STATUS load_elf_kernel(void *file_buffer, UINTN file_size, const elf_
     Elf64_Ehdr *ehdr = (Elf64_Ehdr*)file_buffer;
     Elf64_Phdr *phdrs = (Elf64_Phdr*)((UINT8*)file_buffer + ehdr->e_phoff);
 
-    for (UINT64 p = plan->kernel_base & ~0xFFFULL; p < ((plan->kernel_end + 0xFFFULL) & ~0xFFFULL); ++p) {
-        ((volatile UINT8*)p)[0] = 0;
-    }
+    boot_memset((void *)(UINTN)(plan->kernel_base & ~0xFFFULL),
+                0,
+                (UINTN)(((plan->kernel_end + 0xFFFULL) & ~0xFFFULL) -
+                        (plan->kernel_base & ~0xFFFULL)));
 
     for (UINT16 i = 0; i < ehdr->e_phnum; ++i) {
         Elf64_Phdr *ph = &phdrs[i];
         if (ph->p_type != PT_LOAD) continue;
         if (ph->p_offset + ph->p_filesz > file_size) return EFI_LOAD_ERROR;
 
-        CopyMem((void*)(UINTN)ph->p_paddr, (UINT8*)file_buffer + ph->p_offset, ph->p_filesz);
+        boot_memcpy((void*)(UINTN)ph->p_paddr, (UINT8*)file_buffer + ph->p_offset, ph->p_filesz);
         if (ph->p_memsz > ph->p_filesz) {
-            SetMem((UINT8*)(UINTN)ph->p_paddr + ph->p_filesz, ph->p_memsz - ph->p_filesz, 0);
+            boot_memset((UINT8*)(UINTN)ph->p_paddr + ph->p_filesz, 0, ph->p_memsz - ph->p_filesz);
         }
     }
 
     return EFI_SUCCESS;
 }
 
+static int rsdp_signature_valid(const void *ptr) {
+    const UINT8 *bytes = (const UINT8 *)ptr;
+    static const UINT8 signature[8] = { 'R', 'S', 'D', ' ', 'P', 'T', 'R', ' ' };
+
+    if (ptr == NULL) {
+        return 0;
+    }
+    for (UINTN i = 0; i < sizeof(signature); ++i) {
+        if (bytes[i] != signature[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int boot_guid_equals(const EFI_GUID *a, const EFI_GUID *b) {
+    if (a->Data1 != b->Data1 || a->Data2 != b->Data2 || a->Data3 != b->Data3) {
+        return 0;
+    }
+    for (UINTN i = 0; i < sizeof(a->Data4); ++i) {
+        if (a->Data4[i] != b->Data4[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void *find_rsdp(EFI_SYSTEM_TABLE *SystemTable) {
     EFI_GUID acpi20 = ACPI_20_TABLE_GUID;
     EFI_GUID acpi10 = ACPI_TABLE_GUID;
+    void *fallback = NULL;
 
     for (UINTN i = 0; i < SystemTable->NumberOfTableEntries; ++i) {
         EFI_CONFIGURATION_TABLE *table = &SystemTable->ConfigurationTable[i];
-        if (!CompareGuid(&table->VendorGuid, &acpi20) || !CompareGuid(&table->VendorGuid, &acpi10)) {
+        if (boot_guid_equals(&table->VendorGuid, &acpi20) && rsdp_signature_valid(table->VendorTable)) {
             return table->VendorTable;
         }
+        if (boot_guid_equals(&table->VendorGuid, &acpi10) && rsdp_signature_valid(table->VendorTable)) {
+            fallback = table->VendorTable;
+        }
+    }
+
+    if (fallback != NULL) {
+        return fallback;
     }
 
     return NULL;
@@ -605,7 +660,11 @@ static EFI_STATUS read_lainfs_boot_resolution_from_mbr(EFI_BLOCK_IO_PROTOCOL *bl
         UINT32 first_lba = read_le32(entry + 8u);
         UINT32 sectors = read_le32(entry + 12u);
 
-        if (entry[4] == 0 || first_lba == 0 || sectors == 0) {
+        if (entry[4] != MBR_PARTITION_TYPE_LAINFS ||
+            first_lba == 0 ||
+            sectors == 0 ||
+            (EFI_LBA)first_lba > block->Media->LastBlock ||
+            (EFI_LBA)sectors > block->Media->LastBlock + 1u - (EFI_LBA)first_lba) {
             continue;
         }
 
@@ -720,6 +779,8 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
     UINTN descriptor_size = 0;
     UINT32 descriptor_version = 0;
     EFI_PHYSICAL_ADDRESS bootinfo_addr = 0;
+    EFI_PHYSICAL_ADDRESS rsdp_copy_addr = 0;
+    void *rsdp = NULL;
     boot_info_t *boot_info = NULL;
     UINT32 requested_width = (UINT32)BOOT_RES_WIDTH;
     UINT32 requested_height = (UINT32)BOOT_RES_HEIGHT;
@@ -741,11 +802,14 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"Optional NTFS driver started.\r\n");
     }
 
-    status = read_lainfs_boot_resolution(SystemTable, &requested_width, &requested_height);
-    if (!EFI_ERROR(status)) {
-        Print(L"Loaded lainfs boot resolution request: %ux%u\r\n", requested_width, requested_height);
+    if (requested_width != 0 && requested_height != 0) {
+        status = read_lainfs_boot_resolution(SystemTable, &requested_width, &requested_height);
+        if (!EFI_ERROR(status)) {
+            Print(L"Loaded lainfs boot resolution request: %ux%u\r\n", requested_width, requested_height);
+        }
     }
 
+    Print(L"Loading kernel.elf...\r\n");
     status = open_kernel(image, SystemTable, &kernel_file);
     if (EFI_ERROR(status)) {
 #ifdef EMBED_KERNEL
@@ -760,6 +824,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
 #endif
     } else {
         kernel_file_size = kernel_file.size;
+        Print(L"Reading kernel headers...\r\n");
         status = plan_elf_kernel_from_file(SystemTable, &kernel_file, &kernel_plan);
         if (EFI_ERROR(status)) {
             Print(L"Failed to read ELF kernel headers: %r\r\n", status);
@@ -769,6 +834,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
         if (EFI_ERROR(status)) {
             return status;
         }
+        Print(L"Reading kernel image...\r\n");
         status = read_kernel_file(SystemTable, &kernel_file, &kernel_file_buffer);
         if (EFI_ERROR(status)) {
             Print(L"Failed to read kernel.elf: %r\r\n", status);
@@ -788,6 +854,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
         }
     }
 
+    Print(L"Loading ELF kernel...\r\n");
     status = load_elf_kernel(kernel_file_buffer, kernel_file_size, &kernel_plan);
     if (EFI_ERROR(status)) {
         Print(L"Failed to load ELF kernel: %r\r\n", status);
@@ -809,7 +876,20 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
     boot_info->magic = BOOTINFO_MAGIC;
     boot_info->kernel_base = kernel_base;
     boot_info->kernel_size = kernel_end - kernel_base;
-    boot_info->rsdp = (UINT64)find_rsdp(SystemTable);
+    rsdp = find_rsdp(SystemTable);
+    if (rsdp != NULL) {
+        status = uefi_call_wrapper(bs->AllocatePages, 4, AllocateAnyPages, EfiLoaderData,
+            1, &rsdp_copy_addr);
+        if (EFI_ERROR(status)) {
+            Print(L"Failed to allocate RSDP copy page: %r\r\n", status);
+            return status;
+        }
+        boot_memset((void *)(UINTN)rsdp_copy_addr, 0, 4096u);
+        boot_memcpy((void *)(UINTN)rsdp_copy_addr, rsdp, 64u);
+        boot_info->rsdp = (UINT64)rsdp_copy_addr;
+    } else {
+        boot_info->rsdp = 0;
+    }
     boot_info->framebuffer_base = 0;
     boot_info->framebuffer_width = 0;
     boot_info->framebuffer_height = 0;

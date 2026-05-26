@@ -245,6 +245,9 @@ void kmem_init(const boot_info_t *info) {
 
     reserve_range(info->kernel_base, info->kernel_base + info->kernel_size);
     reserve_range(info->memory_map, info->memory_map + info->memory_map_size);
+    if (info->rsdp != 0) {
+        reserve_range(info->rsdp, info->rsdp + KMEM_PAGE_SIZE);
+    }
     if (info->framebuffer_base && info->framebuffer_height && info->framebuffer_pixels_per_scanline) {
         reserve_range(info->framebuffer_base,
                       info->framebuffer_base +

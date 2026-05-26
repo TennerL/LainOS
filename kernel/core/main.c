@@ -25,6 +25,7 @@
 static char input_buffers[SHELL_SESSION_COUNT][INPUT_BUFFER_SIZE];
 static int input_prompt_active[SHELL_SESSION_COUNT];
 static boot_info_t *kernel_boot_info;
+static uint8_t kernel_rsdp_copy[64];
 static volatile unsigned int status_cpu_idle_depth;
 static volatile unsigned long long status_cpu_idle_ticks;
 static volatile unsigned long long status_cpu_idle_start_cycles;
@@ -58,6 +59,36 @@ static void boot_stage(const char *name) {
     console_puts("[boot] ");
     console_puts(name);
     console_puts("\n");
+}
+
+static void preserve_rsdp(boot_info_t *info) {
+    const uint8_t *rsdp;
+    uint32_t length = 20u;
+
+    if (info == 0 || info->rsdp == 0) {
+        return;
+    }
+
+    rsdp = (const uint8_t *)(uintptr_t)info->rsdp;
+    if (rsdp[0] != 'R' || rsdp[1] != 'S' || rsdp[2] != 'D' || rsdp[3] != ' ' ||
+        rsdp[4] != 'P' || rsdp[5] != 'T' || rsdp[6] != 'R' || rsdp[7] != ' ') {
+        return;
+    }
+
+    if (rsdp[15] >= 2u) {
+        length = ((uint32_t)rsdp[20]) |
+                 ((uint32_t)rsdp[21] << 8) |
+                 ((uint32_t)rsdp[22] << 16) |
+                 ((uint32_t)rsdp[23] << 24);
+        if (length < 20u || length > sizeof(kernel_rsdp_copy)) {
+            length = 20u;
+        }
+    }
+
+    for (uint32_t i = 0; i < length; ++i) {
+        kernel_rsdp_copy[i] = rsdp[i];
+    }
+    info->rsdp = (uint64_t)(uintptr_t)kernel_rsdp_copy;
 }
 
 static unsigned long long status_cpu_read_cycles(void) {
@@ -335,6 +366,7 @@ void kernel_main(boot_info_t *info) {
     }
 
     kernel_boot_info = info;
+    preserve_rsdp(info);
 
     graphics_init(info->framebuffer_base,
                   info->framebuffer_width,

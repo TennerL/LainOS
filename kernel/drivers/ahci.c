@@ -172,12 +172,16 @@ static void stop_port(hba_port_t *port) {
     }
 }
 
-static void start_port(hba_port_t *port) {
-    while (port->cmd & HBA_PxCMD_CR) {
+static int start_port(hba_port_t *port) {
+    for (uint32_t i = 0; i < 1000000u; ++i) {
+        if ((port->cmd & HBA_PxCMD_CR) == 0) {
+            port->cmd |= HBA_PxCMD_FRE;
+            port->cmd |= HBA_PxCMD_ST;
+            return 0;
+        }
     }
 
-    port->cmd |= HBA_PxCMD_FRE;
-    port->cmd |= HBA_PxCMD_ST;
+    return -1;
 }
 
 static int find_command_slot(hba_port_t *port) {
@@ -291,7 +295,9 @@ static void configure_port(hba_mem_t *hba, uint32_t port_index) {
     port->fbu = (uint32_t)(fb >> 32);
     port->is = 0xFFFFFFFFu;
     port->serr = 0xFFFFFFFFu;
-    start_port(port);
+    if (start_port(port) != 0) {
+        return;
+    }
 
     disks[disk_index].hba = hba;
     disks[disk_index].port = port;

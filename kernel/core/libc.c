@@ -335,6 +335,10 @@ long strtol(const char *nptr, char **endptr, int base) {
     return (long)acc;
 }
 
+long __isoc23_strtol(const char *nptr, char **endptr, int base) {
+    return strtol(nptr, endptr, base);
+}
+
 unsigned long strtoul(const char *nptr, char **endptr, int base) {
     const char *s = nptr;
     unsigned long acc = 0;
@@ -389,6 +393,10 @@ unsigned long strtoul(const char *nptr, char **endptr, int base) {
         return ULONG_MAX;
     }
     return neg ? (unsigned long)(0ul - acc) : acc;
+}
+
+unsigned long __isoc23_strtoul(const char *nptr, char **endptr, int base) {
+    return strtoul(nptr, endptr, base);
 }
 
 typedef struct libc_format_out {

@@ -106,7 +106,7 @@ NETSURF_CORE_CFLAGS_STAMP := build/.netsurf-core-cflags-$(NETSURF_CORE_CFLAGS_TA
 BOOT_CFLAGS_STAMP := build/.boot-cflags-$(BOOT_CFLAGS_TAG)
 LDFLAGS_EFI := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(EFI_LIBDIR) $(EFI_CRT0)
 LDLIBS_EFI := -lefi -lgnuefi
-OBJCOPY_EFI_FLAGS := --target efi-app-$(EFI_ARCH) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rela -j .rel -j .reloc
+OBJCOPY_EFI_FLAGS := -O efi-app-$(EFI_ARCH) -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rela -j .rel -j .reloc
 KERNEL_HEADERS := $(wildcard kernel/include/*.h) boot/shared/bootinfo.h
 KERNEL_C_SOURCES := \
 	kernel/core/main.c \
@@ -742,11 +742,10 @@ build/$(ISO_IMG): image $(ISO_STARTUP_NSH) | build
 run:
 	$(MAKE) BOOT_RES_WIDTH=$(QEMU_VIDEO_WIDTH) BOOT_RES_HEIGHT=$(QEMU_VIDEO_HEIGHT) all
 	qemu-system-x86_64 \
-		-enable-kvm \
 		-m 256M \
 		$(QEMU_VIDEO_ARGS) \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-		-drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+		-drive if=pflash,format=raw,file=build/OVMF_VARS.iso.fd \
 		-drive format=raw,file=build/$(ESP_IMG),if=ide,index=0 \
 		-drive format=raw,file=build/$(DATA_IMG),if=ide,index=1 
 run-ahci:
@@ -819,7 +818,9 @@ run-iso:
 	$(MAKE) BOOT_RES_WIDTH=$(QEMU_VIDEO_WIDTH) BOOT_RES_HEIGHT=$(QEMU_VIDEO_HEIGHT) build/$(ISO_IMG) build/$(DATA_IMG)
 	cp /usr/share/OVMF/OVMF_VARS_4M.fd build/OVMF_VARS.iso.fd
 	qemu-system-x86_64 \
-		-m 256M \
+		-enable-kvm \
+		-smp 8 \
+		-m 8G \
 		-boot d \
 		$(QEMU_VIDEO_ARGS) \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
