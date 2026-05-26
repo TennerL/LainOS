@@ -182,41 +182,34 @@ static void make_partition_name(char *dst, const char *device_name, uint32_t par
     dst[i] = '\0';
 }
 
+static int partition_range_valid(const block_device_t *dev, uint64_t start_lba, uint64_t block_count) {
+    if (!dev || start_lba == 0 || block_count == 0 || start_lba >= dev->block_count) {
+        return 0;
+    }
+
+    return block_count <= dev->block_count - start_lba;
+}
+
 static const char *detect_fs_hint(uint32_t device_index,
                                   uint64_t start_lba,
                                   uint64_t block_count,
                                   uint8_t mbr_type) {
-    static const uint8_t gpt_signature[8] = { 'E', 'F', 'I', ' ', 'P', 'A', 'R', 'T' };
-    static const uint8_t ntfs_oem[8] = { 'N', 'T', 'F', 'S', ' ', ' ', ' ', ' ' };
-    static const uint8_t fat32_label[8] = { 'F', 'A', 'T', '3', '2', ' ', ' ', ' ' };
-    static const uint8_t fat16_label[8] = { 'F', 'A', 'T', '1', '6', ' ', ' ', ' ' };
-    static const uint8_t fat12_label[8] = { 'F', 'A', 'T', '1', '2', ' ', ' ', ' ' };
     uint8_t sector[SECTOR_SIZE];
     const char *fallback = fs_hint_from_mbr_type(mbr_type);
 
-    if (block_count == 0 || storage_read_block_device(device_index, start_lba, 1, sector) != 0) {
+    if (mbr_type != 0x99u) {
         return fallback;
+    }
+
+    if (block_count == 0 || storage_read_block_device(device_index, start_lba, 1, sector) != 0) {
+        return "raw";
     }
 
     if (read_le32(&sector[0]) == 0x4E49414Cu && read_le32(&sector[4]) == 0x00315346u) {
         return "lainfs";
     }
 
-    if (mem_eq(&sector[3], ntfs_oem, sizeof(ntfs_oem))) {
-        return "ntfs";
-    }
-
-    if (mem_eq(&sector[82], fat32_label, sizeof(fat32_label)) ||
-        mem_eq(&sector[54], fat16_label, sizeof(fat16_label)) ||
-        mem_eq(&sector[54], fat12_label, sizeof(fat12_label))) {
-        return "fat";
-    }
-
-    if (mem_eq(&sector[0], gpt_signature, sizeof(gpt_signature))) {
-        return "gpt";
-    }
-
-    return fallback;
+    return "raw";
 }
 
 static void create_demo_mbr(void) {
@@ -224,7 +217,7 @@ static void create_demo_mbr(void) {
 
     mem_zero(ramdisk_mbr, sizeof(ramdisk_mbr));
     entry[0] = 0x80;
-    entry[4] = 0x07;
+    entry[4] = 0x99;
     write_le32(&entry[8], 2048u);
     write_le32(&entry[12], 32768u);
     ramdisk_mbr[MBR_SIGNATURE_OFFSET] = 0x55;
@@ -497,6 +490,10 @@ static void register_partition(uint32_t device_index, uint32_t partition_number,
     }
 
     const block_device_t *dev = &block_devices[device_index];
+    if (!partition_range_valid(dev, start_lba, block_count)) {
+        return;
+    }
+
     partition_t *part = &partitions[partition_count++];
 
     part->present = 1;
@@ -558,7 +555,8 @@ static int discover_mbr_partitions(uint32_t device_index) {
         uint32_t start_lba = read_le32(&entry[8]);
         uint32_t blocks = read_le32(&entry[12]);
 
-        if (type == 0 || blocks == 0) {
+        if (type == 0 || blocks == 0 ||
+            !partition_range_valid(dev, start_lba, blocks)) {
             continue;
         }
 
@@ -597,7 +595,11 @@ static void discover_gpt_partitions(uint32_t device_index) {
     entry_count = read_le32(&header[80]);
     entry_size = read_le32(&header[84]);
 
-    if (entry_lba == 0 || entry_size < 128u || entry_size > GPT_MAX_ENTRY_SIZE) {
+    if (entry_lba == 0 ||
+        entry_lba >= dev->block_count ||
+        entry_count > 16384u ||
+        entry_size < 128u ||
+        entry_size > GPT_MAX_ENTRY_SIZE) {
         return;
     }
 
@@ -631,7 +633,9 @@ static void discover_gpt_partitions(uint32_t device_index) {
 
         start_lba = read_le64(&entry[GPT_ENTRY_FIRST_LBA_OFFSET]);
         end_lba = read_le64(&entry[GPT_ENTRY_LAST_LBA_OFFSET]);
-        if (start_lba == 0 || end_lba < start_lba) {
+        if (start_lba == 0 ||
+            end_lba < start_lba ||
+            !partition_range_valid(dev, start_lba, end_lba - start_lba + 1)) {
             continue;
         }
 

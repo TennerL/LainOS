@@ -1513,6 +1513,7 @@ static void cmd_date(const char *args, const boot_info_t *info);
 static void cmd_run(const char *args, const boot_info_t *info);
 static void cmd_exec(const char *args, const boot_info_t *info);
 static void cmd_asm(const char *args, const boot_info_t *info);
+static void refresh_system_autoexec(char drive_letter);
 static void cmd_zc(const char *args, const boot_info_t *info);
 static void cmd_zco(const char *args, const boot_info_t *info);
 static void cmd_zlink(const char *args, const boot_info_t *info);
@@ -3082,21 +3083,36 @@ static int set_mounted_drive(char drive_letter, const char *label) {
     return 0;
 }
 
-static int has_real_writable_block_device(void) {
-    for (uint32_t i = 0; i < storage_block_device_count(); ++i) {
-        const block_device_t *dev = storage_get_block_device(i);
+static int mounted_drive_is_live_ramdisk(char drive_letter) {
+    const mount_t *mount = storage_get_mount_by_drive(drive_letter);
 
-        if (!dev || !dev->write) {
-            continue;
-        }
+    return mount && streq(mount->partition_name, "rd0p1");
+}
 
-        if (streq(dev->name, "rd0")) {
-            continue;
-        }
+static int mount_formatted_system_partition(const char *partition_name) {
+    const mount_t *system_mount;
 
-        return 1;
+    if (!partition_name || streq(partition_name, "rd0p1")) {
+        return 0;
     }
 
+    system_mount = storage_get_mount_by_drive('S');
+    if (system_mount && !mounted_drive_is_live_ramdisk('S')) {
+        return 0;
+    }
+
+    if (storage_mount('S', partition_name) != 0) {
+        return -1;
+    }
+
+    set_mounted_drive('S', "SYSTEM");
+    console_puts("mounted ");
+    console_puts(partition_name);
+    console_puts(" at ");
+    print_drive_name('S' - 'A');
+    console_puts("\n");
+    print_lainfs_mount_check('S');
+    refresh_system_autoexec('S');
     return 0;
 }
 
@@ -3196,6 +3212,37 @@ static void seed_live_ramdisk(char drive_letter) {
     console_puts("\n");
 }
 
+static const ramdisk_seed_entry_t *find_ramdisk_seed(const char *path) {
+    for (uint32_t i = 0; i < RAMDISK_SEED_ENTRY_COUNT; ++i) {
+        if (streq(ramdisk_seed_entries[i].path, path)) {
+            return &ramdisk_seed_entries[i];
+        }
+    }
+
+    return 0;
+}
+
+static void refresh_system_autoexec(char drive_letter) {
+    const ramdisk_seed_entry_t *autoexec = find_ramdisk_seed("examples/autoexec");
+
+    if (!autoexec) {
+        return;
+    }
+
+    if (lainfs_save_file(drive_letter,
+                         "autoexec",
+                         (const char *)autoexec->data,
+                         autoexec->size) == 0) {
+        console_puts("updated autoexec on ");
+        print_drive_name((int)(drive_letter - 'A'));
+        console_puts("\n");
+    } else {
+        console_puts("autoexec update failed on ");
+        print_drive_name((int)(drive_letter - 'A'));
+        console_puts("\n");
+    }
+}
+
 static int create_seeded_live_ramdisk(char drive_letter, int make_active) {
     int saved_drive = current_drive;
 
@@ -3239,6 +3286,7 @@ int shell_mount_first_lainfs(char drive_letter) {
             print_drive_name((int)(drive_letter - 'A'));
             console_puts("\n");
             print_lainfs_mount_check(drive_letter);
+            refresh_system_autoexec(drive_letter);
             if (drive_letter != 'R') {
                 create_seeded_live_ramdisk('R', 0);
             }
@@ -3246,7 +3294,7 @@ int shell_mount_first_lainfs(char drive_letter) {
         }
     }
 
-    if (!has_real_writable_block_device() && create_seeded_live_ramdisk(drive_letter, 1) == 0) {
+    if (create_seeded_live_ramdisk(drive_letter, 1) == 0) {
         return 0;
     }
 
@@ -3308,6 +3356,7 @@ static void cmd_format(const char *args, const boot_info_t *info) {
         console_puts("formatted ");
         console_puts(target);
         console_puts(" as lainfs\n");
+        mount_formatted_system_partition(target);
         return;
     }
 
@@ -3332,6 +3381,7 @@ static void cmd_format(const char *args, const boot_info_t *info) {
         console_puts(" as ");
         console_puts(partition_name);
         console_puts(" (lainfs)\n");
+        mount_formatted_system_partition(partition_name);
         return;
     }
 

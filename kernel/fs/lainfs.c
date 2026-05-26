@@ -480,6 +480,10 @@ static int format_partition_index(uint32_t partition_index) {
         return -4;
     }
 
+    if (directory_cache_valid && directory_cache_dirty && flush_directory_cache() != 0) {
+        return -5;
+    }
+
     invalidate_partition_cache(partition_index);
 
     mem_zero(sector, sizeof(sector));

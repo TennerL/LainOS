@@ -110,6 +110,7 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 $QEMU \
+  $QEMU_ACCEL_ARGS \
   -m "$QEMU_MEMORY" \
   -smp "$QEMU_SMP" \
   -boot order=d,menu=on \

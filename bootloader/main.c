@@ -802,11 +802,9 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"Optional NTFS driver started.\r\n");
     }
 
-    if (requested_width != 0 && requested_height != 0) {
-        status = read_lainfs_boot_resolution(SystemTable, &requested_width, &requested_height);
-        if (!EFI_ERROR(status)) {
-            Print(L"Loaded lainfs boot resolution request: %ux%u\r\n", requested_width, requested_height);
-        }
+    status = read_lainfs_boot_resolution(SystemTable, &requested_width, &requested_height);
+    if (!EFI_ERROR(status)) {
+        Print(L"Loaded lainfs boot resolution request: %ux%u\r\n", requested_width, requested_height);
     }
 
     Print(L"Loading kernel.elf...\r\n");
