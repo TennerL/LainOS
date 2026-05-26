@@ -6,12 +6,14 @@ cd "$repo_root"
 
 git submodule sync --recursive
 git submodule update --init --recursive \
+  third_party/expat \
   third_party/netsurf/src/libwapcaplet \
   third_party/netsurf/src/libparserutils \
   third_party/netsurf/src/libhubbub \
   third_party/netsurf/src/libcss \
   third_party/netsurf/src/libdom \
   third_party/netsurf/src/libnsutils \
+  third_party/netsurf/src/libsvgtiny \
   third_party/netsurf/src/netsurf
 
 if [ ! -f third_party/netsurf/src/libparserutils/src/charset/aliases.inc ]; then

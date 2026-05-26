@@ -91,6 +91,7 @@ make print-efi-config
 
 ```bash
 make clean
+scripts/bootstrap-browser-deps.sh
 make
 ```
 
