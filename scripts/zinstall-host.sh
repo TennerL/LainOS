@@ -26,10 +26,11 @@ else
   install_root="build/host-zinstall/$target_name/install"
 fi
 
+ZBUILD_HOST_FORCE_BUILD_ROOT=1
 zbuild_host_prepare_manifest "$manifest_input" "$build_root" "$install_root"
 zbuild_host_parse_manifest
 
-scripts/zbuild-host.sh "$ZBUILD_MANIFEST_PATH" "$build_root" >/dev/null
+ZBUILD_HOST_FORCE_BUILD_ROOT=1 scripts/zbuild-host.sh "$ZBUILD_MANIFEST_PATH" "$build_root" >/dev/null
 
 mkdir -p "$ZBUILD_INSTALL_DIR"
 

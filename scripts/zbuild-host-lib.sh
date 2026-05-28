@@ -182,6 +182,9 @@ zbuild_host_parse_manifest() {
           printf 'zbuild-host: bad build directive in %s\n' "$ZBUILD_MANIFEST_PATH" >&2
           exit 1
         fi
+        if [[ "${ZBUILD_HOST_FORCE_BUILD_ROOT:-0}" != 0 ]]; then
+          continue
+        fi
         ZBUILD_BUILD_DIR="$(zbuild_host_resolve_dir "$ZBUILD_MANIFEST_DIR" "${fields[1]}" "build")"
         ;;
       include)

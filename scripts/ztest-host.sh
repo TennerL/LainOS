@@ -25,6 +25,7 @@ result=
 status_word=
 test_log=
 
+ZBUILD_HOST_FORCE_BUILD_ROOT=1
 zbuild_host_prepare_manifest "$manifest_input" "$build_root" "$build_root"
 zbuild_host_parse_manifest
 
@@ -35,8 +36,8 @@ fi
 
 make build/tools/zmod_link_host >/dev/null
 
-scripts/zclean-host.sh "$manifest_input" "$build_root" >/dev/null
-scripts/zbuild-host.sh "$manifest_input" "$build_root" >/dev/null
+ZBUILD_HOST_FORCE_BUILD_ROOT=1 scripts/zclean-host.sh "$manifest_input" "$build_root" >/dev/null
+ZBUILD_HOST_FORCE_BUILD_ROOT=1 scripts/zbuild-host.sh "$manifest_input" "$build_root" >/dev/null
 
 run_log="$ZBUILD_BUILD_DIR/$ZBUILD_TARGET_NAME.host-run.log"
 test_log="$ZBUILD_BUILD_DIR/$ZBUILD_TARGET_NAME.testlog"
