@@ -1,4 +1,5 @@
 ZBUILD_HOST_MAX_INCLUDE_DIRS=4
+ZBUILD_HOST_MAX_OBJECTS=32
 
 zbuild_host_fail_bad_directive() {
   local directive="$1"
@@ -181,6 +182,10 @@ zbuild_host_parse_manifest() {
       *)
         if [[ $field_count -gt 2 ]]; then
           printf 'zbuild-host: too many fields in %s: %s\n' "$ZBUILD_MANIFEST_PATH" "$line" >&2
+          exit 1
+        fi
+        if [[ $ZBUILD_SOURCE_COUNT -ge $ZBUILD_HOST_MAX_OBJECTS ]]; then
+          printf 'zbuild-host: too many objects in %s; max=%d\n' "$ZBUILD_MANIFEST_PATH" "$ZBUILD_HOST_MAX_OBJECTS" >&2
           exit 1
         fi
         source_name="${fields[0]}"
