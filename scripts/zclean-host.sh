@@ -29,6 +29,7 @@ manifest_name="$(basename "$manifest_input")"
 target_name="${manifest_name%.zbuild}"
 build_root="${2:-build/host-zbuild/$target_name}"
 test_log=
+run_log=
 removed_count=0
 
 zbuild_host_prepare_manifest "$manifest_input" "$build_root" "$build_root"
@@ -45,5 +46,7 @@ fi
 remove_artifact "$ZBUILD_BUILD_LOG"
 test_log="$ZBUILD_BUILD_DIR/$ZBUILD_TARGET_NAME.testlog"
 remove_artifact "$test_log"
+run_log="$ZBUILD_BUILD_DIR/$ZBUILD_TARGET_NAME.host-run.log"
+remove_artifact "$run_log"
 
 printf '%s -> removed %d artifact(s)\n' "$ZBUILD_MANIFEST_NAME" "$removed_count"
