@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 mkdir -p build/zbrowser-smoke
+mkdir -p build/zbrowser-smoke/all-manifests
 make build/tools/zmod_link_host
 
 scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zbrowser_module
@@ -98,3 +99,20 @@ check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "stat
 check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "status ok"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
+
+while IFS= read -r manifest; do
+  case "$manifest" in
+    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild)
+      continue
+      ;;
+  esac
+
+  probe_rel="${manifest#examples/}"
+  probe_dir="build/zbrowser-smoke/all-manifests/${probe_rel%.zbuild}"
+  mkdir -p "$probe_dir"
+  if ! scripts/zbuild-host.sh "$manifest" "$probe_dir" >"$probe_dir/probe.log" 2>&1; then
+    printf 'zbrowser-compile-smoke: broad manifest probe failed for %s\n' "$manifest" >&2
+    cat "$probe_dir/probe.log" >&2
+    exit 1
+  fi
+done < <(find examples -name '*.zbuild' -type f | sort)
