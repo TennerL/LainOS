@@ -2,11 +2,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#ifdef __unix__
+#include <sys/mman.h>
+#endif
 
 #include "zobject.h"
 #include "zscript.h"
 #include "kernel_exports.h"
 
+#define HOST_RUN_EXEC_API_MAGIC 0x4C41494E45584543ull
 #define HOST_MAX_INCLUDE_DEPTH 16u
 #define HOST_MAX_INCLUDE_DIRS 4u
 #define HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
@@ -23,6 +29,19 @@ typedef struct {
     char once_paths[HOST_MAX_ONCE_PATHS][HOST_MAX_PATH];
     uint32_t once_count;
 } host_source_context_t;
+
+typedef struct {
+    uint64_t magic;
+    uint64_t version;
+    void (*puts)(const char *s);
+    void (*put_hex64)(unsigned long long value);
+    void (*put_dec64)(unsigned long long value);
+    unsigned long long (*ticks)(void);
+} host_exec_api_t;
+
+typedef uint64_t (*host_exec_program_ret_t)(const host_exec_api_t *api);
+
+static int host_runtime_mode = 0;
 
 void *kmalloc(uint32_t size) {
     return malloc(size);
@@ -249,8 +268,250 @@ static int host_streq(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static void host_runtime_puts(const char *s) {
+    fputs(s ? s : "", stdout);
+    fflush(stdout);
+}
+
+static void host_runtime_put_hex64(unsigned long long value) {
+    fprintf(stdout, "%llx", value);
+    fflush(stdout);
+}
+
+static void host_runtime_put_dec64(unsigned long long value) {
+    fprintf(stdout, "%llu", value);
+    fflush(stdout);
+}
+
+static unsigned long long host_runtime_ticks(void) {
+    time_t now = time(0);
+
+    if (now == (time_t)-1) {
+        return 0;
+    }
+    return (unsigned long long)now * 1000ull;
+}
+
+static uint64_t host_runtime_mem_total_kb(void) {
+    return 1024ull * 1024ull;
+}
+
+static uint64_t host_runtime_mem_free_kb(void) {
+    return 768ull * 1024ull;
+}
+
+static uint64_t host_runtime_mem_used_kb(void) {
+    return host_runtime_mem_total_kb() - host_runtime_mem_free_kb();
+}
+
+static uint32_t host_runtime_cpu_count(void) {
+    return 4u;
+}
+
+static uint32_t host_runtime_cpu_usage(uint32_t core) {
+    (void)core;
+    return 17u;
+}
+
+static uint32_t host_runtime_gfx_width(void) {
+    return 1024u;
+}
+
+static uint32_t host_runtime_gfx_height(void) {
+    return 768u;
+}
+
+static uint32_t host_runtime_gfx_pitch(void) {
+    return host_runtime_gfx_width() * 4u;
+}
+
+static uint32_t host_runtime_gfx_format(void) {
+    return 1u;
+}
+
+static void host_runtime_gfx_fill_rect(uint32_t x,
+                                       uint32_t y,
+                                       uint32_t width,
+                                       uint32_t height,
+                                       uint32_t color) {
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    (void)color;
+}
+
+static void host_runtime_gfx_draw_rect(uint32_t x,
+                                       uint32_t y,
+                                       uint32_t width,
+                                       uint32_t height,
+                                       uint32_t color) {
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    (void)color;
+}
+
+static void host_runtime_gfx_draw_line(uint32_t x0,
+                                       uint32_t y0,
+                                       uint32_t x1,
+                                       uint32_t y1,
+                                       uint32_t color) {
+    (void)x0;
+    (void)y0;
+    (void)x1;
+    (void)y1;
+    (void)color;
+}
+
+static void host_runtime_gfx_clear(uint32_t color) {
+    (void)color;
+}
+
+static void host_runtime_set_margin(uint32_t x, uint32_t y) {
+    (void)x;
+    (void)y;
+}
+
+static int host_runtime_mouse_enabled(void) {
+    return 1;
+}
+
+static int host_runtime_mouse_x(void) {
+    return 320;
+}
+
+static int host_runtime_mouse_y(void) {
+    return 240;
+}
+
+static int host_runtime_mouse_buttons(void) {
+    return 0;
+}
+
+static int host_runtime_mouse_dx(void) {
+    return 0;
+}
+
+static int host_runtime_mouse_dy(void) {
+    return 0;
+}
+
+static int host_runtime_mouse_wheel(void) {
+    return 0;
+}
+
+static int host_runtime_export_value(const char *name, uint64_t *out) {
+    if (host_streq(name, "puts")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_puts;
+        return 0;
+    }
+    if (host_streq(name, "put_hex64")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_put_hex64;
+        return 0;
+    }
+    if (host_streq(name, "put_dec64")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_put_dec64;
+        return 0;
+    }
+    if (host_streq(name, "ticks")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_ticks;
+        return 0;
+    }
+    if (host_streq(name, "mem_total_kb") || host_streq(name, "status_memory_total_kb")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mem_total_kb;
+        return 0;
+    }
+    if (host_streq(name, "mem_free_kb") || host_streq(name, "status_memory_free_kb")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mem_free_kb;
+        return 0;
+    }
+    if (host_streq(name, "mem_used_kb") || host_streq(name, "status_memory_used_kb")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mem_used_kb;
+        return 0;
+    }
+    if (host_streq(name, "cpu_count") || host_streq(name, "status_cpu_core_count")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_cpu_count;
+        return 0;
+    }
+    if (host_streq(name, "cpu_usage")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_cpu_usage;
+        return 0;
+    }
+    if (host_streq(name, "gfx_width")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_width;
+        return 0;
+    }
+    if (host_streq(name, "gfx_height")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_height;
+        return 0;
+    }
+    if (host_streq(name, "gfx_pitch")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_pitch;
+        return 0;
+    }
+    if (host_streq(name, "gfx_format")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_format;
+        return 0;
+    }
+    if (host_streq(name, "gfx_fill_rect")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_fill_rect;
+        return 0;
+    }
+    if (host_streq(name, "gfx_draw_rect")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_draw_rect;
+        return 0;
+    }
+    if (host_streq(name, "gfx_draw_line")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_draw_line;
+        return 0;
+    }
+    if (host_streq(name, "gfx_clear")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_gfx_clear;
+        return 0;
+    }
+    if (host_streq(name, "set_margin")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_set_margin;
+        return 0;
+    }
+    if (host_streq(name, "mouse_enabled")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mouse_enabled;
+        return 0;
+    }
+    if (host_streq(name, "mouse_x")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mouse_x;
+        return 0;
+    }
+    if (host_streq(name, "mouse_y")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mouse_y;
+        return 0;
+    }
+    if (host_streq(name, "mouse_buttons")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mouse_buttons;
+        return 0;
+    }
+    if (host_streq(name, "mouse_dx")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mouse_dx;
+        return 0;
+    }
+    if (host_streq(name, "mouse_dy")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mouse_dy;
+        return 0;
+    }
+    if (host_streq(name, "mouse_wheel")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mouse_wheel;
+        return 0;
+    }
+    return -1;
+}
+
 int kernel_export_value(const char *name, uint64_t *out) {
     uint32_t count = (uint32_t)(sizeof(host_kernel_exports) / sizeof(host_kernel_exports[0]));
+
+    if (host_runtime_mode && host_runtime_export_value(name, out) == 0) {
+        return 0;
+    }
 
     for (uint32_t i = 0; i < count; ++i) {
         if (host_streq(name, host_kernel_exports[i])) {
@@ -727,6 +988,47 @@ static int write_file_raw(const char *path, const unsigned char *data, uint32_t 
     return 0;
 }
 
+static unsigned char *alloc_link_buffer(uint32_t size, int executable) {
+    if (!executable) {
+        return (unsigned char *)malloc(size);
+    }
+
+#ifdef __unix__
+    {
+        void *mapping = mmap(0,
+                             size,
+                             PROT_READ | PROT_WRITE | PROT_EXEC,
+                             MAP_PRIVATE | MAP_ANONYMOUS,
+                             -1,
+                             0);
+        if (mapping == MAP_FAILED) {
+            return 0;
+        }
+        return (unsigned char *)mapping;
+    }
+#else
+    (void)size;
+    return 0;
+#endif
+}
+
+static void free_link_buffer(unsigned char *buffer, uint32_t size, int executable) {
+    if (!buffer) {
+        return;
+    }
+
+    if (!executable) {
+        free(buffer);
+        return;
+    }
+
+#ifdef __unix__
+    munmap(buffer, size);
+#else
+    (void)size;
+#endif
+}
+
 int main(int argc, char **argv) {
     unsigned char *objects_storage[HOST_MAX_OBJECTS];
     const unsigned char *objects[HOST_MAX_OBJECTS];
@@ -740,12 +1042,15 @@ int main(int argc, char **argv) {
     uint32_t error_line = 0;
     int arg_index = 1;
     int objects_only = 0;
+    int run_after_link = 0;
+    int has_expected_return = 0;
+    uint64_t expected_return = 0;
     int status;
 
     while (arg_index < argc && argv[arg_index][0] == '-') {
         if (strcmp(argv[arg_index], "--include") == 0) {
             if (include_dir_count >= HOST_MAX_INCLUDE_DIRS || arg_index + 1 >= argc) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             include_dirs[include_dir_count++] = argv[arg_index + 1];
@@ -754,28 +1059,57 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[arg_index], "--objects-only") == 0) {
             if (objects_only) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             objects_only = 1;
             ++arg_index;
             continue;
         }
+        if (strcmp(argv[arg_index], "--run") == 0) {
+            if (run_after_link) {
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                return 2;
+            }
+            run_after_link = 1;
+            ++arg_index;
+            continue;
+        }
+        if (strcmp(argv[arg_index], "--expect-return") == 0) {
+            char *end = 0;
+
+            if (has_expected_return || arg_index + 1 >= argc) {
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                return 2;
+            }
+            expected_return = strtoull(argv[arg_index + 1], &end, 10);
+            if (end == argv[arg_index + 1] || *end != '\0') {
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                return 2;
+            }
+            has_expected_return = 1;
+            arg_index += 2;
+            continue;
+        }
         if (strcmp(argv[arg_index], "--output") == 0) {
             if (output_path != 0 || arg_index + 1 >= argc) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             output_path = argv[arg_index + 1];
             arg_index += 2;
             continue;
         }
-        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
         return 2;
     }
 
     if (argc - arg_index < 2 || ((argc - arg_index) % 2) != 0) {
-        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        return 2;
+    }
+    if (objects_only && run_after_link) {
+        fprintf(stderr, "zmod_link_host: --run requires a linked executable target\n");
         return 2;
     }
 
@@ -822,7 +1156,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    linked = (unsigned char *)malloc(HOST_MAX_LINK_SIZE);
+    linked = alloc_link_buffer(HOST_MAX_LINK_SIZE, run_after_link);
     if (!linked) {
         for (uint32_t i = 0; i < object_count; ++i) {
             free(objects_storage[i]);
@@ -830,6 +1164,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    host_runtime_mode = run_after_link;
     status = zobject_link_flat_many_ex(objects,
                                        object_sizes,
                                        object_count,
@@ -843,6 +1178,7 @@ int main(int argc, char **argv) {
                                        0,
                                        0,
                                        0);
+    host_runtime_mode = 0;
     if (status != 0) {
         fprintf(stderr, "link failed");
         if (zobject_last_error_reason()[0] != '\0') {
@@ -855,7 +1191,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, " asm line %u", error_line);
         }
         fprintf(stderr, "\n");
-        free(linked);
+        free_link_buffer(linked, HOST_MAX_LINK_SIZE, run_after_link);
         for (uint32_t i = 0; i < object_count; ++i) {
             free(objects_storage[i]);
         }
@@ -866,7 +1202,7 @@ int main(int argc, char **argv) {
     if (output_path != 0) {
         if (write_file_raw(output_path, linked, linked_size) != 0) {
             fprintf(stderr, "%s: failed to write linked output\n", output_path);
-            free(linked);
+            free_link_buffer(linked, HOST_MAX_LINK_SIZE, run_after_link);
             for (uint32_t i = 0; i < object_count; ++i) {
                 free(objects_storage[i]);
             }
@@ -875,7 +1211,33 @@ int main(int argc, char **argv) {
         fprintf(stderr, "wrote linked output %s bytes=%u\n", output_path, linked_size);
     }
 
-    free(linked);
+    if (run_after_link) {
+        static const host_exec_api_t host_exec_api = {
+            HOST_RUN_EXEC_API_MAGIC,
+            1,
+            host_runtime_puts,
+            host_runtime_put_hex64,
+            host_runtime_put_dec64,
+            host_runtime_ticks,
+        };
+        uint64_t result = ((host_exec_program_ret_t)(uintptr_t)linked)(&host_exec_api);
+        int passed = !has_expected_return || result == expected_return;
+
+        fprintf(stderr, "run result=%llu", (unsigned long long)result);
+        if (has_expected_return) {
+            fprintf(stderr, " expected=%llu", (unsigned long long)expected_return);
+        }
+        fprintf(stderr, " status=%s\n", passed ? "ok" : "failed");
+        if (!passed) {
+            free_link_buffer(linked, HOST_MAX_LINK_SIZE, run_after_link);
+            for (uint32_t i = 0; i < object_count; ++i) {
+                free(objects_storage[i]);
+            }
+            return 1;
+        }
+    }
+
+    free_link_buffer(linked, HOST_MAX_LINK_SIZE, run_after_link);
     for (uint32_t i = 0; i < object_count; ++i) {
         free(objects_storage[i]);
     }

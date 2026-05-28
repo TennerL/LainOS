@@ -23,6 +23,10 @@ scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/z
 scripts/zbuild-host.sh examples/zlang/default_output_project/kernel.zbuild build/zbrowser-smoke/default_output_project
 scripts/zbuild-host.sh examples/zlang/output_name_project/kernel.zbuild build/zbrowser-smoke/output_name_project
 scripts/zbuild-host.sh examples/zlang/glob_literal_project/kernel.zbuild build/zbrowser-smoke/glob_literal_project
+scripts/ztest-host.sh examples/zlang/sysstat.zbuild build/zbrowser-smoke/ztest-sysstat
+scripts/ztest-host.sh examples/zlang/hwinfo.zbuild build/zbrowser-smoke/ztest-hwinfo
+scripts/ztest-host.sh examples/zlang/gfxdemo.zbuild build/zbrowser-smoke/ztest-gfxdemo
+scripts/ztest-host.sh examples/zlang/mousedemo.zbuild build/zbrowser-smoke/ztest-mousedemo
 scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
 scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
 scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
@@ -189,6 +193,32 @@ check_buildlog_line() {
   fi
 }
 
+check_testlog() {
+  local path="$1"
+  local result_line="$2"
+  local expected_line="$3"
+
+  if [[ ! -s "$path" ]]; then
+    printf 'zbrowser-compile-smoke: missing test log %s\n' "$path" >&2
+    exit 1
+  fi
+  if ! rg -qx "$result_line" "$path"; then
+    printf 'zbrowser-compile-smoke: unexpected test result in %s\n' "$path" >&2
+    cat "$path" >&2
+    exit 1
+  fi
+  if [[ -n "$expected_line" ]] && ! rg -qx "$expected_line" "$path"; then
+    printf 'zbrowser-compile-smoke: unexpected expected-return in %s\n' "$path" >&2
+    cat "$path" >&2
+    exit 1
+  fi
+  if ! rg -qx 'status ok' "$path"; then
+    printf 'zbrowser-compile-smoke: test did not finish ok in %s\n' "$path" >&2
+    cat "$path" >&2
+    exit 1
+  fi
+}
+
 manifest_is_known_negative() {
   local manifest="$1"
 
@@ -244,6 +274,10 @@ check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "stat
 check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/glob_literal_project/build/kernel.buildlog" "status ok"
+check_testlog "build/zbrowser-smoke/ztest-sysstat/sysstat.testlog" "result 7" "expected 7"
+check_testlog "build/zbrowser-smoke/ztest-hwinfo/hwinfo.testlog" "result 0" "expected 0"
+check_testlog "build/zbrowser-smoke/ztest-gfxdemo/gfxdemo.testlog" "result 9" "expected 9"
+check_testlog "build/zbrowser-smoke/ztest-mousedemo/mousedemo.testlog" "result 0" "expected 0"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
 check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
 if [[ -e build/zbrowser-smoke/zclean-linked/zbcss_async.bin ||
