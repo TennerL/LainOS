@@ -15,7 +15,7 @@ ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_module.zbuild
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/zbrowser_netsurf
 scripts/zbuild-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zbrowser_css_repro
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zbcss_async
-scripts/zbuild-host.sh examples/image_viewer.zbuild build/zbrowser-smoke/image_viewer
+ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/image_viewer.zbuild build/zbrowser-smoke/image_viewer
 scripts/zbuild-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/jpg_decode_demo
 scripts/zbuild-host.sh examples/jpg_decoder.zbuild build/zbrowser-smoke/jpg_decoder
 scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/selfhost_project
@@ -34,6 +34,7 @@ scripts/ztest-host.sh examples/zlang/zmake.zbuild build/zbrowser-smoke/ztest-zma
 scripts/ztest-host.sh examples/zlang/zreport.zbuild build/zbrowser-smoke/ztest-zreport
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
+ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/image_viewer.zbuild build/zbrowser-smoke/install/image_viewer
 scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
 printf 'status ok\n' > build/zbrowser-smoke/zclean-linked/zbcss_async.testlog
@@ -262,6 +263,7 @@ check_output "build/zbrowser-smoke/jpg_decode_demo/jpg_decode_demo.bin"
 check_output "build/zbrowser-smoke/install/zbrowser_module/zbrowser_html.zo"
 check_output "build/zbrowser-smoke/install/zbrowser_module/zbrowser_module.zo"
 check_output "build/zbrowser-smoke/install/zbrowser_netsurf/zbrowser_netsurf.zo"
+check_output "build/zbrowser-smoke/install/image_viewer/image_viewer.zo"
 check_output "build/zbrowser-smoke/install/jpg_decode_demo/jpg_decode_demo.bin"
 check_output "examples/zlang/selfhost_project/build/kernel.bin"
 check_output "examples/zlang/manifest_cwd_project/build/manifest_cwd.bin"
@@ -283,8 +285,10 @@ check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "statu
 check_buildlog "examples/zlang/glob_literal_project/build/kernel.buildlog" "status ok"
 check_buildlog_line "build/zbrowser-smoke/zbrowser_module/zbrowser_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/zbrowser_netsurf/zbrowser_netsurf.buildlog" "validation module-link"
+check_buildlog_line "build/zbrowser-smoke/image_viewer/image_viewer.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/zbrowser_module/.host-build/zbrowser_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/zbrowser_netsurf/.host-build/zbrowser_netsurf.buildlog" "validation module-link"
+check_buildlog_line "build/zbrowser-smoke/install/image_viewer/.host-build/image_viewer.buildlog" "validation module-link"
 check_testlog "build/zbrowser-smoke/ztest-zbrowser-css-repro/zbrowser_css_repro.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-zbcss-async/zbcss_async.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-sysstat/sysstat.testlog" "result 7" "expected 7"
