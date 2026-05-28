@@ -32,6 +32,22 @@ struct stat {
 #define S_IFREG 0100000
 #endif
 
+#ifndef S_IRUSR
+#define S_IRUSR 0400
+#endif
+
+#ifndef S_IWUSR
+#define S_IWUSR 0200
+#endif
+
+#ifndef S_IXUSR
+#define S_IXUSR 0100
+#endif
+
+#ifndef S_IRWXU
+#define S_IRWXU (S_IRUSR | S_IWUSR | S_IXUSR)
+#endif
+
 #ifndef S_ISDIR
 #define S_ISDIR(mode) (((mode) & S_IFMT) == S_IFDIR)
 #endif
@@ -40,6 +56,8 @@ struct stat {
 #define S_ISREG(mode) (((mode) & S_IFMT) == S_IFREG)
 #endif
 
+int fstatat(int dirfd, const char *path, struct stat *buf, int flag);
+int mkdir(const char *path, mode_t mode);
 int stat(const char *path, struct stat *buf);
 
 #endif

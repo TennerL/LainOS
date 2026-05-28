@@ -15,6 +15,7 @@ struct dirent {
 int alphasort(const struct dirent **d1, const struct dirent **d2);
 DIR *opendir(const char *name);
 int closedir(DIR *dirp);
+int dirfd(DIR *dirp);
 struct dirent *readdir(DIR *dirp);
 int scandir(const char *dir,
             struct dirent ***namelist,

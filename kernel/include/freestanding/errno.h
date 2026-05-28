@@ -3,6 +3,7 @@
 
 extern int errno;
 
+#define ENOENT 2
 #define ERANGE 34
 
 #endif
