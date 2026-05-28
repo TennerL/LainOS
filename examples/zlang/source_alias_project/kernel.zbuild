@@ -1,0 +1,5 @@
+source src
+output source_alias.bin
+install-name source_alias_project.bin
+test-return 5
+source_alias_demo.Z

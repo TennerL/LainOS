@@ -1,0 +1,12 @@
+global uint32_t objects_only_alias_ticks;
+
+export void zmodule_tick(void) {
+    objects_only_alias_ticks = objects_only_alias_ticks + 1;
+}
+
+export void zmodule_unload(void) {
+    objects_only_alias_ticks = 0;
+}
+
+print("objects-only alias module loaded\n");
+return 0;
