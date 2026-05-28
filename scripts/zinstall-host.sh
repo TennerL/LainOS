@@ -18,8 +18,13 @@ fi
 manifest_input="$1"
 manifest_name="$(basename "$manifest_input")"
 target_name="${manifest_name%.zbuild}"
-build_root="build/host-zinstall/$target_name/build"
-install_root="${2:-build/host-zinstall/$target_name/install}"
+if [[ $# -eq 2 ]]; then
+  install_root="$2"
+  build_root="$install_root/.host-build"
+else
+  build_root="build/host-zinstall/$target_name/build"
+  install_root="build/host-zinstall/$target_name/install"
+fi
 
 zbuild_host_prepare_manifest "$manifest_input" "$build_root" "$install_root"
 zbuild_host_parse_manifest

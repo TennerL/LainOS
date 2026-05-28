@@ -32,8 +32,8 @@ scripts/ztest-host.sh examples/zlang/mousedemo.zbuild build/zbrowser-smoke/ztest
 scripts/ztest-host.sh examples/zlang/selfhost.zbuild build/zbrowser-smoke/ztest-selfhost
 scripts/ztest-host.sh examples/zlang/zmake.zbuild build/zbrowser-smoke/ztest-zmake
 scripts/ztest-host.sh examples/zlang/zreport.zbuild build/zbrowser-smoke/ztest-zreport
-scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
-scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
+ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
+ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
 scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
 printf 'status ok\n' > build/zbrowser-smoke/zclean-linked/zbcss_async.testlog
@@ -279,6 +279,10 @@ check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "stat
 check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/glob_literal_project/build/kernel.buildlog" "status ok"
+check_buildlog_line "build/zbrowser-smoke/zbrowser_module/zbrowser_module.buildlog" "validation module-link"
+check_buildlog_line "build/zbrowser-smoke/zbrowser_netsurf/zbrowser_netsurf.buildlog" "validation module-link"
+check_buildlog_line "build/zbrowser-smoke/install/zbrowser_module/.host-build/zbrowser_module.buildlog" "validation module-link"
+check_buildlog_line "build/zbrowser-smoke/install/zbrowser_netsurf/.host-build/zbrowser_netsurf.buildlog" "validation module-link"
 check_testlog "build/zbrowser-smoke/ztest-zbrowser-css-repro/zbrowser_css_repro.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-zbcss-async/zbcss_async.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-sysstat/sysstat.testlog" "result 7" "expected 7"

@@ -25,11 +25,14 @@ zbuild_host_parse_manifest
 
 make build/tools/zmod_link_host >/dev/null
 
+module_validation="none"
+
 if [[ $ZBUILD_LINK_OUTPUT -ne 0 ]]; then
   mkdir -p "$(dirname "$ZBUILD_EFFECTIVE_OUTPUT")"
   build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --output "$ZBUILD_EFFECTIVE_OUTPUT" "${ZBUILD_LINK_ARGS[@]}"
 else
   if [[ "${ZBUILD_HOST_MODULE_LINK:-0}" != 0 ]]; then
+    module_validation="module-link"
     build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --module-link "${ZBUILD_LINK_ARGS[@]}"
   else
     build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --objects-only "${ZBUILD_LINK_ARGS[@]}"
@@ -50,6 +53,7 @@ else
   cat >"$ZBUILD_BUILD_LOG" <<EOF
 target $ZBUILD_TARGET_NAME
 objects $ZBUILD_SOURCE_COUNT
+validation $module_validation
 status module
 EOF
   if [[ "${ZBUILD_HOST_MODULE_LINK:-0}" != 0 ]]; then
