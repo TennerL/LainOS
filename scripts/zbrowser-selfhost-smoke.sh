@@ -103,10 +103,23 @@ cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
 cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
 cp R:/examples/zbrowser_netsurf.zbuild zbrowser_netsurf.zbuild
 cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
+mkdir ../selfhost_project
+mkdir ../selfhost_project/include
+mkdir ../selfhost_project/src
+cp R:/examples/zlang/selfhost_project/kernel.zbuild ../selfhost_project/kernel.zbuild
+cp R:/examples/zlang/selfhost_project/include/kernel_api.Z ../selfhost_project/include/kernel_api.Z
+cp R:/examples/zlang/selfhost_project/include/selfhost_once_leaf.Z ../selfhost_project/include/selfhost_once_leaf.Z
+cp R:/examples/zlang/selfhost_project/include/selfhost_once_middle.Z ../selfhost_project/include/selfhost_once_middle.Z
+cp R:/examples/zlang/selfhost_project/include/selfhost_once_root.Z ../selfhost_project/include/selfhost_once_root.Z
+cp R:/examples/zlang/selfhost_project/src/selfhost_demo.Z ../selfhost_project/src/selfhost_demo.Z
 zinstall libc_smoke_module
 zinstall clib_port_smoke_module
 zinstall zbrowser_module
 zinstall zbrowser_netsurf
+cd ../selfhost_project
+ztest kernel
+zinstall kernel
+exec selfhost_project.bin
 poweroff
 EOF
 build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kernel examples "$seed_root/autoexec" >/dev/null
@@ -165,6 +178,12 @@ check_file "mods/libc_smoke_module.zo"
 check_file "mods/clib_port_smoke_module.buildlog"
 check_file "mods/clib_port_smoke_module.zo"
 check_file "mods/mini_zlib.zo"
+check_file "selfhost_project/build/kernel.bin"
+check_file "selfhost_project/build/kernel.buildlog"
+check_file "selfhost_project/build/kernel.testlog"
+check_file "selfhost_project/build/selfhost_demo.zo"
+check_file "selfhost_project/build/from_z_renamed.txt"
+check_file "selfhost_project/selfhost_project.bin"
 
 check_buildlog() {
   local fs_path="$1"
@@ -187,5 +206,30 @@ check_buildlog "mods/libc_smoke_module.buildlog" 1 "libc smoke module"
 check_buildlog "mods/clib_port_smoke_module.buildlog" 2 "clib port smoke module"
 check_buildlog "mods/zbrowser_module.buildlog" 2 "zbrowser module"
 check_buildlog "mods/zbrowser_netsurf.buildlog" 1 "NetSurf module"
+
+check_log_contains() {
+  local fs_path="$1"
+  local pattern="$2"
+  local label="$3"
+  local log_text
+
+  log_text="$(build/tools/lainfs_check_host cat "$smoke_img" "$fs_path")"
+  if ! printf '%s\n' "$log_text" | grep -q "$pattern"; then
+    printf 'zbrowser self-host smoke: unexpected %s contents\n%s\n' "$label" "$log_text" >&2
+    exit 1
+  fi
+}
+
+check_log_contains "selfhost_project/build/kernel.buildlog" '^status ok$' "selfhost build log"
+check_log_contains "selfhost_project/build/kernel.buildlog" '^objects 1$' "selfhost build log"
+check_log_contains "selfhost_project/build/kernel.testlog" '^result 42$' "selfhost test log"
+check_log_contains "selfhost_project/build/kernel.testlog" '^status ok$' "selfhost test log"
+check_log_contains "selfhost_project/build/from_z_renamed.txt" 'created from selfhost_project' "selfhost output file"
+
+if [ "$(grep -c 'selfhost project 42' "$serial_log" || true)" -lt 2 ]; then
+  printf 'zbrowser self-host smoke: expected selfhost project to print twice (ztest + exec)\n' >&2
+  tail -n 120 "$serial_log" >&2 || true
+  exit 1
+fi
 
 printf 'zbrowser self-host smoke: ok (timeout=%ss elapsed=%ss)\n' "$timeout_seconds" "$qemu_elapsed"
