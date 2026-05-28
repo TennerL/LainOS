@@ -144,6 +144,10 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
       fi
       source_name="$1"
       object_name="${2:-${source_name%.Z}.zo}"
+      if ! valid_lainfs_name "$object_name"; then
+        printf 'zbuild-host: bad object name in %s: %s\n' "$manifest_path" "$object_name" >&2
+        exit 1
+      fi
       source_path="$(resolve_path "$source_dir" "$source_name")"
       object_path="$(resolve_path "$build_dir" "$object_name")"
       mkdir -p "$(dirname "$object_path")"

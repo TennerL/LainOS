@@ -44,6 +44,18 @@ if ! rg -q 'bad output directive' "$invalid_output_log"; then
   exit 1
 fi
 
+invalid_object_log="build/zbrowser-smoke/invalid_object_name.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_object_name.zbuild build/zbrowser-smoke/invalid_object_name >"$invalid_object_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: invalid object manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_object_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad object name' "$invalid_object_log"; then
+  printf 'zbrowser-compile-smoke: invalid object manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_object_log" >&2
+  exit 1
+fi
+
 check_output() {
   local path="$1"
 
@@ -102,7 +114,7 @@ check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "
 
 while IFS= read -r manifest; do
   case "$manifest" in
-    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild)
+    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild)
       continue
       ;;
   esac
