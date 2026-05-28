@@ -44,6 +44,7 @@ ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/taskmgr_module.zbuild 
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/personalize_module.zbuild build/zbrowser-smoke/personalize_module
 scripts/zbuild-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/jpg_decode_demo
 scripts/zbuild-host.sh examples/jpg_decoder.zbuild build/zbrowser-smoke/jpg_decoder
+ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh kernel/z/kernel_z_selfhost.zbuild build/zbrowser-smoke/kernel_z_selfhost
 scripts/zbuild-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/install_dir_project
 scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/selfhost_project
 scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/zbrowser-smoke/manifest_cwd_project
@@ -59,6 +60,7 @@ ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/filemgr_module.zbuil
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/taskmgr_module.zbuild build/zbrowser-smoke/install/taskmgr_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/personalize_module.zbuild build/zbrowser-smoke/install/personalize_module
 scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
+ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh kernel/z/kernel_z_selfhost.zbuild build/zbrowser-smoke/install/kernel_z_selfhost
 scripts/zinstall-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/install/install_dir_project
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
 printf 'status ok\n' > build/zbrowser-smoke/zclean-linked/zbcss_async.testlog
@@ -401,6 +403,8 @@ check_output "build/zbrowser-smoke/install/filemgr_module/filemgr_module.zo"
 check_output "build/zbrowser-smoke/install/taskmgr_module/taskmgr_module.zo"
 check_output "build/zbrowser-smoke/install/personalize_module/personalize_module.zo"
 check_output "build/zbrowser-smoke/install/jpg_decode_demo/jpg_decode_demo.bin"
+check_output "build/zbrowser-smoke/install/kernel_z_selfhost/install/status_math.zo"
+check_output "build/zbrowser-smoke/install/kernel_z_selfhost/install/zlink_probe.zo"
 check_output "build/zbrowser-smoke/install/install_dir_project/apps/browser/install_dir_project.bin"
 check_output "build/zbrowser-smoke/install/install_dir_project/.host-build/install_dir.bin"
 check_output "build/zbrowser-smoke/install_dir_project/install_dir.bin"
@@ -422,6 +426,7 @@ check_buildlog "build/zbrowser-smoke/taskmgr_module/taskmgr_module.buildlog" "st
 check_buildlog "build/zbrowser-smoke/personalize_module/personalize_module.buildlog" "status module"
 check_buildlog "build/zbrowser-smoke/jpg_decode_demo/jpg_decode_demo.buildlog" "status ok"
 check_buildlog "build/zbrowser-smoke/jpg_decoder/jpg_decoder.buildlog" "status module"
+check_buildlog "build/zbrowser-smoke/kernel_z_selfhost/kernel_z_selfhost.buildlog" "status module"
 check_buildlog "build/zbrowser-smoke/install_dir_project/kernel.buildlog" "status ok"
 check_buildlog "build/zbrowser-smoke/install/install_dir_project/.host-build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/selfhost_project/build/kernel.buildlog" "status ok"
@@ -437,6 +442,7 @@ check_buildlog_line "build/zbrowser-smoke/libc_smoke_module/libc_smoke_module.bu
 check_buildlog_line "build/zbrowser-smoke/filemgr_module/filemgr_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/taskmgr_module/taskmgr_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/personalize_module/personalize_module.buildlog" "validation module-link"
+check_buildlog_line "build/zbrowser-smoke/kernel_z_selfhost/kernel_z_selfhost.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/zbrowser_module/.host-build/zbrowser_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/zbrowser_netsurf/.host-build/zbrowser_netsurf.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/image_viewer/.host-build/image_viewer.buildlog" "validation module-link"
@@ -445,6 +451,7 @@ check_buildlog_line "build/zbrowser-smoke/install/libc_smoke_module/.host-build/
 check_buildlog_line "build/zbrowser-smoke/install/filemgr_module/.host-build/filemgr_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/taskmgr_module/.host-build/taskmgr_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/personalize_module/.host-build/personalize_module.buildlog" "validation module-link"
+check_buildlog_line "build/zbrowser-smoke/install/kernel_z_selfhost/.host-build/kernel_z_selfhost.buildlog" "validation module-link"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
 check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
 check_buildlog_line "build/zbrowser-smoke/install_dir_project/kernel.buildlog" "output install_dir.bin"
