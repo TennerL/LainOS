@@ -4,4 +4,12 @@ third_party/netsurf/src/libnsutils/include/nsutils/errors.h
 third_party/netsurf/src/libnsutils/src/base64.c
 third_party/netsurf/src/netsurf/utils/bloom.c
 third_party/netsurf/src/netsurf/utils/bloom.h
+third_party/netsurf/src/netsurf/utils/hashmap.c
+third_party/netsurf/src/netsurf/utils/hashmap.h
+third_party/netsurf/src/netsurf/utils/talloc.c
+third_party/netsurf/src/netsurf/utils/talloc.h
+third_party/netsurf/src/netsurf/utils/time.c
+third_party/netsurf/src/netsurf/utils/time.h
+third_party/netsurf/src/netsurf/utils/ascii.h
+third_party/netsurf/src/netsurf/utils/errors.h
 third_party/netsurf/src/netsurf/utils/utils.h
