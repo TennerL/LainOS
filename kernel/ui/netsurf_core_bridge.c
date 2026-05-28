@@ -500,7 +500,13 @@ static unsigned int netsurf_bridge_http_pending_count(void) {
 }
 
 static unsigned int netsurf_bridge_fetch_pending_count(void) {
-    return fetch_active_count() + fetch_queued_count();
+    /*
+     * NetSurf's generic fetch queue counters are internal to content/fetch.c.
+     * The LainOS frontend currently tracks its own async HTTP fetch contexts,
+     * so use those for readiness decisions and keep this hook as a placeholder
+     * for a future local fetcher wrapper.
+     */
+    return 0u;
 }
 
 static unsigned int netsurf_bridge_pump_fetchers(void) {
@@ -1155,8 +1161,8 @@ static void netsurf_bridge_set_progress_status(const char *phase,
              phase != 0 ? phase : "poll",
              content != 0 ? content->active : 0u,
              netsurf_bridge_schedule_count(),
-             fetch_queued_count(),
-             fetch_active_count(),
+             0u,
+             0u,
              css_loaded,
              css_total,
              obj_loaded,
@@ -1279,8 +1285,8 @@ static void netsurf_bridge_set_waiting_status(const struct content *content) {
              status,
              content != 0 ? content->active : 0u,
              netsurf_bridge_schedule_count(),
-             fetch_queued_count(),
-             fetch_active_count(),
+             0u,
+             0u,
              css_loaded,
              css_total,
              obj_loaded,

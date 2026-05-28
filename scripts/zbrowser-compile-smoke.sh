@@ -11,3 +11,6 @@ build/tools/zcc_host examples/zbrowser_module.Z build/zbrowser-smoke/zbrowser_mo
 build/tools/zmod_link_host \
   examples/zbrowser_html.Z build/zbrowser-smoke/zbrowser_html.zo \
   examples/zbrowser_module.Z build/zbrowser-smoke/zbrowser_module.zo
+
+build/tools/zmod_link_host \
+  examples/zbrowser_netsurf.Z build/zbrowser-smoke/zbrowser_netsurf.zo

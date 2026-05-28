@@ -82,6 +82,25 @@ static const char *const host_kernel_exports[] = {
     "os_http_get",
     "os_http_get_ex",
     "os_strlen",
+    "os_strcmp",
+    "os_starts_with",
+    "os_atoi",
+    "os_list_dir",
+    "os_chdir",
+    "os_dir_count",
+    "os_dir_name",
+    "os_dir_type",
+    "os_dir_size",
+    "os_zbuild",
+    "os_ztest",
+    "os_zinstall",
+    "os_zmod",
+    "os_zunload",
+    "os_zreload",
+    "os_open_editor",
+    "os_open_image",
+    "os_open_module",
+    "os_image_path",
     "image_probe",
     "image_decode_rgb24",
     "image_decode_to_screen",
@@ -105,6 +124,17 @@ static const char *const host_kernel_exports[] = {
     "netsurf_port_rewrite_render_html",
     "netsurf_port_style_hint_for_tag",
     "netsurf_port_status",
+    "netsurf_kernel_frontend_smoke",
+    "netsurf_kernel_frontend_status",
+    "netsurf_browser_render_html",
+    "netsurf_browser_render_html_view",
+    "netsurf_browser_prepare_html_view",
+    "netsurf_browser_mouse_html_view",
+    "netsurf_browser_key_event",
+    "netsurf_browser_consume_navigation",
+    "netsurf_browser_invalidate_cache",
+    "netsurf_browser_poll",
+    "netsurf_browser_status",
 };
 
 static int host_streq(const char *a, const char *b) {
@@ -149,7 +179,18 @@ int kernel_export_value(const char *name, uint64_t *out) {
         host_streq(name, "netsurf_port_rewrite_html") ||
         host_streq(name, "netsurf_port_rewrite_render_html") ||
         host_streq(name, "netsurf_port_style_hint_for_tag") ||
-        host_streq(name, "netsurf_port_status")) {
+        host_streq(name, "netsurf_port_status") ||
+        host_streq(name, "netsurf_kernel_frontend_smoke") ||
+        host_streq(name, "netsurf_kernel_frontend_status") ||
+        host_streq(name, "netsurf_browser_render_html") ||
+        host_streq(name, "netsurf_browser_render_html_view") ||
+        host_streq(name, "netsurf_browser_prepare_html_view") ||
+        host_streq(name, "netsurf_browser_mouse_html_view") ||
+        host_streq(name, "netsurf_browser_key_event") ||
+        host_streq(name, "netsurf_browser_consume_navigation") ||
+        host_streq(name, "netsurf_browser_invalidate_cache") ||
+        host_streq(name, "netsurf_browser_poll") ||
+        host_streq(name, "netsurf_browser_status")) {
         if (out) {
             *out = 0x1000f0000ull;
         }
