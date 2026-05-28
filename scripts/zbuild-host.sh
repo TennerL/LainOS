@@ -51,6 +51,7 @@ source_dir="$manifest_dir"
 build_dir="$(cd "$output_root" && pwd)"
 link_output=1
 source_count=0
+declare -a include_args=()
 declare -a link_args=()
 
 while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
@@ -82,10 +83,8 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
         printf 'zbuild-host: bad include directive in %s\n' "$manifest_path" >&2
         exit 1
       fi
-      if [[ "$2" != "." ]]; then
-        printf 'zbuild-host: unsupported include search path in %s: %s\n' "$manifest_path" "$2" >&2
-        exit 1
-      fi
+      include_dir="$(resolve_path "$manifest_dir" "$2")"
+      include_args+=("--include" "$include_dir")
       ;;
     output|install|install-name|test-return)
       ;;
@@ -117,7 +116,7 @@ if [[ $source_count -eq 0 ]]; then
   exit 1
 fi
 
-build/tools/zmod_link_host "${link_args[@]}"
+build/tools/zmod_link_host "${include_args[@]}" "${link_args[@]}"
 
 if [[ $link_output -ne 0 ]]; then
   printf '%s -> validated linked build with %d object(s)\n' "$manifest_name" "$source_count"

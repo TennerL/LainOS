@@ -8,6 +8,7 @@
 #include "kernel_exports.h"
 
 #define HOST_MAX_INCLUDE_DEPTH 16u
+#define HOST_MAX_INCLUDE_DIRS 16u
 #define HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
 #define HOST_MAX_ASM_SIZE (8u * 1024u * 1024u)
 #define HOST_MAX_OBJECT_SIZE (4u * 1024u * 1024u)
@@ -299,14 +300,22 @@ static int dirname_from_path(const char *path, char *out, uint32_t out_capacity)
 static int join_path(const char *dir, const char *name, char *out, uint32_t out_capacity) {
     uint32_t dir_len = (uint32_t)strlen(dir);
     uint32_t name_len = (uint32_t)strlen(name);
+    int needs_slash = dir_len != 0u && dir[dir_len - 1u] != '/';
 
-    if (dir_len + name_len + 1u > out_capacity) {
+    if (dir_len + (uint32_t)needs_slash + name_len + 1u > out_capacity) {
         return -1;
     }
     memcpy(out, dir, dir_len);
+    if (needs_slash) {
+        out[dir_len++] = '/';
+    }
     memcpy(out + dir_len, name, name_len);
     out[dir_len + name_len] = '\0';
     return 0;
+}
+
+static int path_is_absolute(const char *path) {
+    return path != 0 && path[0] == '/';
 }
 
 static const char *skip_line_spaces(const char *p, const char *end) {
@@ -396,6 +405,52 @@ static int read_file_raw(const char *path, char **out_data, uint32_t *out_size) 
 }
 
 static int expand_source_file(const char *path,
+                              const char *const *include_dirs,
+                              uint32_t include_dir_count,
+                              char *out,
+                              uint32_t out_capacity,
+                              uint32_t *out_size,
+                              uint32_t depth);
+
+static int resolve_include_path(const char *source_dir,
+                                const char *include_name,
+                                const char *const *include_dirs,
+                                uint32_t include_dir_count,
+                                char *resolved_path,
+                                uint32_t resolved_capacity) {
+    if (path_is_absolute(include_name)) {
+        if (strlen(include_name) + 1u > resolved_capacity) {
+            return -1;
+        }
+        memcpy(resolved_path, include_name, strlen(include_name) + 1u);
+        return 0;
+    }
+
+    if (join_path(source_dir, include_name, resolved_path, resolved_capacity) == 0) {
+        FILE *probe = fopen(resolved_path, "rb");
+        if (probe != 0) {
+            fclose(probe);
+            return 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < include_dir_count; ++i) {
+        if (join_path(include_dirs[i], include_name, resolved_path, resolved_capacity) != 0) {
+            continue;
+        }
+        FILE *probe = fopen(resolved_path, "rb");
+        if (probe != 0) {
+            fclose(probe);
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+static int expand_source_file(const char *path,
+                              const char *const *include_dirs,
+                              uint32_t include_dir_count,
                               char *out,
                               uint32_t out_capacity,
                               uint32_t *out_size,
@@ -429,8 +484,19 @@ static int expand_source_file(const char *path,
 
         if (include_status > 0) {
             char include_path[768];
-            if (join_path(dir, include_name, include_path, sizeof(include_path)) != 0 ||
-                expand_source_file(include_path, out, out_capacity, out_size, depth + 1u) != 0 ||
+            if (resolve_include_path(dir,
+                                     include_name,
+                                     include_dirs,
+                                     include_dir_count,
+                                     include_path,
+                                     sizeof(include_path)) != 0 ||
+                expand_source_file(include_path,
+                                   include_dirs,
+                                   include_dir_count,
+                                   out,
+                                   out_capacity,
+                                   out_size,
+                                   depth + 1u) != 0 ||
                 append_char(out, out_capacity, out_size, '\n') != 0) {
                 free(source);
                 return -1;
@@ -487,6 +553,8 @@ static void make_zobject_prefix(const char *name, char *out, uint32_t out_capaci
 }
 
 static int compile_object(const char *source_path,
+                          const char *const *include_dirs,
+                          uint32_t include_dir_count,
                           const char *object_name,
                           unsigned char *object,
                           uint32_t object_capacity,
@@ -504,7 +572,13 @@ static int compile_object(const char *source_path,
         goto out;
     }
 
-    if (expand_source_file(source_path, source, HOST_MAX_SOURCE_SIZE, &source_size, 0) != 0) {
+    if (expand_source_file(source_path,
+                           include_dirs,
+                           include_dir_count,
+                           source,
+                           HOST_MAX_SOURCE_SIZE,
+                           &source_size,
+                           0) != 0) {
         fprintf(stderr, "%s: failed to load expanded source\n", source_path);
         goto out;
     }
@@ -580,18 +654,30 @@ int main(int argc, char **argv) {
     unsigned char *objects_storage[HOST_MAX_OBJECTS];
     const unsigned char *objects[HOST_MAX_OBJECTS];
     uint32_t object_sizes[HOST_MAX_OBJECTS];
+    const char *include_dirs[HOST_MAX_INCLUDE_DIRS];
+    uint32_t include_dir_count = 0;
     uint32_t object_count;
     unsigned char *linked;
     uint32_t linked_size = 0;
     uint32_t error_line = 0;
+    int arg_index = 1;
     int status;
 
-    if (argc < 3 || ((argc - 1) % 2) != 0) {
-        fprintf(stderr, "usage: zmod_link_host source.Z object.zo [source.Z object.zo ...]\n");
+    while (arg_index < argc && strcmp(argv[arg_index], "--include") == 0) {
+        if (include_dir_count >= HOST_MAX_INCLUDE_DIRS || arg_index + 1 >= argc) {
+            fprintf(stderr, "usage: zmod_link_host [--include dir/] source.Z object.zo [source.Z object.zo ...]\n");
+            return 2;
+        }
+        include_dirs[include_dir_count++] = argv[arg_index + 1];
+        arg_index += 2;
+    }
+
+    if (argc - arg_index < 2 || ((argc - arg_index) % 2) != 0) {
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] source.Z object.zo [source.Z object.zo ...]\n");
         return 2;
     }
 
-    object_count = (uint32_t)(argc - 1) / 2u;
+    object_count = (uint32_t)(argc - arg_index) / 2u;
     if (object_count > HOST_MAX_OBJECTS) {
         fprintf(stderr, "too many objects\n");
         return 2;
@@ -604,8 +690,10 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        if (compile_object(argv[1 + i * 2],
-                           argv[2 + i * 2],
+        if (compile_object(argv[arg_index + i * 2],
+                           include_dirs,
+                           include_dir_count,
+                           argv[arg_index + i * 2 + 1],
                            objects_storage[i],
                            HOST_MAX_OBJECT_SIZE,
                            &object_sizes[i]) != 0) {
@@ -614,8 +702,8 @@ int main(int argc, char **argv) {
             }
             return 1;
         }
-        if (write_file_raw(argv[2 + i * 2], objects_storage[i], object_sizes[i]) != 0) {
-            fprintf(stderr, "%s: failed to write object\n", argv[2 + i * 2]);
+        if (write_file_raw(argv[arg_index + i * 2 + 1], objects_storage[i], object_sizes[i]) != 0) {
+            fprintf(stderr, "%s: failed to write object\n", argv[arg_index + i * 2 + 1]);
             for (uint32_t j = 0; j <= i; ++j) {
                 free(objects_storage[j]);
             }
