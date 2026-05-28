@@ -32,20 +32,36 @@ static const char *const host_kernel_exports[] = {
     "put_hex64",
     "put_dec64",
     "ticks",
+    "clock_unix_time",
+    "clock_get_rtc_time",
+    "status_memory_total_kb",
+    "mem_total_kb",
+    "status_memory_free_kb",
+    "mem_free_kb",
+    "status_memory_used_kb",
+    "mem_used_kb",
     "kmalloc",
+    "kzalloc",
     "kfree",
     "kmalloc_size",
     "malloc",
     "calloc",
     "realloc",
     "free",
+    "abort",
+    "time",
     "errno_location",
+    "__errno_location",
     "kernel_task_submit_named",
+    "kernel_task_submit",
     "kernel_task_submit_async_named",
     "kernel_task_async_supported",
     "kernel_task_done",
     "kernel_task_release",
     "kernel_task_wait",
+    "kernel_task_poll",
+    "kernel_task_pending_count",
+    "kernel_task_snapshot",
     "memcpy",
     "memset",
     "memmove",
@@ -62,23 +78,75 @@ static const char *const host_kernel_exports[] = {
     "strrchr",
     "strstr",
     "strdup",
+    "strtol",
+    "strtoul",
+    "snprintf",
+    "vsnprintf",
     "tolower",
     "toupper",
     "bsearch",
+    "page_alloc",
+    "page_free",
+    "heap_used_bytes",
+    "registry_set",
+    "registry_get",
+    "registry_get_u32",
+    "registry_count",
+    "registry_key_at",
+    "registry_value_at",
+    "status_cpu_core_count",
+    "cpu_count",
+    "cpu_usage",
+    "cpu_local_timer_ticks",
+    "cpu_lapic_timer_frequency",
+    "smp_submit_work",
+    "smp_work_done",
+    "smp_wait_work",
+    "smp_pending_work_count",
+    "put_pixel",
     "gfx_width",
     "gfx_height",
+    "gfx_pitch",
+    "gfx_format",
     "gfx_viewport_active",
+    "gfx_viewport_x",
+    "gfx_viewport_y",
+    "gfx_smp_last_workers",
+    "gfx_smp_jobs",
+    "gfx_smp_ops",
+    "gfx_smp_pixels",
+    "gfx_get_pixel",
     "gfx_draw_rect_packed",
     "gfx_fill_rect",
     "gfx_scroll_rect",
     "gfx_draw_rect",
+    "gfx_draw_line",
+    "gfx_clear",
     "draw_text_at_pixel",
     "draw_text_scaled_at_pixel",
+    "put_char_at",
+    "put_dec_at",
     "put_char_at_screen",
     "put_dec_at_screen",
+    "mouse_x",
+    "mouse_y",
+    "mouse_dx",
+    "mouse_dy",
+    "mouse_buttons",
+    "mouse_wheel",
+    "mouse_consume_wheel",
+    "mouse_enabled",
+    "mouse_init",
     "os_read_file",
+    "os_write_file",
     "os_load_file_shared",
     "os_file_buffer",
+    "os_file_size",
+    "os_cat_file",
+    "os_copy_file",
+    "os_delete",
+    "os_rename",
+    "os_mkdir",
     "os_http_get",
     "os_http_get_ex",
     "os_strlen",
@@ -102,11 +170,30 @@ static const char *const host_kernel_exports[] = {
     "os_open_module",
     "os_image_path",
     "image_probe",
+    "image_supported_formats",
+    "image_decode_rgba32",
     "image_decode_rgb24",
     "image_decode_to_screen",
     "image_decode_to_screen_scaled",
     "image_decode_scaled_to_packed",
     "image_decode_to_screen_tiled",
+    "jpg_probe",
+    "jpg_huffman_code_count",
+    "jpg_huffman_value",
+    "jpg_debug_scan_offset",
+    "jpg_debug_stream_pos",
+    "jpg_debug_bits_left",
+    "jpg_debug_byte_at",
+    "jpg_debug_zigzag",
+    "jpg_debug_first_entropy_bits",
+    "jpg_decode_first_block_probe",
+    "jpg_decode_two_block_probe",
+    "jpg_decode_first_ac_probe",
+    "jpg_entropy_probe_first",
+    "jpg_entropy_error_block",
+    "jpg_entropy_error_detail",
+    "set_margin",
+    "statusbar_enable",
     "web_style_prepare_document",
     "web_style_for_tag",
     "web_style_for_cached_rules",
@@ -124,6 +211,11 @@ static const char *const host_kernel_exports[] = {
     "netsurf_port_rewrite_render_html",
     "netsurf_port_style_hint_for_tag",
     "netsurf_port_status",
+    "netsurf_kernel_layout_table",
+    "netsurf_kernel_plotter_table",
+    "netsurf_kernel_redraw_context",
+    "netsurf_kernel_plot_stats_reset",
+    "netsurf_kernel_plot_stats_snapshot",
     "netsurf_kernel_frontend_smoke",
     "netsurf_kernel_frontend_status",
     "netsurf_browser_render_html",
@@ -155,46 +247,6 @@ int kernel_export_value(const char *name, uint64_t *out) {
             }
             return 0;
         }
-    }
-
-    if (host_streq(name, "image_probe") ||
-        host_streq(name, "image_decode_rgb24") ||
-        host_streq(name, "image_decode_to_screen") ||
-        host_streq(name, "image_decode_to_screen_scaled") ||
-        host_streq(name, "image_decode_scaled_to_packed") ||
-        host_streq(name, "image_decode_to_screen_tiled") ||
-        host_streq(name, "web_style_prepare_document") ||
-        host_streq(name, "web_style_for_tag") ||
-        host_streq(name, "web_style_for_cached_rules") ||
-        host_streq(name, "webcompat_lwc_smoke") ||
-        host_streq(name, "webcompat_lwc_last_status") ||
-        host_streq(name, "webcompat_pu_smoke") ||
-        host_streq(name, "webcompat_pu_status") ||
-        host_streq(name, "webcompat_css_smoke") ||
-        host_streq(name, "webcompat_css_status") ||
-        host_streq(name, "netsurf_port_dom_smoke") ||
-        host_streq(name, "netsurf_port_dom_status") ||
-        host_streq(name, "netsurf_port_parse_html_smoke") ||
-        host_streq(name, "netsurf_port_render_smoke") ||
-        host_streq(name, "netsurf_port_rewrite_html") ||
-        host_streq(name, "netsurf_port_rewrite_render_html") ||
-        host_streq(name, "netsurf_port_style_hint_for_tag") ||
-        host_streq(name, "netsurf_port_status") ||
-        host_streq(name, "netsurf_kernel_frontend_smoke") ||
-        host_streq(name, "netsurf_kernel_frontend_status") ||
-        host_streq(name, "netsurf_browser_render_html") ||
-        host_streq(name, "netsurf_browser_render_html_view") ||
-        host_streq(name, "netsurf_browser_prepare_html_view") ||
-        host_streq(name, "netsurf_browser_mouse_html_view") ||
-        host_streq(name, "netsurf_browser_key_event") ||
-        host_streq(name, "netsurf_browser_consume_navigation") ||
-        host_streq(name, "netsurf_browser_invalidate_cache") ||
-        host_streq(name, "netsurf_browser_poll") ||
-        host_streq(name, "netsurf_browser_status")) {
-        if (out) {
-            *out = 0x1000f0000ull;
-        }
-        return 0;
     }
 
     return -1;
