@@ -57,6 +57,7 @@ source_dir="$manifest_dir"
 build_dir="$(cd "$output_root" && pwd)"
 linked_output=
 effective_output=
+build_log=
 link_output=1
 source_count=0
 declare -a include_args=("--include" "$manifest_dir")
@@ -144,14 +145,29 @@ if [[ $link_output -ne 0 ]]; then
   else
     effective_output="$build_dir/$target_name.bin"
   fi
+  build_log="$build_dir/$target_name.buildlog"
   mkdir -p "$(dirname "$effective_output")"
   build/tools/zmod_link_host "${include_args[@]}" --output "$effective_output" "${link_args[@]}"
 else
+  build_log="$build_dir/$target_name.buildlog"
   build/tools/zmod_link_host "${include_args[@]}" --objects-only "${link_args[@]}"
 fi
 
 if [[ $link_output -ne 0 ]]; then
+  linked_size="$(wc -c <"$effective_output")"
+  cat >"$build_log" <<EOF
+target $target_name
+objects $source_count
+output $(basename "$effective_output")
+bytes $linked_size
+status ok
+EOF
   printf '%s -> validated linked build with %d object(s), output=%s\n' "$manifest_name" "$source_count" "$effective_output"
 else
+  cat >"$build_log" <<EOF
+target $target_name
+objects $source_count
+status module
+EOF
   printf '%s -> built module object set with %d object(s)\n' "$manifest_name" "$source_count"
 fi

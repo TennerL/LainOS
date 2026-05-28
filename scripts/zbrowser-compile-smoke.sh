@@ -12,6 +12,7 @@ scripts/zbuild-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/zbr
 scripts/zbuild-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zbrowser_css_repro
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zbcss_async
 scripts/zbuild-host.sh examples/image_viewer.zbuild build/zbrowser-smoke/image_viewer
+scripts/zbuild-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/jpg_decode_demo
 scripts/zbuild-host.sh examples/jpg_decoder.zbuild build/zbrowser-smoke/jpg_decoder
 scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/selfhost_project
 scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/zbrowser-smoke/manifest_cwd_project
@@ -38,9 +39,35 @@ check_output() {
   fi
 }
 
+check_buildlog() {
+  local path="$1"
+  local status_line="$2"
+
+  if [[ ! -s "$path" ]]; then
+    printf 'zbrowser-compile-smoke: missing build log %s\n' "$path" >&2
+    exit 1
+  fi
+  if ! rg -qx "$status_line" "$path"; then
+    printf 'zbrowser-compile-smoke: unexpected build log status in %s\n' "$path" >&2
+    cat "$path" >&2
+    exit 1
+  fi
+}
+
 check_output "build/zbrowser-smoke/zbrowser_css_repro/zbrowser_css_repro.bin"
 check_output "build/zbrowser-smoke/zbcss_async/zbcss_async.bin"
+check_output "build/zbrowser-smoke/jpg_decode_demo/jpg_decode_demo.bin"
 check_output "examples/zlang/selfhost_project/build/kernel.bin"
 check_output "examples/zlang/manifest_cwd_project/build/manifest_cwd.bin"
 check_output "examples/zlang/default_output_project/build/kernel.bin"
 check_output "build/zbrowser-smoke/jpg_decoder/jpg_decoder.zo"
+check_buildlog "build/zbrowser-smoke/zbrowser_module/zbrowser_module.buildlog" "status module"
+check_buildlog "build/zbrowser-smoke/zbrowser_netsurf/zbrowser_netsurf.buildlog" "status module"
+check_buildlog "build/zbrowser-smoke/zbrowser_css_repro/zbrowser_css_repro.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/zbcss_async/zbcss_async.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/image_viewer/image_viewer.buildlog" "status module"
+check_buildlog "build/zbrowser-smoke/jpg_decode_demo/jpg_decode_demo.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/jpg_decoder/jpg_decoder.buildlog" "status module"
+check_buildlog "examples/zlang/selfhost_project/build/kernel.buildlog" "status ok"
+check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "status ok"
+check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
