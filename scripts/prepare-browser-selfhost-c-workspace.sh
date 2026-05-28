@@ -30,7 +30,7 @@ cat >"$notes_path" <<'EOF'
 browser_c is the first staged in-OS C selfhost slice for browser work.
 
 It is intentionally small:
-- libnsutils base64
+- libnsutils base64/time
 - netsurf utils bloom/hashmap/hashtable/talloc/time
 
 The goal is to remove the guest-side source staging blocker before the in-OS

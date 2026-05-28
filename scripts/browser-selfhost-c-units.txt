@@ -1,4 +1,5 @@
 base64.o|third_party/netsurf/src/libnsutils/src/base64.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding
+nsutils_time.o|third_party/netsurf/src/libnsutils/src/time.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding
 bloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 hashmap.o|third_party/netsurf/src/netsurf/utils/hashmap.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 hashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsurf/src/netsurf:kernel/include:kernel/include/freestanding
