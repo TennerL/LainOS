@@ -1,0 +1,5 @@
+src src
+build build
+output custom_named_output.bin
+install-name output_name_project.bin
+default_output_demo.Z

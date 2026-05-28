@@ -14,6 +14,19 @@ fail_bad_directive() {
   exit 1
 }
 
+valid_lainfs_name() {
+  local name="$1"
+  local len="${#name}"
+
+  if [[ "$len" -eq 0 || "$len" -gt 30 ]]; then
+    return 1
+  fi
+  if [[ "$name" == *"/"* || "$name" == *"\\"* || "$name" == *":"* || "$name" == *$'\t'* || "$name" == *" "* ]]; then
+    return 1
+  fi
+  return 0
+}
+
 resolve_path() {
   local base_dir="$1"
   local path="$2"
@@ -99,10 +112,16 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
       if [[ $# -ne 2 ]]; then
         fail_bad_directive output
       fi
+      if ! valid_lainfs_name "$2"; then
+        fail_bad_directive output
+      fi
       linked_output="$2"
       ;;
     install|install-name)
       if [[ $# -ne 2 ]]; then
+        fail_bad_directive "$directive"
+      fi
+      if [[ "$directive" == "install-name" ]] && ! valid_lainfs_name "$2"; then
         fail_bad_directive "$directive"
       fi
       ;;
