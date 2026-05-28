@@ -1,4 +1,5 @@
 module
 install install
+clock_math.Z clock_math.zo
 status_math.Z status_math.zo
 zlink_probe.Z zlink_probe.zo

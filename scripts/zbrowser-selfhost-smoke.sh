@@ -116,6 +116,7 @@ cp R:/examples/zlang/selfhost_project/include/selfhost_once_middle.Z ../selfhost
 cp R:/examples/zlang/selfhost_project/include/selfhost_once_root.Z ../selfhost_project/include/selfhost_once_root.Z
 cp R:/examples/zlang/selfhost_project/src/selfhost_demo.Z ../selfhost_project/src/selfhost_demo.Z
 cp R:/kernel/z/kernel_z_selfhost.zbuild ../kernel_z/kernel_z_selfhost.zbuild
+cp R:/kernel/z/clock_math.Z ../kernel_z/clock_math.Z
 cp R:/kernel/z/status_math.Z ../kernel_z/status_math.Z
 cp R:/kernel/z/zlink_probe.Z ../kernel_z/zlink_probe.Z
 zinstall browser_selfhost_driver
@@ -187,6 +188,7 @@ check_file "mods/clib_port_smoke_module.buildlog"
 check_file "mods/clib_port_smoke_module.zo"
 check_file "mods/mini_zlib.zo"
 check_file "kernel_z/kernel_z_selfhost.buildlog"
+check_file "kernel_z/install/clock_math.zo"
 check_file "kernel_z/install/status_math.zo"
 check_file "kernel_z/install/zlink_probe.zo"
 check_file "selfhost_project/build/kernel.bin"
@@ -217,7 +219,7 @@ check_buildlog "mods/libc_smoke_module.buildlog" 1 "libc smoke module"
 check_buildlog "mods/clib_port_smoke_module.buildlog" 2 "clib port smoke module"
 check_buildlog "mods/zbrowser_module.buildlog" 2 "zbrowser module"
 check_buildlog "mods/zbrowser_netsurf.buildlog" 1 "NetSurf module"
-check_buildlog "kernel_z/kernel_z_selfhost.buildlog" 2 "kernel Z selfhost slice"
+check_buildlog "kernel_z/kernel_z_selfhost.buildlog" 3 "kernel Z selfhost slice"
 
 check_log_contains() {
   local fs_path="$1"

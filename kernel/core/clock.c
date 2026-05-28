@@ -13,8 +13,6 @@
 #define CMOS_REG_STATUS_B 0x0Bu
 #define CMOS_REG_CENTURY 0x32u
 #define CMOS_UPDATE_IN_PROGRESS 0x80u
-#define UNIX_EPOCH_DAYS 719528u
-
 static rtc_time_t boot_rtc_time;
 static int boot_rtc_valid;
 
@@ -39,80 +37,6 @@ static int cmos_update_in_progress(void) {
 
 static uint32_t bcd_to_binary(uint32_t value) {
     return (value & 0x0Fu) + ((value >> 4) * 10u);
-}
-
-static int is_leap_year(uint32_t year) {
-    return (year % 4u == 0u) && ((year % 100u) != 0u || (year % 400u) == 0u);
-}
-
-static uint32_t days_before_year(uint32_t year) {
-    if (year == 0) {
-        return 0;
-    }
-    return year * 365u + ((year - 1u) / 4u) - ((year - 1u) / 100u) + ((year - 1u) / 400u) + 1u;
-}
-
-static uint32_t days_before_month(uint32_t year, uint32_t month) {
-    static const uint16_t month_days[12] = {
-        0u, 31u, 59u, 90u, 120u, 151u, 181u, 212u, 243u, 273u, 304u, 334u
-    };
-    uint32_t days;
-
-    if (month == 0 || month > 12u) {
-        return 0;
-    }
-    days = month_days[month - 1u];
-    if (month > 2u && is_leap_year(year)) {
-        ++days;
-    }
-    return days;
-}
-
-uint32_t clock_days_since_year0(uint32_t year, uint32_t month, uint32_t day) {
-    if (month < 1u || month > 12u || day < 1u || day > 31u) {
-        return 0;
-    }
-    return days_before_year(year) + days_before_month(year, month) + day - 1u;
-}
-
-uint32_t clock_seconds_since_midnight(uint32_t hour, uint32_t minute, uint32_t second) {
-    if (hour > 23u || minute > 59u || second > 60u) {
-        return 0;
-    }
-    return hour * 3600u + minute * 60u + second;
-}
-
-uint64_t clock_unix_time_from_rtc(const rtc_time_t *time) {
-    uint32_t days;
-    uint32_t seconds;
-
-    if (!time || !clock_rtc_time_valid(time)) {
-        return 0;
-    }
-    days = clock_days_since_year0(time->year, time->month, time->day);
-    if (days < UNIX_EPOCH_DAYS) {
-        return 0;
-    }
-    seconds = clock_seconds_since_midnight(time->hour, time->minute, time->second);
-    return ((uint64_t)(days - UNIX_EPOCH_DAYS) * 86400ull) + seconds;
-}
-
-int clock_rtc_time_valid(const rtc_time_t *time) {
-    static const uint8_t month_lengths[12] = {
-        31u, 28u, 31u, 30u, 31u, 30u, 31u, 31u, 30u, 31u, 30u, 31u
-    };
-    uint32_t max_day;
-
-    if (!time || time->year < 1970u || time->year > 9999u ||
-        time->month < 1u || time->month > 12u ||
-        time->hour > 23u || time->minute > 59u || time->second > 60u) {
-        return 0;
-    }
-    max_day = month_lengths[time->month - 1u];
-    if (time->month == 2u && is_leap_year(time->year)) {
-        ++max_day;
-    }
-    return time->day >= 1u && time->day <= max_day;
 }
 
 int clock_read_rtc(rtc_time_t *out) {
