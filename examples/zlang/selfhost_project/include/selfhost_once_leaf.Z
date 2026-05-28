@@ -1,0 +1,5 @@
+#pragma once
+
+int selfhost_once_helper(void) {
+    return 1;
+}

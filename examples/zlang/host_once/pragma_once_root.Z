@@ -1,0 +1,4 @@
+#pragma once
+
+#include "pragma_once_leaf.Z"
+#include "pragma_once_middle.Z"

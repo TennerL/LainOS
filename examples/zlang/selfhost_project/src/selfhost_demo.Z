@@ -1,7 +1,8 @@
 #include "kernel_api.Z"
+#include "selfhost_once_root.Z"
 
 int main_value(void) {
-    return 41;
+    return 41 + selfhost_once_helper();
 }
 
 uint8_t buffer[64];

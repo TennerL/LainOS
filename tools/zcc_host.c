@@ -6,7 +6,14 @@
 #include "zscript.h"
 
 #define ZCC_HOST_MAX_INCLUDE_DEPTH 16u
+#define ZCC_HOST_MAX_ONCE_PATHS 128u
+#define ZCC_HOST_MAX_PATH 768u
 #define ZCC_HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
+
+typedef struct {
+    char once_paths[ZCC_HOST_MAX_ONCE_PATHS][ZCC_HOST_MAX_PATH];
+    uint32_t once_count;
+} zcc_host_source_context_t;
 
 static int write_nasm_globals(FILE *out, const char *asm_output, uint32_t asm_size) {
     const char *cursor = asm_output;
@@ -148,6 +155,63 @@ static int parse_include_line(const char *line, const char *line_end, char *incl
     return 1;
 }
 
+static int parse_pragma_once_line(const char *line, const char *line_end) {
+    const char pragma_word[] = "pragma";
+    const char once_word[] = "once";
+    const char *p = skip_line_spaces(line, line_end);
+    uint32_t i;
+
+    if (p >= line_end || *p != '#') {
+        return 0;
+    }
+    ++p;
+    p = skip_line_spaces(p, line_end);
+
+    for (i = 0; pragma_word[i] != '\0'; ++i) {
+        if (p + i >= line_end || p[i] != pragma_word[i]) {
+            return 0;
+        }
+    }
+    p += i;
+    if (p < line_end && *p != ' ' && *p != '\t' && *p != '\r') {
+        return 0;
+    }
+    p = skip_line_spaces(p, line_end);
+
+    for (i = 0; once_word[i] != '\0'; ++i) {
+        if (p + i >= line_end || p[i] != once_word[i]) {
+            return 0;
+        }
+    }
+    p += i;
+    p = skip_line_spaces(p, line_end);
+    return p == line_end;
+}
+
+static int source_once_index(const zcc_host_source_context_t *ctx, const char *path) {
+    for (uint32_t i = 0; i < ctx->once_count; ++i) {
+        if (strcmp(ctx->once_paths[i], path) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int source_mark_once(zcc_host_source_context_t *ctx, const char *path) {
+    size_t len = strlen(path);
+
+    if (source_once_index(ctx, path) >= 0) {
+        return 0;
+    }
+    if (ctx->once_count >= ZCC_HOST_MAX_ONCE_PATHS || len + 1u > ZCC_HOST_MAX_PATH) {
+        return -1;
+    }
+
+    memcpy(ctx->once_paths[ctx->once_count], path, len + 1u);
+    ++ctx->once_count;
+    return 0;
+}
+
 static int read_file_raw(const char *path, char **out_data, uint32_t *out_size) {
     FILE *in;
     long input_size;
@@ -189,7 +253,8 @@ static int read_file_raw(const char *path, char **out_data, uint32_t *out_size) 
     return 0;
 }
 
-static int expand_source_file(const char *path,
+static int expand_source_file(zcc_host_source_context_t *ctx,
+                              const char *path,
                               char *out,
                               uint32_t out_capacity,
                               uint32_t *out_size,
@@ -198,6 +263,10 @@ static int expand_source_file(const char *path,
     uint32_t source_size = 0;
     char dir[512];
     uint32_t pos = 0;
+
+    if (source_once_index(ctx, path) >= 0) {
+        return 0;
+    }
 
     if (depth >= ZCC_HOST_MAX_INCLUDE_DEPTH ||
         dirname_from_path(path, dir, sizeof(dir)) != 0 ||
@@ -222,10 +291,15 @@ static int expand_source_file(const char *path,
         }
 
         if (include_status > 0) {
-            char include_path[768];
+            char include_path[ZCC_HOST_MAX_PATH];
             if (join_path(dir, include_name, include_path, sizeof(include_path)) != 0 ||
-                expand_source_file(include_path, out, out_capacity, out_size, depth + 1u) != 0 ||
+                expand_source_file(ctx, include_path, out, out_capacity, out_size, depth + 1u) != 0 ||
                 append_char(out, out_capacity, out_size, '\n') != 0) {
+                free(source);
+                return -1;
+            }
+        } else if (parse_pragma_once_line(line, line_end)) {
+            if (source_mark_once(ctx, path) != 0) {
                 free(source);
                 return -1;
             }
@@ -260,6 +334,7 @@ int main(int argc, char **argv) {
     uint32_t error_line = 0;
     char entry_label[64];
     const char *label_prefix = "kz";
+    zcc_host_source_context_t source_ctx;
 
     if (argc != 3) {
         fprintf(stderr, "usage: zcc_host input.Z output.asm\n");
@@ -274,7 +349,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (expand_source_file(argv[1], source, source_capacity, &source_size, 0) != 0) {
+    source_ctx.once_count = 0;
+    if (expand_source_file(&source_ctx, argv[1], source, source_capacity, &source_size, 0) != 0) {
         fprintf(stderr, "%s: failed to load expanded .Z source\n", argv[1]);
         free(source);
         free(asm_output);

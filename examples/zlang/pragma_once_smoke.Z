@@ -1,0 +1,8 @@
+#include "host_once/pragma_once_root.Z"
+
+int total = pragma_once_helper();
+print("pragma once total=");
+print(total);
+print("\n");
+
+return total;

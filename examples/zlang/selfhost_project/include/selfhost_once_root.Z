@@ -1,0 +1,4 @@
+#pragma once
+
+#include "selfhost_once_leaf.Z"
+#include "selfhost_once_middle.Z"

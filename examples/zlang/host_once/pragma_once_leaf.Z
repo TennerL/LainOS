@@ -1,0 +1,5 @@
+#pragma once
+
+int pragma_once_helper(void) {
+    return 41;
+}

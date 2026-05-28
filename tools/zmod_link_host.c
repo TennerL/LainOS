@@ -14,6 +14,15 @@
 #define HOST_MAX_OBJECT_SIZE (4u * 1024u * 1024u)
 #define HOST_MAX_LINK_SIZE (4u * 1024u * 1024u)
 #define HOST_MAX_OBJECTS 32u
+#define HOST_MAX_ONCE_PATHS 128u
+#define HOST_MAX_PATH 768u
+
+typedef struct {
+    const char *const *include_dirs;
+    uint32_t include_dir_count;
+    char once_paths[HOST_MAX_ONCE_PATHS][HOST_MAX_PATH];
+    uint32_t once_count;
+} host_source_context_t;
 
 void *kmalloc(uint32_t size) {
     return malloc(size);
@@ -363,6 +372,63 @@ static int parse_include_line(const char *line, const char *line_end, char *incl
     return 1;
 }
 
+static int parse_pragma_once_line(const char *line, const char *line_end) {
+    const char pragma_word[] = "pragma";
+    const char once_word[] = "once";
+    const char *p = skip_line_spaces(line, line_end);
+    uint32_t i;
+
+    if (p >= line_end || *p != '#') {
+        return 0;
+    }
+    ++p;
+    p = skip_line_spaces(p, line_end);
+
+    for (i = 0; pragma_word[i] != '\0'; ++i) {
+        if (p + i >= line_end || p[i] != pragma_word[i]) {
+            return 0;
+        }
+    }
+    p += i;
+    if (p < line_end && *p != ' ' && *p != '\t' && *p != '\r') {
+        return 0;
+    }
+    p = skip_line_spaces(p, line_end);
+
+    for (i = 0; once_word[i] != '\0'; ++i) {
+        if (p + i >= line_end || p[i] != once_word[i]) {
+            return 0;
+        }
+    }
+    p += i;
+    p = skip_line_spaces(p, line_end);
+    return p == line_end;
+}
+
+static int source_once_index(const host_source_context_t *ctx, const char *path) {
+    for (uint32_t i = 0; i < ctx->once_count; ++i) {
+        if (strcmp(ctx->once_paths[i], path) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int source_mark_once(host_source_context_t *ctx, const char *path) {
+    size_t len = strlen(path);
+
+    if (source_once_index(ctx, path) >= 0) {
+        return 0;
+    }
+    if (ctx->once_count >= HOST_MAX_ONCE_PATHS || len + 1u > HOST_MAX_PATH) {
+        return -1;
+    }
+
+    memcpy(ctx->once_paths[ctx->once_count], path, len + 1u);
+    ++ctx->once_count;
+    return 0;
+}
+
 static int read_file_raw(const char *path, char **out_data, uint32_t *out_size) {
     FILE *in;
     long input_size;
@@ -404,9 +470,8 @@ static int read_file_raw(const char *path, char **out_data, uint32_t *out_size) 
     return 0;
 }
 
-static int expand_source_file(const char *path,
-                              const char *const *include_dirs,
-                              uint32_t include_dir_count,
+static int expand_source_file(host_source_context_t *ctx,
+                              const char *path,
                               char *out,
                               uint32_t out_capacity,
                               uint32_t *out_size,
@@ -448,9 +513,8 @@ static int resolve_include_path(const char *source_dir,
     return -1;
 }
 
-static int expand_source_file(const char *path,
-                              const char *const *include_dirs,
-                              uint32_t include_dir_count,
+static int expand_source_file(host_source_context_t *ctx,
+                              const char *path,
                               char *out,
                               uint32_t out_capacity,
                               uint32_t *out_size,
@@ -459,6 +523,10 @@ static int expand_source_file(const char *path,
     uint32_t source_size = 0;
     char dir[512];
     uint32_t pos = 0;
+
+    if (source_once_index(ctx, path) >= 0) {
+        return 0;
+    }
 
     if (depth >= HOST_MAX_INCLUDE_DEPTH ||
         dirname_from_path(path, dir, sizeof(dir)) != 0 ||
@@ -483,21 +551,25 @@ static int expand_source_file(const char *path,
         }
 
         if (include_status > 0) {
-            char include_path[768];
+            char include_path[HOST_MAX_PATH];
             if (resolve_include_path(dir,
                                      include_name,
-                                     include_dirs,
-                                     include_dir_count,
+                                     ctx->include_dirs,
+                                     ctx->include_dir_count,
                                      include_path,
                                      sizeof(include_path)) != 0 ||
-                expand_source_file(include_path,
-                                   include_dirs,
-                                   include_dir_count,
+                expand_source_file(ctx,
+                                   include_path,
                                    out,
                                    out_capacity,
                                    out_size,
                                    depth + 1u) != 0 ||
                 append_char(out, out_capacity, out_size, '\n') != 0) {
+                free(source);
+                return -1;
+            }
+        } else if (parse_pragma_once_line(line, line_end)) {
+            if (source_mark_once(ctx, path) != 0) {
                 free(source);
                 return -1;
             }
@@ -566,15 +638,18 @@ static int compile_object(const char *source_path,
     uint32_t error_line = 0;
     char entry_label[64];
     char label_prefix[8];
+    host_source_context_t source_ctx;
     int status = -1;
 
     if (!source || !asm_output) {
         goto out;
     }
 
-    if (expand_source_file(source_path,
-                           include_dirs,
-                           include_dir_count,
+    source_ctx.include_dirs = include_dirs;
+    source_ctx.include_dir_count = include_dir_count;
+    source_ctx.once_count = 0;
+    if (expand_source_file(&source_ctx,
+                           source_path,
                            source,
                            HOST_MAX_SOURCE_SIZE,
                            &source_size,
