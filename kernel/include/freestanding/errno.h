@@ -4,6 +4,7 @@
 extern int errno;
 
 #define ENOENT 2
+#define EAFNOSUPPORT 97
 #define ERANGE 34
 
 #endif

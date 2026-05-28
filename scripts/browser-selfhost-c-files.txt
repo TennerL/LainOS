@@ -10,9 +10,14 @@ kernel/include/freestanding/stdio.h
 kernel/include/freestanding/fcntl.h
 kernel/include/freestanding/dirent.h
 kernel/include/freestanding/errno.h
+kernel/include/freestanding/strings.h
 kernel/include/freestanding/time.h
 kernel/include/freestanding/unistd.h
 kernel/include/freestanding/limits.h
+kernel/include/freestanding/arpa/inet.h
+kernel/include/freestanding/netinet/in.h
+kernel/include/freestanding/sys/select.h
+kernel/include/freestanding/sys/socket.h
 kernel/include/freestanding/sys/stat.h
 kernel/include/freestanding/sys/time.h
 kernel/include/freestanding/sys/types.h
@@ -28,6 +33,7 @@ third_party/netsurf/src/libnsutils/src/unistd.c
 kernel/include/zlib.h
 third_party/netsurf/src/netsurf/desktop/gui_internal.h
 third_party/netsurf/src/netsurf/desktop/gui_table.h
+third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h
 third_party/netsurf/src/netsurf/utils/bloom.c
 third_party/netsurf/src/netsurf/utils/bloom.h
 third_party/netsurf/src/netsurf/utils/corestringlist.h
@@ -42,7 +48,9 @@ third_party/netsurf/src/netsurf/utils/punycode.c
 third_party/netsurf/src/netsurf/utils/punycode.h
 third_party/netsurf/src/netsurf/utils/filepath.c
 third_party/netsurf/src/netsurf/utils/filepath.h
+third_party/netsurf/src/netsurf/utils/inet.h
 third_party/netsurf/src/netsurf/utils/log.h
+third_party/netsurf/src/netsurf/utils/messages.h
 third_party/netsurf/src/netsurf/utils/nsurl.h
 third_party/netsurf/src/netsurf/utils/string.h
 third_party/netsurf/src/netsurf/utils/talloc.c
@@ -50,6 +58,7 @@ third_party/netsurf/src/netsurf/utils/talloc.h
 third_party/netsurf/src/netsurf/utils/time.c
 third_party/netsurf/src/netsurf/utils/time.h
 third_party/netsurf/src/netsurf/utils/url.h
+third_party/netsurf/src/netsurf/utils/utils.c
 third_party/netsurf/src/netsurf/utils/dirent.h
 third_party/netsurf/src/netsurf/utils/config.h
 third_party/netsurf/src/netsurf/utils/ascii.h

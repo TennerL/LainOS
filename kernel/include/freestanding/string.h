@@ -12,8 +12,10 @@ int strcmp(const char *lhs, const char *rhs);
 int strncmp(const char *lhs, const char *rhs, size_t count);
 char *strchr(const char *text, int ch);
 char *strrchr(const char *text, int ch);
+char *strcpy(char *dest, const char *src);
 char *strdup(const char *text);
 char *strerror(int errnum);
 char *strncpy(char *dest, const char *src, size_t count);
+size_t strspn(const char *text, const char *accept);
 
 #endif
