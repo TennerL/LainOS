@@ -36,3 +36,5 @@ _longjmp:
     mov rsp, [rdi + 48]
     mov rdx, [rdi + 56]
     jmp rdx
+
+SECTION .note.GNU-stack noalloc noexec nowrite progbits

@@ -656,6 +656,7 @@ $(RAMDISK_SEED_H): build/tools/ramdisk_seed_gen $(RAMDISK_SEED_FILES) | build
 build/kernel/z/zlink_probe.asm: kernel/z/zlink_probe.Z build/tools/zcc_host | build
 	$(MKDIR_P) $(@D)
 	build/tools/zcc_host $< $@
+	printf '\nsection .note.GNU-stack noalloc noexec nowrite progbits\n' >> $@
 
 build/kernel/z/zlink_probe.o: build/kernel/z/zlink_probe.asm | build
 	$(MKDIR_P) $(@D)
