@@ -16,8 +16,10 @@ third_party/netsurf/src/libnsutils/include/nsutils/assert.h
 third_party/netsurf/src/libnsutils/include/nsutils/base64.h
 third_party/netsurf/src/libnsutils/include/nsutils/errors.h
 third_party/netsurf/src/libnsutils/include/nsutils/time.h
+third_party/netsurf/src/libnsutils/include/nsutils/unistd.h
 third_party/netsurf/src/libnsutils/src/base64.c
 third_party/netsurf/src/libnsutils/src/time.c
+third_party/netsurf/src/libnsutils/src/unistd.c
 kernel/include/zlib.h
 third_party/netsurf/src/netsurf/utils/bloom.c
 third_party/netsurf/src/netsurf/utils/bloom.h
