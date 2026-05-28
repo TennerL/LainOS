@@ -243,6 +243,42 @@ manifest_is_known_negative() {
   return 1
 }
 
+manifest_skips_module_validation() {
+  local manifest="$1"
+
+  case "$manifest" in
+    examples/jpg_decoder.zbuild)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+manifest_needs_module_validation() {
+  local manifest="$1"
+  local build_root="$2"
+  local install_root="$3"
+
+  if manifest_skips_module_validation "$manifest"; then
+    return 1
+  fi
+
+  zbuild_host_prepare_manifest "$manifest" "$build_root" "$install_root"
+  zbuild_host_parse_manifest
+  [[ $ZBUILD_OBJECTS_ONLY -ne 0 ]]
+}
+
+check_manifest_validation_line() {
+  local manifest="$1"
+  local build_root="$2"
+  local install_root="$3"
+
+  zbuild_host_prepare_manifest "$manifest" "$build_root" "$install_root"
+  zbuild_host_parse_manifest
+  check_buildlog_line "$ZBUILD_BUILD_LOG" "validation module-link"
+}
+
 ztest_manifest_list() {
   rg -l '^test-return [0-9]+$' examples --glob '*.zbuild' | sort || true
 }
@@ -396,10 +432,19 @@ while IFS= read -r manifest; do
   probe_rel="${manifest#examples/}"
   probe_dir="build/zbrowser-smoke/all-manifests/${probe_rel%.zbuild}"
   mkdir -p "$probe_dir"
-  if ! scripts/zbuild-host.sh "$manifest" "$probe_dir" >"$probe_dir/probe.log" 2>&1; then
-    printf 'zbrowser-compile-smoke: broad manifest probe failed for %s\n' "$manifest" >&2
-    cat "$probe_dir/probe.log" >&2
-    exit 1
+  if manifest_needs_module_validation "$manifest" "$probe_dir" "$probe_dir"; then
+    if ! ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh "$manifest" "$probe_dir" >"$probe_dir/probe.log" 2>&1; then
+      printf 'zbrowser-compile-smoke: broad manifest probe failed for %s\n' "$manifest" >&2
+      cat "$probe_dir/probe.log" >&2
+      exit 1
+    fi
+    check_manifest_validation_line "$manifest" "$probe_dir" "$probe_dir"
+  else
+    if ! scripts/zbuild-host.sh "$manifest" "$probe_dir" >"$probe_dir/probe.log" 2>&1; then
+      printf 'zbrowser-compile-smoke: broad manifest probe failed for %s\n' "$manifest" >&2
+      cat "$probe_dir/probe.log" >&2
+      exit 1
+    fi
   fi
 done < <(find examples -name '*.zbuild' -type f | sort)
 
@@ -411,10 +456,19 @@ while IFS= read -r manifest; do
   install_rel="${manifest#examples/}"
   install_root="build/zbrowser-smoke/all-installs/${install_rel%.zbuild}"
   mkdir -p "$install_root"
-  if ! scripts/zinstall-host.sh "$manifest" "$install_root" >"$install_root/install.log" 2>&1; then
-    printf 'zbrowser-compile-smoke: broad install probe failed for %s\n' "$manifest" >&2
-    cat "$install_root/install.log" >&2
-    exit 1
+  if manifest_needs_module_validation "$manifest" "$install_root/.host-build" "$install_root"; then
+    if ! ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh "$manifest" "$install_root" >"$install_root/install.log" 2>&1; then
+      printf 'zbrowser-compile-smoke: broad install probe failed for %s\n' "$manifest" >&2
+      cat "$install_root/install.log" >&2
+      exit 1
+    fi
+    check_manifest_validation_line "$manifest" "$install_root/.host-build" "$install_root"
+  else
+    if ! scripts/zinstall-host.sh "$manifest" "$install_root" >"$install_root/install.log" 2>&1; then
+      printf 'zbrowser-compile-smoke: broad install probe failed for %s\n' "$manifest" >&2
+      cat "$install_root/install.log" >&2
+      exit 1
+    fi
   fi
   check_installed_manifest "$manifest" "$install_root"
 done < <(find examples -name '*.zbuild' -type f | sort)
