@@ -265,6 +265,7 @@ static const char *netsurf_bridge_status = "NetSurf core bridge not initialised"
 static char netsurf_bridge_status_buffer[768];
 static char netsurf_bridge_pending_url[1024];
 static bool netsurf_bridge_navigation_pending;
+static int32_t netsurf_bridge_pending_history_direction;
 
 static void netsurf_bridge_destroy_content(struct content *content);
 static nserror netsurf_bridge_image_init(void);
@@ -1326,6 +1327,7 @@ void netsurf_core_invalidate_cache(void) {
     netsurf_bridge_css_compat_group_count = 0;
     netsurf_bridge_navigation_pending = false;
     netsurf_bridge_pending_url[0] = '\0';
+    netsurf_bridge_pending_history_direction = 0;
     if (netsurf_bridge_cached_document == 0) {
         return;
     }
@@ -1757,6 +1759,11 @@ static nserror netsurf_bridge_http_register_scheme(const char *name) {
 static nserror netsurf_bridge_launch_url(struct nsurl *url) {
     (void)url;
     return NSERROR_NOT_IMPLEMENTED;
+}
+
+static bool netsurf_bridge_has_pending_navigation(void) {
+    return netsurf_bridge_navigation_pending ||
+           netsurf_bridge_pending_history_direction != 0;
 }
 
 static int netsurf_bridge_extension_is(const char *dot, const char *ext) {
@@ -2989,7 +2996,7 @@ int netsurf_core_mouse_event(uint32_t x, uint32_t y, uint32_t mouse_state) {
                                    (browser_mouse_state)mouse_state,
                                    (int)x,
                                    (int)y);
-    if (!netsurf_bridge_navigation_pending &&
+    if (!netsurf_bridge_has_pending_navigation() &&
         (mouse_state & BROWSER_MOUSE_CLICK_1) != 0u) {
         html = (html_content *)content;
         box = html->layout;
@@ -3018,7 +3025,7 @@ int netsurf_core_mouse_event(uint32_t x, uint32_t y, uint32_t mouse_state) {
         }
     }
     doc->needs_redraw = true;
-    return netsurf_bridge_navigation_pending ? 2 : 1;
+    return netsurf_bridge_has_pending_navigation() ? 2 : 1;
 }
 
 int netsurf_core_scroll_event(uint32_t x, uint32_t y, int32_t scroll_x, int32_t scroll_y) {
@@ -3084,7 +3091,7 @@ int netsurf_core_key_event(uint32_t key) {
     if (handled) {
         doc->needs_redraw = true;
     }
-    return netsurf_bridge_navigation_pending ? 2 : (handled ? 1 : 0);
+    return netsurf_bridge_has_pending_navigation() ? 2 : (handled ? 1 : 0);
 }
 
 int netsurf_core_consume_navigation(uint8_t *out, uint32_t capacity) {
@@ -3106,6 +3113,19 @@ int netsurf_core_consume_navigation(uint8_t *out, uint32_t capacity) {
     netsurf_bridge_navigation_pending = false;
     netsurf_bridge_pending_url[0] = '\0';
     return i != 0u ? 1 : 0;
+}
+
+int netsurf_core_consume_history_navigation(int32_t *out_direction) {
+    int32_t direction;
+
+    if (out_direction == 0 || netsurf_bridge_pending_history_direction == 0) {
+        return 0;
+    }
+
+    direction = netsurf_bridge_pending_history_direction;
+    netsurf_bridge_pending_history_direction = 0;
+    *out_direction = direction;
+    return 1;
 }
 
 const char *netsurf_core_status(void) {
@@ -3373,6 +3393,7 @@ nserror browser_window_navigate(struct browser_window *bw,
             nsurl_access(url),
             sizeof(netsurf_bridge_pending_url) - 1u);
     netsurf_bridge_pending_url[sizeof(netsurf_bridge_pending_url) - 1u] = '\0';
+    netsurf_bridge_pending_history_direction = 0;
     netsurf_bridge_navigation_pending = netsurf_bridge_pending_url[0] != '\0';
     netsurf_bridge_status = "NetSurf navigation requested";
     return netsurf_bridge_navigation_pending ? NSERROR_OK : NSERROR_BAD_PARAMETER;
@@ -3525,14 +3546,26 @@ browser_drag_type browser_window_get_drag_type(struct browser_window *bw) {
 
 nserror browser_window_history_back(struct browser_window *bw, bool new_window) {
     (void)bw;
-    (void)new_window;
-    return NSERROR_NOT_IMPLEMENTED;
+    if (new_window) {
+        return NSERROR_NOT_IMPLEMENTED;
+    }
+    netsurf_bridge_navigation_pending = false;
+    netsurf_bridge_pending_url[0] = '\0';
+    netsurf_bridge_pending_history_direction = -1;
+    netsurf_bridge_status = "NetSurf history back requested";
+    return NSERROR_OK;
 }
 
 nserror browser_window_history_forward(struct browser_window *bw, bool new_window) {
     (void)bw;
-    (void)new_window;
-    return NSERROR_NOT_IMPLEMENTED;
+    if (new_window) {
+        return NSERROR_NOT_IMPLEMENTED;
+    }
+    netsurf_bridge_navigation_pending = false;
+    netsurf_bridge_pending_url[0] = '\0';
+    netsurf_bridge_pending_history_direction = 1;
+    netsurf_bridge_status = "NetSurf history forward requested";
+    return NSERROR_OK;
 }
 
 bool browser_window_frame_resize_start(struct browser_window *bw,

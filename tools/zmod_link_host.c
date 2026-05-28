@@ -294,6 +294,7 @@ static const char *const host_kernel_exports[] = {
     "netsurf_browser_scroll_html_view",
     "netsurf_browser_key_event",
     "netsurf_browser_consume_navigation",
+    "netsurf_browser_consume_history_navigation",
     "netsurf_browser_invalidate_cache",
     "netsurf_browser_poll",
     "netsurf_browser_status",

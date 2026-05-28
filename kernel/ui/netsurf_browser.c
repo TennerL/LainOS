@@ -714,6 +714,7 @@ int netsurf_core_mouse_event(uint32_t x, uint32_t y, uint32_t mouse_state);
 int netsurf_core_scroll_event(uint32_t x, uint32_t y, int32_t scroll_x, int32_t scroll_y);
 int netsurf_core_key_event(uint32_t key);
 int netsurf_core_consume_navigation(uint8_t *out, uint32_t capacity);
+int netsurf_core_consume_history_navigation(int32_t *out_direction);
 
 int netsurf_browser_render_html(const uint8_t *url,
                                 const uint8_t *html,
@@ -926,4 +927,8 @@ NETSURF_BROWSER_ENTRY int netsurf_browser_key_event(uint32_t key) {
 NETSURF_BROWSER_ENTRY int netsurf_browser_consume_navigation(uint8_t *out,
                                                              uint32_t capacity) {
     return netsurf_core_consume_navigation(out, capacity);
+}
+
+NETSURF_BROWSER_ENTRY int netsurf_browser_consume_history_navigation(int32_t *out_direction) {
+    return netsurf_core_consume_history_navigation(out_direction);
 }

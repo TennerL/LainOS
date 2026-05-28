@@ -93,6 +93,7 @@ extern int netsurf_browser_scroll_html_view(struct NetSurfBrowserView *view,
                                             int32_t scroll_y);
 extern int netsurf_browser_key_event(uint32_t key);
 extern int netsurf_browser_consume_navigation(uint8_t *out, uint32_t capacity);
+extern int netsurf_browser_consume_history_navigation(int32_t *out_direction);
 extern void netsurf_browser_invalidate_cache(void);
 extern int netsurf_browser_poll(void);
 extern uint8_t *netsurf_browser_status(void);
@@ -627,6 +628,18 @@ void zbrowser_ns_go_home(void) {
 }
 
 void zbrowser_ns_follow_navigation(void) {
+    int32_t history_direction;
+
+    history_direction = 0;
+    if (netsurf_browser_consume_history_navigation(&history_direction) != 0) {
+        zbrowser_ns_reset_page_mouse_state();
+        if (history_direction < 0) {
+            zbrowser_ns_go_back();
+        } else if (history_direction > 0) {
+            zbrowser_ns_go_forward();
+        }
+        return;
+    }
     if (netsurf_browser_consume_navigation(zbrowser_ns_pending_url, ZBROWSER_NS_URL_CAPACITY) != 0) {
         zbrowser_ns_reset_page_mouse_state();
         zbrowser_ns_navigate_to(zbrowser_ns_pending_url, 1);

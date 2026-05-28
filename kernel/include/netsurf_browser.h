@@ -60,6 +60,7 @@ NETSURF_BROWSER_ENTRY int netsurf_browser_scroll_html_view(const netsurf_browser
 NETSURF_BROWSER_ENTRY int netsurf_browser_key_event(uint32_t key);
 NETSURF_BROWSER_ENTRY int netsurf_browser_consume_navigation(uint8_t *out,
                                                              uint32_t capacity);
+NETSURF_BROWSER_ENTRY int netsurf_browser_consume_history_navigation(int32_t *out_direction);
 void netsurf_browser_invalidate_cache(void);
 int netsurf_browser_poll(void);
 const char *netsurf_browser_status(void);
