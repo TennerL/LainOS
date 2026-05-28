@@ -21,6 +21,7 @@ kernel/include/freestanding/sys/socket.h
 kernel/include/freestanding/sys/stat.h
 kernel/include/freestanding/sys/time.h
 kernel/include/freestanding/sys/types.h
+kernel/include/freestanding/sys/utsname.h
 third_party/netsurf/src/libnsutils/include/nsutils/assert.h
 third_party/netsurf/src/libnsutils/include/nsutils/base64.h
 third_party/netsurf/src/libnsutils/include/nsutils/errors.h
@@ -58,9 +59,13 @@ third_party/netsurf/src/netsurf/utils/talloc.h
 third_party/netsurf/src/netsurf/utils/time.c
 third_party/netsurf/src/netsurf/utils/time.h
 third_party/netsurf/src/netsurf/utils/url.h
+third_party/netsurf/src/netsurf/utils/useragent.c
+third_party/netsurf/src/netsurf/utils/useragent.h
 third_party/netsurf/src/netsurf/utils/utils.c
 third_party/netsurf/src/netsurf/utils/dirent.h
 third_party/netsurf/src/netsurf/utils/config.h
 third_party/netsurf/src/netsurf/utils/ascii.h
 third_party/netsurf/src/netsurf/utils/errors.h
+third_party/netsurf/src/netsurf/utils/utsname.h
 third_party/netsurf/src/netsurf/utils/utils.h
+third_party/netsurf/src/netsurf/desktop/version.h
