@@ -188,6 +188,8 @@ static const char *const host_kernel_exports[] = {
     "image_decode_scaled_to_packed",
     "image_decode_to_screen_tiled",
     "jpg_probe",
+    "jpg_decode_rgb24",
+    "jpg_decode_to_screen",
     "jpg_huffman_code_count",
     "jpg_huffman_value",
     "jpg_debug_scan_offset",
