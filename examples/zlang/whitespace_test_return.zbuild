@@ -1,0 +1,4 @@
+    output whitespace_test_return.bin
+  install-name whitespace_test_return.bin
+      test-return 5
+whitespace_test_return.Z whitespace_test_return.zo

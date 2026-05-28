@@ -280,7 +280,23 @@ check_manifest_validation_line() {
 }
 
 ztest_manifest_list() {
-  rg -l '^test-return [0-9]+$' examples --glob '*.zbuild' | sort || true
+  local manifest=
+  local discovery_root="build/zbrowser-smoke/discovery"
+
+  mkdir -p "$discovery_root"
+
+  while IFS= read -r manifest; do
+    [[ -n "$manifest" ]] || continue
+    if manifest_is_known_negative "$manifest"; then
+      continue
+    fi
+
+    zbuild_host_prepare_manifest "$manifest" "$discovery_root" "$discovery_root"
+    zbuild_host_parse_manifest
+    if [[ $ZBUILD_HAS_EXPECTED_RETURN -ne 0 ]]; then
+      printf '%s\n' "$manifest"
+    fi
+  done < <(find examples -name '*.zbuild' -type f | sort)
 }
 
 run_manifest_ztest_probe() {
