@@ -1964,6 +1964,7 @@ int main(int argc, char **argv) {
     int arg_index = 1;
     int objects_only = 0;
     int run_after_link = 0;
+    int module_link_check = 0;
     int has_expected_return = 0;
     uint64_t expected_return = 0;
     int status;
@@ -1971,7 +1972,7 @@ int main(int argc, char **argv) {
     while (arg_index < argc && argv[arg_index][0] == '-') {
         if (strcmp(argv[arg_index], "--include") == 0) {
             if (include_dir_count >= HOST_MAX_INCLUDE_DIRS || arg_index + 1 >= argc) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             include_dirs[include_dir_count++] = argv[arg_index + 1];
@@ -1980,16 +1981,25 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[arg_index], "--objects-only") == 0) {
             if (objects_only) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             objects_only = 1;
             ++arg_index;
             continue;
         }
+        if (strcmp(argv[arg_index], "--module-link") == 0) {
+            if (module_link_check) {
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                return 2;
+            }
+            module_link_check = 1;
+            ++arg_index;
+            continue;
+        }
         if (strcmp(argv[arg_index], "--run") == 0) {
             if (run_after_link) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             run_after_link = 1;
@@ -2000,12 +2010,12 @@ int main(int argc, char **argv) {
             char *end = 0;
 
             if (has_expected_return || arg_index + 1 >= argc) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             expected_return = strtoull(argv[arg_index + 1], &end, 10);
             if (end == argv[arg_index + 1] || *end != '\0') {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             has_expected_return = 1;
@@ -2014,23 +2024,31 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[arg_index], "--output") == 0) {
             if (output_path != 0 || arg_index + 1 >= argc) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             output_path = argv[arg_index + 1];
             arg_index += 2;
             continue;
         }
-        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
         return 2;
     }
 
     if (argc - arg_index < 2 || ((argc - arg_index) % 2) != 0) {
-        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--module-link] [--run] [--expect-return N] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
         return 2;
     }
     if (objects_only && run_after_link) {
         fprintf(stderr, "zmod_link_host: --run requires a linked executable target\n");
+        return 2;
+    }
+    if (objects_only && module_link_check) {
+        fprintf(stderr, "zmod_link_host: --module-link already writes object files before validating imports\n");
+        return 2;
+    }
+    if (module_link_check && run_after_link) {
+        fprintf(stderr, "zmod_link_host: --module-link cannot be combined with --run\n");
         return 2;
     }
 
@@ -2085,7 +2103,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    host_runtime_mode = run_after_link;
+    host_runtime_mode = run_after_link || module_link_check;
     status = zobject_link_flat_many_ex(objects,
                                        object_sizes,
                                        object_count,
@@ -2120,6 +2138,9 @@ int main(int argc, char **argv) {
     }
 
     fprintf(stderr, "linked %u object(s), bytes=%u\n", object_count, linked_size);
+    if (module_link_check) {
+        fprintf(stderr, "validated module link against kernel exports\n");
+    }
     if (output_path != 0) {
         if (write_file_raw(output_path, linked, linked_size) != 0) {
             fprintf(stderr, "%s: failed to write linked output\n", output_path);

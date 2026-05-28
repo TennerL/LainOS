@@ -29,7 +29,11 @@ if [[ $ZBUILD_LINK_OUTPUT -ne 0 ]]; then
   mkdir -p "$(dirname "$ZBUILD_EFFECTIVE_OUTPUT")"
   build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --output "$ZBUILD_EFFECTIVE_OUTPUT" "${ZBUILD_LINK_ARGS[@]}"
 else
-  build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --objects-only "${ZBUILD_LINK_ARGS[@]}"
+  if [[ "${ZBUILD_HOST_MODULE_LINK:-0}" != 0 ]]; then
+    build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --module-link "${ZBUILD_LINK_ARGS[@]}"
+  else
+    build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --objects-only "${ZBUILD_LINK_ARGS[@]}"
+  fi
 fi
 
 if [[ $ZBUILD_LINK_OUTPUT -ne 0 ]]; then
@@ -48,5 +52,9 @@ target $ZBUILD_TARGET_NAME
 objects $ZBUILD_SOURCE_COUNT
 status module
 EOF
-  printf '%s -> built module object set with %d object(s)\n' "$ZBUILD_MANIFEST_NAME" "$ZBUILD_SOURCE_COUNT"
+  if [[ "${ZBUILD_HOST_MODULE_LINK:-0}" != 0 ]]; then
+    printf '%s -> built and link-validated module object set with %d object(s)\n' "$ZBUILD_MANIFEST_NAME" "$ZBUILD_SOURCE_COUNT"
+  else
+    printf '%s -> built module object set with %d object(s)\n' "$ZBUILD_MANIFEST_NAME" "$ZBUILD_SOURCE_COUNT"
+  fi
 fi
