@@ -20,6 +20,9 @@ scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/z
 scripts/zbuild-host.sh examples/zlang/default_output_project/kernel.zbuild build/zbrowser-smoke/default_output_project
 scripts/zbuild-host.sh examples/zlang/output_name_project/kernel.zbuild build/zbrowser-smoke/output_name_project
 scripts/zbuild-host.sh examples/zlang/glob_literal_project/kernel.zbuild build/zbrowser-smoke/glob_literal_project
+scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
+scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
+scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
 
 invalid_log="build/zbrowser-smoke/invalid_test_return.log"
 if scripts/zbuild-host.sh examples/zlang/invalid_test_return.zbuild build/zbrowser-smoke/invalid_test_return >"$invalid_log" 2>&1; then
@@ -107,6 +110,10 @@ check_buildlog_line() {
 check_output "build/zbrowser-smoke/zbrowser_css_repro/zbrowser_css_repro.bin"
 check_output "build/zbrowser-smoke/zbcss_async/zbcss_async.bin"
 check_output "build/zbrowser-smoke/jpg_decode_demo/jpg_decode_demo.bin"
+check_output "build/zbrowser-smoke/install/zbrowser_module/zbrowser_html.zo"
+check_output "build/zbrowser-smoke/install/zbrowser_module/zbrowser_module.zo"
+check_output "build/zbrowser-smoke/install/zbrowser_netsurf/zbrowser_netsurf.zo"
+check_output "build/zbrowser-smoke/install/jpg_decode_demo/jpg_decode_demo.bin"
 check_output "examples/zlang/selfhost_project/build/kernel.bin"
 check_output "examples/zlang/manifest_cwd_project/build/manifest_cwd.bin"
 check_output "examples/zlang/default_output_project/build/kernel.bin"

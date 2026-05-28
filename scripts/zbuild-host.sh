@@ -4,42 +4,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+source scripts/zbuild-host-lib.sh
+
 usage() {
   printf 'usage: %s path/to/target.zbuild [output-dir]\n' "${0##*/}" >&2
-}
-
-fail_bad_directive() {
-  local directive="$1"
-  printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$manifest_path" >&2
-  exit 1
-}
-
-valid_lainfs_name() {
-  local name="$1"
-  local len="${#name}"
-
-  if [[ "$len" -eq 0 || "$len" -gt 30 ]]; then
-    return 1
-  fi
-  if [[ "$name" == *"/"* || "$name" == *"\\"* || "$name" == *":"* || "$name" == *$'\t'* || "$name" == *" "* ]]; then
-    return 1
-  fi
-  return 0
-}
-
-resolve_path() {
-  local base_dir="$1"
-  local path="$2"
-
-  if [[ "$path" = /* ]]; then
-    printf '%s\n' "$path"
-  else
-    printf '%s/%s\n' "$base_dir" "$path"
-  fi
-}
-
-trim_line() {
-  sed 's/\r$//; s/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -48,151 +16,37 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
 fi
 
 manifest_input="$1"
-manifest_dir="$(cd "$(dirname "$manifest_input")" && pwd)"
 manifest_name="$(basename "$manifest_input")"
-manifest_path="$manifest_dir/$manifest_name"
 target_name="${manifest_name%.zbuild}"
 output_root="${2:-build/host-zbuild/$target_name}"
 
-if [[ "$manifest_name" == "$target_name" ]]; then
-  printf 'zbuild-host: manifest must end with .zbuild: %s\n' "$manifest_input" >&2
-  exit 2
-fi
-if [[ ! -f "$manifest_path" ]]; then
-  printf 'zbuild-host: manifest not found: %s\n' "$manifest_path" >&2
-  exit 1
-fi
+zbuild_host_prepare_manifest "$manifest_input" "$output_root" "$output_root"
+zbuild_host_parse_manifest
 
-mkdir -p "$output_root"
 make build/tools/zmod_link_host >/dev/null
 
-source_dir="$manifest_dir"
-build_dir="$(cd "$output_root" && pwd)"
-linked_output=
-effective_output=
-build_log=
-link_output=1
-source_count=0
-declare -a include_args=("--include" "$manifest_dir")
-declare -a link_args=()
-
-while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-  fields=()
-  line="$(printf '%s\n' "$raw_line" | trim_line)"
-  if [[ -z "$line" || "$line" == \#* || "$line" == \;* || "$line" == //* ]]; then
-    continue
-  fi
-
-  read -r -a fields <<<"$line"
-  field_count="${#fields[@]}"
-  directive="${fields[0]:-}"
-  case "$directive" in
-    src|source)
-      if [[ $field_count -ne 2 ]]; then
-        printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$manifest_path" >&2
-        exit 1
-      fi
-      source_dir="$(resolve_path "$manifest_dir" "${fields[1]}")"
-      ;;
-    build)
-      if [[ $field_count -ne 2 ]]; then
-        printf 'zbuild-host: bad build directive in %s\n' "$manifest_path" >&2
-        exit 1
-      fi
-      build_dir="$(resolve_path "$manifest_dir" "${fields[1]}")"
-      mkdir -p "$build_dir"
-      ;;
-    include)
-      if [[ $field_count -ne 2 ]]; then
-        printf 'zbuild-host: bad include directive in %s\n' "$manifest_path" >&2
-        exit 1
-      fi
-      include_dir="$(resolve_path "$manifest_dir" "${fields[1]}")"
-      include_args+=("--include" "$include_dir")
-      ;;
-    output)
-      if [[ $field_count -ne 2 ]]; then
-        fail_bad_directive output
-      fi
-      if ! valid_lainfs_name "${fields[1]}"; then
-        fail_bad_directive output
-      fi
-      linked_output="${fields[1]}"
-      ;;
-    install|install-name)
-      if [[ $field_count -ne 2 ]]; then
-        fail_bad_directive "$directive"
-      fi
-      if [[ "$directive" == "install-name" ]] && ! valid_lainfs_name "${fields[1]}"; then
-        fail_bad_directive "$directive"
-      fi
-      ;;
-    test-return)
-      if [[ $field_count -ne 2 || ! "${fields[1]}" =~ ^[0-9]+$ ]]; then
-        fail_bad_directive test-return
-      fi
-      ;;
-    module|objects-only)
-      if [[ $field_count -ne 1 ]]; then
-        printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$manifest_path" >&2
-        exit 1
-      fi
-      link_output=0
-      ;;
-    *)
-      if [[ $field_count -gt 2 ]]; then
-        printf 'zbuild-host: too many fields in %s: %s\n' "$manifest_path" "$line" >&2
-        exit 1
-      fi
-      source_name="${fields[0]}"
-      object_name="${fields[1]:-${source_name%.Z}.zo}"
-      if ! valid_lainfs_name "$object_name"; then
-        printf 'zbuild-host: bad object name in %s: %s\n' "$manifest_path" "$object_name" >&2
-        exit 1
-      fi
-      source_path="$(resolve_path "$source_dir" "$source_name")"
-      object_path="$(resolve_path "$build_dir" "$object_name")"
-      mkdir -p "$(dirname "$object_path")"
-      link_args+=("$source_path" "$object_path")
-      source_count=$((source_count + 1))
-      ;;
-  esac
-done <"$manifest_path"
-
-if [[ $source_count -eq 0 ]]; then
-  printf 'zbuild-host: manifest has no sources: %s\n' "$manifest_path" >&2
-  exit 1
-fi
-
-if [[ $link_output -ne 0 ]]; then
-  if [[ -n "$linked_output" ]]; then
-    effective_output="$build_dir/$linked_output"
-  else
-    effective_output="$build_dir/$target_name.bin"
-  fi
-  build_log="$build_dir/$target_name.buildlog"
-  mkdir -p "$(dirname "$effective_output")"
-  build/tools/zmod_link_host "${include_args[@]}" --output "$effective_output" "${link_args[@]}"
+if [[ $ZBUILD_LINK_OUTPUT -ne 0 ]]; then
+  mkdir -p "$(dirname "$ZBUILD_EFFECTIVE_OUTPUT")"
+  build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --output "$ZBUILD_EFFECTIVE_OUTPUT" "${ZBUILD_LINK_ARGS[@]}"
 else
-  build_log="$build_dir/$target_name.buildlog"
-  build/tools/zmod_link_host "${include_args[@]}" --objects-only "${link_args[@]}"
+  build/tools/zmod_link_host "${ZBUILD_INCLUDE_ARGS[@]}" --objects-only "${ZBUILD_LINK_ARGS[@]}"
 fi
 
-if [[ $link_output -ne 0 ]]; then
-  linked_size="$(wc -c <"$effective_output")"
-  cat >"$build_log" <<EOF
-target $target_name
-objects $source_count
-output $(basename "$effective_output")
+if [[ $ZBUILD_LINK_OUTPUT -ne 0 ]]; then
+  linked_size="$(wc -c <"$ZBUILD_EFFECTIVE_OUTPUT")"
+  cat >"$ZBUILD_BUILD_LOG" <<EOF
+target $ZBUILD_TARGET_NAME
+objects $ZBUILD_SOURCE_COUNT
+output $(basename "$ZBUILD_EFFECTIVE_OUTPUT")
 bytes $linked_size
 status ok
 EOF
-  printf '%s -> validated linked build with %d object(s), output=%s\n' "$manifest_name" "$source_count" "$effective_output"
+  printf '%s -> validated linked build with %d object(s), output=%s\n' "$ZBUILD_MANIFEST_NAME" "$ZBUILD_SOURCE_COUNT" "$ZBUILD_EFFECTIVE_OUTPUT"
 else
-  cat >"$build_log" <<EOF
-target $target_name
-objects $source_count
+  cat >"$ZBUILD_BUILD_LOG" <<EOF
+target $ZBUILD_TARGET_NAME
+objects $ZBUILD_SOURCE_COUNT
 status module
 EOF
-  printf '%s -> built module object set with %d object(s)\n' "$manifest_name" "$source_count"
+  printf '%s -> built module object set with %d object(s)\n' "$ZBUILD_MANIFEST_NAME" "$ZBUILD_SOURCE_COUNT"
 fi
