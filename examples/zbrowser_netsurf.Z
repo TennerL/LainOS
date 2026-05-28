@@ -396,18 +396,15 @@ void zbrowser_ns_poll_task(uint8_t *arg) {
     zbrowser_ns_poll_result = netsurf_browser_poll();
 }
 
-void zbrowser_ns_start_core_poll(void) {
+void zbrowser_ns_finish_core_poll(void) {
     uint64_t now;
 
-    if (zbrowser_ns_poll_in_progress != 0 ||
-        zbrowser_ns_render_ready == 0 ||
-        zbrowser_ns_load_in_progress != 0 ||
-        zbrowser_ns_prepare_in_progress != 0) {
+    zbrowser_ns_follow_navigation();
+    if (zbrowser_ns_load_in_progress != 0 ||
+        zbrowser_ns_prepare_in_progress != 0 ||
+        zbrowser_ns_render_ready == 0) {
         return;
     }
-    zbrowser_ns_poll_in_progress = 1;
-    zbrowser_ns_poll_result = netsurf_browser_poll();
-    zbrowser_ns_poll_in_progress = 0;
 
     now = ticks();
     if (zbrowser_ns_poll_result == 2) {
@@ -421,9 +418,20 @@ void zbrowser_ns_start_core_poll(void) {
     }
 }
 
-void zbrowser_ns_poll_core_task(void) {
-    uint64_t now;
+void zbrowser_ns_start_core_poll(void) {
+    if (zbrowser_ns_poll_in_progress != 0 ||
+        zbrowser_ns_render_ready == 0 ||
+        zbrowser_ns_load_in_progress != 0 ||
+        zbrowser_ns_prepare_in_progress != 0) {
+        return;
+    }
+    zbrowser_ns_poll_in_progress = 1;
+    zbrowser_ns_poll_result = netsurf_browser_poll();
+    zbrowser_ns_poll_in_progress = 0;
+    zbrowser_ns_finish_core_poll();
+}
 
+void zbrowser_ns_poll_core_task(void) {
     if (zbrowser_ns_poll_task_id == 0) {
         return;
     }
@@ -433,16 +441,7 @@ void zbrowser_ns_poll_core_task(void) {
     kernel_task_release(zbrowser_ns_poll_task_id);
     zbrowser_ns_poll_task_id = 0;
     zbrowser_ns_poll_in_progress = 0;
-    now = ticks();
-    if (zbrowser_ns_poll_result == 2) {
-        if (zbrowser_ns_last_render_tick == 0 || now - zbrowser_ns_last_render_tick >= 80) {
-            zbrowser_ns_needs_redraw = 1;
-        } else {
-            zbrowser_ns_needs_chrome_redraw = 1;
-        }
-    } else if (zbrowser_ns_poll_result == 1) {
-        zbrowser_ns_needs_chrome_redraw = 1;
-    }
+    zbrowser_ns_finish_core_poll();
 }
 
 void zbrowser_ns_poll_load(void) {
