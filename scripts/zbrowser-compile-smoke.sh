@@ -9,6 +9,7 @@ source scripts/zbuild-host-lib.sh
 mkdir -p build/zbrowser-smoke
 mkdir -p build/zbrowser-smoke/all-manifests
 mkdir -p build/zbrowser-smoke/all-installs
+mkdir -p build/zbrowser-smoke/all-ztests
 make build/tools/zmod_link_host
 
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zbrowser_module
@@ -29,17 +30,6 @@ scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/z
 scripts/zbuild-host.sh examples/zlang/default_output_project/kernel.zbuild build/zbrowser-smoke/default_output_project
 scripts/zbuild-host.sh examples/zlang/output_name_project/kernel.zbuild build/zbrowser-smoke/output_name_project
 scripts/zbuild-host.sh examples/zlang/glob_literal_project/kernel.zbuild build/zbrowser-smoke/glob_literal_project
-scripts/ztest-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/ztest-zbrowser-css-repro
-scripts/ztest-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/ztest-zbcss-async
-scripts/ztest-host.sh examples/zlang/sysstat.zbuild build/zbrowser-smoke/ztest-sysstat
-scripts/ztest-host.sh examples/zlang/hwinfo.zbuild build/zbrowser-smoke/ztest-hwinfo
-scripts/ztest-host.sh examples/zlang/gfxdemo.zbuild build/zbrowser-smoke/ztest-gfxdemo
-scripts/ztest-host.sh examples/zlang/mousedemo.zbuild build/zbrowser-smoke/ztest-mousedemo
-scripts/ztest-host.sh examples/zlang/selfhost.zbuild build/zbrowser-smoke/ztest-selfhost
-scripts/ztest-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/ztest-install-dir-project
-scripts/ztest-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/ztest-selfhost-project
-scripts/ztest-host.sh examples/zlang/zmake.zbuild build/zbrowser-smoke/ztest-zmake
-scripts/ztest-host.sh examples/zlang/zreport.zbuild build/zbrowser-smoke/ztest-zreport
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/image_viewer.zbuild build/zbrowser-smoke/install/image_viewer
@@ -253,6 +243,46 @@ manifest_is_known_negative() {
   return 1
 }
 
+ztest_manifest_list() {
+  rg -l '^test-return [0-9]+$' examples --glob '*.zbuild' | sort || true
+}
+
+run_manifest_ztest_probe() {
+  local manifest="$1"
+  local probe_rel=
+  local probe_dir=
+
+  probe_rel="${manifest#examples/}"
+  probe_dir="build/zbrowser-smoke/all-ztests/${probe_rel%.zbuild}"
+  mkdir -p "$probe_dir"
+  if ! scripts/ztest-host.sh "$manifest" "$probe_dir" >"$probe_dir/probe.log" 2>&1; then
+    printf 'zbrowser-compile-smoke: broad ztest probe failed for %s\n' "$manifest" >&2
+    cat "$probe_dir/probe.log" >&2
+    exit 1
+  fi
+}
+
+check_manifest_testlog() {
+  local manifest="$1"
+  local probe_rel=
+  local probe_dir=
+  local test_log=
+
+  probe_rel="${manifest#examples/}"
+  probe_dir="build/zbrowser-smoke/all-ztests/${probe_rel%.zbuild}"
+
+  zbuild_host_prepare_manifest "$manifest" "$probe_dir" "$probe_dir"
+  zbuild_host_parse_manifest
+
+  if [[ $ZBUILD_HAS_EXPECTED_RETURN -eq 0 ]]; then
+    printf 'zbrowser-compile-smoke: test manifest missing expected return %s\n' "$manifest" >&2
+    exit 1
+  fi
+
+  test_log="$ZBUILD_BUILD_DIR/$ZBUILD_TARGET_NAME.testlog"
+  check_testlog "$test_log" "result $ZBUILD_EXPECTED_RETURN" "expected $ZBUILD_EXPECTED_RETURN"
+}
+
 check_installed_manifest() {
   local manifest="$1"
   local install_root="$2"
@@ -327,17 +357,6 @@ check_buildlog_line "build/zbrowser-smoke/install/libc_smoke_module/.host-build/
 check_buildlog_line "build/zbrowser-smoke/install/filemgr_module/.host-build/filemgr_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/taskmgr_module/.host-build/taskmgr_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/personalize_module/.host-build/personalize_module.buildlog" "validation module-link"
-check_testlog "build/zbrowser-smoke/ztest-zbrowser-css-repro/zbrowser_css_repro.testlog" "result 0" "expected 0"
-check_testlog "build/zbrowser-smoke/ztest-zbcss-async/zbcss_async.testlog" "result 0" "expected 0"
-check_testlog "build/zbrowser-smoke/ztest-sysstat/sysstat.testlog" "result 7" "expected 7"
-check_testlog "build/zbrowser-smoke/ztest-hwinfo/hwinfo.testlog" "result 0" "expected 0"
-check_testlog "build/zbrowser-smoke/ztest-gfxdemo/gfxdemo.testlog" "result 9" "expected 9"
-check_testlog "build/zbrowser-smoke/ztest-mousedemo/mousedemo.testlog" "result 0" "expected 0"
-check_testlog "build/zbrowser-smoke/ztest-selfhost/selfhost.testlog" "result 41" "expected 41"
-check_testlog "build/zbrowser-smoke/ztest-install-dir-project/kernel.testlog" "result 0" "expected 0"
-check_testlog "examples/zlang/selfhost_project/build/kernel.testlog" "result 42" "expected 42"
-check_testlog "build/zbrowser-smoke/ztest-zmake/zmake.testlog" "result 0" "expected 0"
-check_testlog "build/zbrowser-smoke/ztest-zreport/zreport.testlog" "result 13" "expected 13"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
 check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
 check_buildlog_line "build/zbrowser-smoke/install_dir_project/kernel.buildlog" "output install_dir.bin"
@@ -363,6 +382,11 @@ if [[ -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.bin ||
   printf 'zbrowser-compile-smoke: zclean-host left ztest artifacts behind\n' >&2
   exit 1
 fi
+
+while IFS= read -r manifest; do
+  [[ -n "$manifest" ]] || continue
+  run_manifest_ztest_probe "$manifest"
+done < <(ztest_manifest_list)
 
 while IFS= read -r manifest; do
   if manifest_is_known_negative "$manifest"; then
@@ -394,3 +418,8 @@ while IFS= read -r manifest; do
   fi
   check_installed_manifest "$manifest" "$install_root"
 done < <(find examples -name '*.zbuild' -type f | sort)
+
+while IFS= read -r manifest; do
+  [[ -n "$manifest" ]] || continue
+  check_manifest_testlog "$manifest"
+done < <(ztest_manifest_list)
