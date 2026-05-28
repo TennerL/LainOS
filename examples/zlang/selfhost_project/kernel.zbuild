@@ -3,5 +3,5 @@ src src
 build build
 output kernel.bin
 install-name selfhost_project.bin
-test-return 41
+test-return 42
 selfhost_demo.Z selfhost_demo.zo

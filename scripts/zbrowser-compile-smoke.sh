@@ -30,6 +30,7 @@ scripts/ztest-host.sh examples/zlang/hwinfo.zbuild build/zbrowser-smoke/ztest-hw
 scripts/ztest-host.sh examples/zlang/gfxdemo.zbuild build/zbrowser-smoke/ztest-gfxdemo
 scripts/ztest-host.sh examples/zlang/mousedemo.zbuild build/zbrowser-smoke/ztest-mousedemo
 scripts/ztest-host.sh examples/zlang/selfhost.zbuild build/zbrowser-smoke/ztest-selfhost
+scripts/ztest-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/ztest-selfhost-project
 scripts/ztest-host.sh examples/zlang/zmake.zbuild build/zbrowser-smoke/ztest-zmake
 scripts/ztest-host.sh examples/zlang/zreport.zbuild build/zbrowser-smoke/ztest-zreport
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
@@ -296,6 +297,7 @@ check_testlog "build/zbrowser-smoke/ztest-hwinfo/hwinfo.testlog" "result 0" "exp
 check_testlog "build/zbrowser-smoke/ztest-gfxdemo/gfxdemo.testlog" "result 9" "expected 9"
 check_testlog "build/zbrowser-smoke/ztest-mousedemo/mousedemo.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-selfhost/selfhost.testlog" "result 41" "expected 41"
+check_testlog "examples/zlang/selfhost_project/build/kernel.testlog" "result 42" "expected 42"
 check_testlog "build/zbrowser-smoke/ztest-zmake/zmake.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-zreport/zreport.testlog" "result 13" "expected 13"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
