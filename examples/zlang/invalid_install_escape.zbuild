@@ -1,0 +1,4 @@
+src output_name_project/src
+build output_name_project/build
+install ../escaped
+default_output_demo.Z

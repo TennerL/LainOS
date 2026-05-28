@@ -20,6 +20,19 @@ zbuild_host_valid_lainfs_name() {
   return 0
 }
 
+zbuild_host_path_within_root() {
+  local root_dir="$1"
+  local candidate_dir="$2"
+
+  case "$candidate_dir" in
+    "$root_dir"|"$root_dir"/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 zbuild_host_resolve_path() {
   local base_dir="$1"
   local path="$2"
@@ -54,6 +67,7 @@ zbuild_host_resolve_install_dir() {
   local directive="$3"
   local resolved=
   local parent_dir=
+  local resolved_dir=
 
   resolved="$(zbuild_host_resolve_path "$base_dir" "$path")"
   if [[ -e "$resolved" && ! -d "$resolved" ]]; then
@@ -69,8 +83,23 @@ zbuild_host_resolve_install_dir() {
   if ! parent_dir="$(cd "$parent_dir" && pwd)"; then
     zbuild_host_fail_bad_directive "$directive"
   fi
+  if ! zbuild_host_path_within_root "$base_dir" "$parent_dir"; then
+    zbuild_host_fail_bad_directive "$directive"
+  fi
 
-  printf '%s/%s\n' "$parent_dir" "$(basename "$resolved")"
+  resolved_dir="$parent_dir/$(basename "$resolved")"
+  if [[ -d "$resolved_dir" ]]; then
+    if ! resolved_dir="$(cd "$resolved_dir" && pwd)"; then
+      zbuild_host_fail_bad_directive "$directive"
+    fi
+    if ! zbuild_host_path_within_root "$base_dir" "$resolved_dir"; then
+      zbuild_host_fail_bad_directive "$directive"
+    fi
+    printf '%s\n' "$resolved_dir"
+    return 0
+  fi
+
+  printf '%s\n' "$resolved_dir"
 }
 
 zbuild_host_trim_line() {

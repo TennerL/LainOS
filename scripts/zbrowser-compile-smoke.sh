@@ -170,6 +170,18 @@ if ! rg -q 'bad install directive' "$invalid_install_dir_log"; then
   exit 1
 fi
 
+invalid_install_escape_log="build/zbrowser-smoke/invalid_install_escape.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_install_escape.zbuild build/zbrowser-smoke/invalid_install_escape >"$invalid_install_escape_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: install-escape manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_install_escape_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad install directive' "$invalid_install_escape_log"; then
+  printf 'zbrowser-compile-smoke: install-escape manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_install_escape_log" >&2
+  exit 1
+fi
+
 check_output() {
   local path="$1"
 
@@ -235,7 +247,7 @@ manifest_is_known_negative() {
   local manifest="$1"
 
   case "$manifest" in
-    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_object_count.zbuild|examples/zlang/invalid_install_name.zbuild|examples/zlang/invalid_src_dir.zbuild|examples/zlang/invalid_build_dir.zbuild|examples/zlang/invalid_include_dir.zbuild|examples/zlang/invalid_include_count.zbuild|examples/zlang/invalid_install_dir.zbuild)
+    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_object_count.zbuild|examples/zlang/invalid_install_name.zbuild|examples/zlang/invalid_src_dir.zbuild|examples/zlang/invalid_build_dir.zbuild|examples/zlang/invalid_include_dir.zbuild|examples/zlang/invalid_include_count.zbuild|examples/zlang/invalid_install_dir.zbuild|examples/zlang/invalid_install_escape.zbuild)
       return 0
       ;;
   esac
