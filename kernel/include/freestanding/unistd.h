@@ -16,6 +16,23 @@
 #define SEEK_END 2
 #endif
 
+#ifndef F_OK
+#define F_OK 0
+#endif
+
+#ifndef X_OK
+#define X_OK 1
+#endif
+
+#ifndef W_OK
+#define W_OK 2
+#endif
+
+#ifndef R_OK
+#define R_OK 4
+#endif
+
+int access(const char *path, int amode);
 int close(int fd);
 int ftruncate(int fd, off_t length);
 pid_t getpid(void);

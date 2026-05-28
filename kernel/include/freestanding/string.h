@@ -11,6 +11,8 @@ size_t strlen(const char *text);
 int strcmp(const char *lhs, const char *rhs);
 int strncmp(const char *lhs, const char *rhs, size_t count);
 char *strchr(const char *text, int ch);
+char *strdup(const char *text);
 char *strerror(int errnum);
+char *strncpy(char *dest, const char *src, size_t count);
 
 #endif
