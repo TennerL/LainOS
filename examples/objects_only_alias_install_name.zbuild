@@ -1,0 +1,5 @@
+include .
+objects-only
+install apps/modules
+install-name obj_alias_install.zo
+objects_only_alias_module.Z objects_only_alias_build.zo
