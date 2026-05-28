@@ -377,6 +377,8 @@ NETSURF_CORE_KERNEL_C_SOURCES := \
 	third_party/netsurf/src/netsurf/desktop/system_colour.c \
 	third_party/netsurf/src/netsurf/desktop/textarea.c
 KERNEL_C_OBJECTS := $(patsubst kernel/%.c,build/kernel/%.o,$(KERNEL_C_SOURCES))
+KERNEL_Z_SOURCES := $(wildcard kernel/z/*.Z)
+KERNEL_Z_OBJECTS := $(patsubst kernel/%.Z,build/kernel/%.o,$(KERNEL_Z_SOURCES))
 BEARSSL_C_OBJECTS := $(patsubst third_party/bearssl/src/%.c,build/third_party/bearssl/%.o,$(BEARSSL_C_SOURCES))
 EXPAT_C_OBJECTS := $(patsubst third_party/expat/expat/lib/%.c,build/third_party/expat/%.o,$(EXPAT_C_SOURCES))
 NETSURF_C_OBJECTS := $(patsubst third_party/netsurf/src/%.c,build/third_party/netsurf/%.o,$(NETSURF_C_SOURCES))
@@ -385,7 +387,7 @@ NETSURF_NSUTILS_C_OBJECTS := $(patsubst third_party/netsurf/src/libnsutils/src/%
 NETSURF_CORE_PROBE_C_OBJECTS := $(patsubst third_party/netsurf/src/netsurf/%.c,build/third_party/netsurf/netsurf-core-probe/%.o,$(NETSURF_CORE_PROBE_C_SOURCES))
 NETSURF_CORE_C_OBJECTS := $(patsubst third_party/netsurf/src/netsurf/%.c,build/third_party/netsurf/netsurf-core/%.o,$(NETSURF_CORE_KERNEL_C_SOURCES))
 KERNEL_ASM_OBJECTS := $(patsubst kernel/%.asm,build/kernel/%.o,$(KERNEL_ASM_SOURCES))
-KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) $(BEARSSL_C_OBJECTS) $(EXPAT_C_OBJECTS) $(NETSURF_C_OBJECTS) $(NETSURF_LIBSVGTINY_C_OBJECTS) $(NETSURF_NSUTILS_C_OBJECTS) $(NETSURF_CORE_C_OBJECTS) build/kernel/z/zlink_probe.o
+KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) $(KERNEL_Z_OBJECTS) $(BEARSSL_C_OBJECTS) $(EXPAT_C_OBJECTS) $(NETSURF_C_OBJECTS) $(NETSURF_LIBSVGTINY_C_OBJECTS) $(NETSURF_NSUTILS_C_OBJECTS) $(NETSURF_CORE_C_OBJECTS)
 
 all: build/$(BOOTLOADER) build/$(KERNEL_BIN) build/$(KERNEL_ELF) image build/$(ESP_IMG) build/$(BOOTDISK_IMG) build/$(BOOTDISK_GPT_IMG) build/$(DATA_IMG) build/$(ISO_IMG)
 
@@ -675,12 +677,12 @@ build/tools/ramdisk_seed_gen: tools/ramdisk_seed_gen.c | build
 $(RAMDISK_SEED_H): build/tools/ramdisk_seed_gen $(RAMDISK_SEED_FILES) | build
 	build/tools/ramdisk_seed_gen $@ $(RAMDISK_SEED_ARGS)
 
-build/kernel/z/zlink_probe.asm: kernel/z/zlink_probe.Z build/tools/zcc_host | build
+build/kernel/%.asm: kernel/%.Z build/tools/zcc_host | build
 	$(MKDIR_P) $(@D)
 	build/tools/zcc_host $< $@
 	printf '\nsection .note.GNU-stack noalloc noexec nowrite progbits\n' >> $@
 
-build/kernel/z/zlink_probe.o: build/kernel/z/zlink_probe.asm | build
+build/kernel/%.o: build/kernel/%.asm | build
 	$(MKDIR_P) $(@D)
 	$(NASM) $(NASMFLAGS) -f elf64 $< -o $@
 

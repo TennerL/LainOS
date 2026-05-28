@@ -192,6 +192,7 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
     unsigned long long delta_cycles;
     unsigned long long delta_idle_cycles;
     unsigned long long delta_busy_ticks;
+    unsigned long long delta_idle_ticks;
 
     if (core >= 32u || core >= status_cpu_core_count()) {
         return 0;
@@ -221,15 +222,10 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
         status_cpu_last_ticks[core] = current_ticks;
         status_cpu_last_cycles[core] = current_cycles;
         status_cpu_last_idle_cycles = current_idle_cycles;
-        if (delta_cycles == 0 || delta_idle_cycles >= delta_cycles) {
-            status_cpu_cached_busy_percent[core] = 0;
-        } else {
-            unsigned long long busy_cycles = delta_cycles - delta_idle_cycles;
-            status_cpu_cached_busy_percent[core] =
-                (unsigned int)((busy_cycles * 100ull + (delta_cycles / 2ull)) / delta_cycles);
-            if (status_cpu_cached_busy_percent[core] > 100u) {
-                status_cpu_cached_busy_percent[core] = 100u;
-            }
+        status_cpu_cached_busy_percent[core] =
+            (unsigned int)status_busy_percent_from_ticks(delta_cycles, delta_idle_cycles);
+        if (status_cpu_cached_busy_percent[core] > 100u) {
+            status_cpu_cached_busy_percent[core] = 100u;
         }
         return status_cpu_cached_busy_percent[core];
     }
@@ -247,12 +243,15 @@ unsigned int status_cpu_usage_percent(unsigned int core) {
     status_cpu_last_ticks[core] = current_ticks;
     status_cpu_last_busy_ticks[core] = current_busy_ticks;
 
-    if (delta_ticks == 0) {
-        status_cpu_cached_busy_percent[core] = 0;
-    } else if (delta_busy_ticks >= delta_ticks) {
-        status_cpu_cached_busy_percent[core] = 100;
+    if (delta_busy_ticks >= delta_ticks) {
+        delta_idle_ticks = 0;
     } else {
-        status_cpu_cached_busy_percent[core] = (unsigned int)((delta_busy_ticks * 100ull) / delta_ticks);
+        delta_idle_ticks = delta_ticks - delta_busy_ticks;
+    }
+    status_cpu_cached_busy_percent[core] =
+        (unsigned int)status_busy_percent_from_ticks(delta_ticks, delta_idle_ticks);
+    if (status_cpu_cached_busy_percent[core] > 100u) {
+        status_cpu_cached_busy_percent[core] = 100u;
     }
     return status_cpu_cached_busy_percent[core];
 }
