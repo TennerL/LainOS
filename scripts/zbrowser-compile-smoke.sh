@@ -493,3 +493,16 @@ while IFS= read -r manifest; do
   [[ -n "$manifest" ]] || continue
   check_manifest_testlog "$manifest"
 done < <(ztest_manifest_list)
+
+check_output "build/zbrowser-smoke/all-ztests/zlang/zmake/.host-build/sysstat.bin"
+check_output "build/zbrowser-smoke/all-ztests/zlang/zmake/.host-build/zreport.bin"
+check_output "build/zbrowser-smoke/all-ztests/zlang/zmake/last.testlog"
+check_testlog "build/zbrowser-smoke/all-ztests/zlang/zmake/sysstat.testlog" "result 7" "expected 7"
+check_testlog "build/zbrowser-smoke/all-ztests/zlang/zmake/zreport.testlog" "result 13" "expected 13"
+
+if ! cmp -s \
+    "build/zbrowser-smoke/all-ztests/zlang/zmake/last.testlog" \
+    "build/zbrowser-smoke/all-ztests/zlang/zmake/zreport.testlog"; then
+  printf 'zbrowser-compile-smoke: zmake did not copy zreport.testlog to last.testlog\n' >&2
+  exit 1
+fi
