@@ -1,0 +1,4 @@
+src output_name_project/src
+build build
+install-name bad/install.bin
+default_output_demo.Z

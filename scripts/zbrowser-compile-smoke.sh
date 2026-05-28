@@ -56,6 +56,18 @@ if ! rg -q 'bad object name' "$invalid_object_log"; then
   exit 1
 fi
 
+invalid_install_name_log="build/zbrowser-smoke/invalid_install_name.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_install_name.zbuild build/zbrowser-smoke/invalid_install_name >"$invalid_install_name_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: invalid install-name manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_install_name_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad install-name directive' "$invalid_install_name_log"; then
+  printf 'zbrowser-compile-smoke: invalid install-name manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_install_name_log" >&2
+  exit 1
+fi
+
 check_output() {
   local path="$1"
 
@@ -114,7 +126,7 @@ check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "
 
 while IFS= read -r manifest; do
   case "$manifest" in
-    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild)
+    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_install_name.zbuild)
       continue
       ;;
   esac
