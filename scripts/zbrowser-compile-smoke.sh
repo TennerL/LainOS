@@ -11,6 +11,7 @@ mkdir -p build/zbrowser-smoke/all-manifests
 mkdir -p build/zbrowser-smoke/all-installs
 mkdir -p build/zbrowser-smoke/all-ztests
 make build/tools/zmod_link_host
+scripts/zbrowser-c-selfhost-stage-smoke.sh
 
 check_kernel_export() {
   local name="$1"

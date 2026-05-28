@@ -44,6 +44,7 @@ smoke_img="build/zbrowser-selfhost.data.img"
 smoke_vars="build/OVMF_VARS.zbrowser-selfhost.fd"
 serial_log="build/zbrowser-selfhost.serial.log"
 seed_root="build/zbrowser-selfhost.seed"
+browser_c_stage_root="build/browser-selfhost-c-stage"
 allow_tcg="${ZBROWSER_SELFHOST_ALLOW_TCG:-0}"
 qemu_runtime="tcg"
 qemu_accel_args=()
@@ -81,6 +82,7 @@ qemu_memory="${ZBROWSER_SELFHOST_QEMU_MEMORY:-$default_memory}"
 qemu_smp="${ZBROWSER_SELFHOST_QEMU_SMP:-$default_smp}"
 
 make build/tools/lainfs_check_host build/tools/lainfs_seed build/esp.img reseed-data
+scripts/prepare-browser-selfhost-c-workspace.sh "$browser_c_stage_root" >/dev/null
 cp build/data.img "$smoke_img"
 cp "$ovmf_vars" "$smoke_vars"
 rm -rf "$seed_root"
@@ -129,7 +131,7 @@ zinstall kernel
 exec selfhost_project.bin
 poweroff
 EOF
-build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kernel examples "$seed_root/autoexec" >/dev/null
+build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kernel examples "$browser_c_stage_root/browser_c" "$seed_root/autoexec" >/dev/null
 : >"$serial_log"
 
 printf 'zbrowser self-host smoke: runtime=%s smp=%s mem=%s timeout=%ss\n' \
@@ -197,6 +199,10 @@ check_file "selfhost_project/build/kernel.testlog"
 check_file "selfhost_project/build/selfhost_demo.zo"
 check_file "selfhost_project/build/from_z_renamed.txt"
 check_file "selfhost_project/selfhost_project.bin"
+check_file "browser_c/README.txt"
+check_file "browser_c/NEXT_C.txt"
+check_file "browser_c/third_party/netsurf/src/libnsutils/src/base64.c"
+check_file "browser_c/third_party/netsurf/src/netsurf/utils/bloom.c"
 
 check_buildlog() {
   local fs_path="$1"
