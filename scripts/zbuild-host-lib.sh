@@ -48,6 +48,31 @@ zbuild_host_resolve_dir() {
   printf '%s\n' "$resolved"
 }
 
+zbuild_host_resolve_install_dir() {
+  local base_dir="$1"
+  local path="$2"
+  local directive="$3"
+  local resolved=
+  local parent_dir=
+
+  resolved="$(zbuild_host_resolve_path "$base_dir" "$path")"
+  if [[ -e "$resolved" && ! -d "$resolved" ]]; then
+    zbuild_host_fail_bad_directive "$directive"
+  fi
+
+  parent_dir="$(dirname "$resolved")"
+  if [[ ! -d "$parent_dir" ]]; then
+    if ! mkdir -p "$parent_dir"; then
+      zbuild_host_fail_bad_directive "$directive"
+    fi
+  fi
+  if ! parent_dir="$(cd "$parent_dir" && pwd)"; then
+    zbuild_host_fail_bad_directive "$directive"
+  fi
+
+  printf '%s/%s\n' "$parent_dir" "$(basename "$resolved")"
+}
+
 zbuild_host_trim_line() {
   sed 's/\r$//; s/^[[:space:]]*//; s/[[:space:]]*$//'
 }
@@ -154,7 +179,7 @@ zbuild_host_parse_manifest() {
         if [[ $field_count -ne 2 ]]; then
           zbuild_host_fail_bad_directive install
         fi
-        ZBUILD_INSTALL_DIR="$(zbuild_host_resolve_dir "$ZBUILD_INSTALL_ROOT" "${fields[1]}" "install")"
+        ZBUILD_INSTALL_DIR="$(zbuild_host_resolve_install_dir "$ZBUILD_INSTALL_ROOT" "${fields[1]}" "install")"
         ;;
       install-name)
         if [[ $field_count -ne 2 ]]; then

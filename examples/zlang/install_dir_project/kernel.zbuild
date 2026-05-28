@@ -1,0 +1,6 @@
+src src
+install apps/browser
+output install_dir.bin
+install-name install_dir_project.bin
+test-return 0
+default_output_demo.Z

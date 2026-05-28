@@ -18,6 +18,7 @@ scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zbcss_as
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/image_viewer.zbuild build/zbrowser-smoke/image_viewer
 scripts/zbuild-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/jpg_decode_demo
 scripts/zbuild-host.sh examples/jpg_decoder.zbuild build/zbrowser-smoke/jpg_decoder
+scripts/zbuild-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/install_dir_project
 scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/selfhost_project
 scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/zbrowser-smoke/manifest_cwd_project
 scripts/zbuild-host.sh examples/zlang/default_output_project/kernel.zbuild build/zbrowser-smoke/default_output_project
@@ -30,6 +31,7 @@ scripts/ztest-host.sh examples/zlang/hwinfo.zbuild build/zbrowser-smoke/ztest-hw
 scripts/ztest-host.sh examples/zlang/gfxdemo.zbuild build/zbrowser-smoke/ztest-gfxdemo
 scripts/ztest-host.sh examples/zlang/mousedemo.zbuild build/zbrowser-smoke/ztest-mousedemo
 scripts/ztest-host.sh examples/zlang/selfhost.zbuild build/zbrowser-smoke/ztest-selfhost
+scripts/ztest-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/ztest-install-dir-project
 scripts/ztest-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/ztest-selfhost-project
 scripts/ztest-host.sh examples/zlang/zmake.zbuild build/zbrowser-smoke/ztest-zmake
 scripts/ztest-host.sh examples/zlang/zreport.zbuild build/zbrowser-smoke/ztest-zreport
@@ -37,6 +39,7 @@ ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_module.zbui
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/image_viewer.zbuild build/zbrowser-smoke/install/image_viewer
 scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
+scripts/zinstall-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/install/install_dir_project
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
 printf 'status ok\n' > build/zbrowser-smoke/zclean-linked/zbcss_async.testlog
 scripts/zclean-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
@@ -266,6 +269,8 @@ check_output "build/zbrowser-smoke/install/zbrowser_module/zbrowser_module.zo"
 check_output "build/zbrowser-smoke/install/zbrowser_netsurf/zbrowser_netsurf.zo"
 check_output "build/zbrowser-smoke/install/image_viewer/image_viewer.zo"
 check_output "build/zbrowser-smoke/install/jpg_decode_demo/jpg_decode_demo.bin"
+check_output "build/zbrowser-smoke/install/install_dir_project/apps/browser/install_dir_project.bin"
+check_output "build/zbrowser-smoke/install_dir_project/install_dir.bin"
 check_output "examples/zlang/selfhost_project/build/kernel.bin"
 check_output "examples/zlang/manifest_cwd_project/build/manifest_cwd.bin"
 check_output "examples/zlang/default_output_project/build/kernel.bin"
@@ -279,6 +284,7 @@ check_buildlog "build/zbrowser-smoke/zbcss_async/zbcss_async.buildlog" "status o
 check_buildlog "build/zbrowser-smoke/image_viewer/image_viewer.buildlog" "status module"
 check_buildlog "build/zbrowser-smoke/jpg_decode_demo/jpg_decode_demo.buildlog" "status ok"
 check_buildlog "build/zbrowser-smoke/jpg_decoder/jpg_decoder.buildlog" "status module"
+check_buildlog "build/zbrowser-smoke/install_dir_project/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/selfhost_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
@@ -297,11 +303,13 @@ check_testlog "build/zbrowser-smoke/ztest-hwinfo/hwinfo.testlog" "result 0" "exp
 check_testlog "build/zbrowser-smoke/ztest-gfxdemo/gfxdemo.testlog" "result 9" "expected 9"
 check_testlog "build/zbrowser-smoke/ztest-mousedemo/mousedemo.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-selfhost/selfhost.testlog" "result 41" "expected 41"
+check_testlog "build/zbrowser-smoke/ztest-install-dir-project/kernel.testlog" "result 0" "expected 0"
 check_testlog "examples/zlang/selfhost_project/build/kernel.testlog" "result 42" "expected 42"
 check_testlog "build/zbrowser-smoke/ztest-zmake/zmake.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-zreport/zreport.testlog" "result 13" "expected 13"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
 check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
+check_buildlog_line "build/zbrowser-smoke/install_dir_project/kernel.buildlog" "output install_dir.bin"
 if [[ -e build/zbrowser-smoke/zclean-linked/zbcss_async.bin ||
       -e build/zbrowser-smoke/zclean-linked/zbcss_async.zo ||
       -e build/zbrowser-smoke/zclean-linked/zbcss_async.buildlog ||

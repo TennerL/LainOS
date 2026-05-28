@@ -1,4 +1,4 @@
 src output_name_project/src
 build output_name_project/build
-install missing-install
+install /dev/null
 default_output_demo.Z
