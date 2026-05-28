@@ -711,6 +711,7 @@ NETSURF_BROWSER_ENTRY int netsurf_core_prepare_html(const uint8_t *url,
 int netsurf_core_poll(void);
 const char *netsurf_core_status(void);
 int netsurf_core_mouse_event(uint32_t x, uint32_t y, uint32_t mouse_state);
+int netsurf_core_scroll_event(uint32_t x, uint32_t y, int32_t scroll_x, int32_t scroll_y);
 int netsurf_core_key_event(uint32_t key);
 int netsurf_core_consume_navigation(uint8_t *out, uint32_t capacity);
 
@@ -895,6 +896,27 @@ NETSURF_BROWSER_ENTRY int netsurf_browser_mouse_html_view(const netsurf_browser_
     doc_x = x - view->x;
     doc_y = y - view->y + view->scroll * 18u;
     return netsurf_core_mouse_event(doc_x, doc_y, mouse_state);
+}
+
+NETSURF_BROWSER_ENTRY int netsurf_browser_scroll_html_view(const netsurf_browser_view_t *view,
+                                                           uint32_t x,
+                                                           uint32_t y,
+                                                           int32_t scroll_x,
+                                                           int32_t scroll_y) {
+    uint32_t doc_x;
+    uint32_t doc_y;
+
+    if (view == 0 ||
+        x < view->x ||
+        y < view->y ||
+        x >= view->x + view->width ||
+        y >= view->y + view->height) {
+        return 0;
+    }
+
+    doc_x = x - view->x;
+    doc_y = y - view->y + view->scroll * 18u;
+    return netsurf_core_scroll_event(doc_x, doc_y, scroll_x, scroll_y);
 }
 
 NETSURF_BROWSER_ENTRY int netsurf_browser_key_event(uint32_t key) {

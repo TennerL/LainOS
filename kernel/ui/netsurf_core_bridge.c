@@ -3021,6 +3021,43 @@ int netsurf_core_mouse_event(uint32_t x, uint32_t y, uint32_t mouse_state) {
     return netsurf_bridge_navigation_pending ? 2 : 1;
 }
 
+int netsurf_core_scroll_event(uint32_t x, uint32_t y, int32_t scroll_x, int32_t scroll_y) {
+    netsurf_bridge_document_t *doc;
+    struct content *content;
+    bool handled;
+
+    if (netsurf_bridge_cached_document == 0 ||
+        netsurf_bridge_cached_document->content == 0) {
+        netsurf_bridge_status = "NetSurf scroll ignored: no document";
+        return 0;
+    }
+
+    doc = netsurf_bridge_cached_document;
+    content = doc->content;
+    if (content->status != CONTENT_STATUS_READY && content->status != CONTENT_STATUS_DONE) {
+        netsurf_bridge_status = "NetSurf scroll ignored: document loading";
+        return 0;
+    }
+    if (netsurf_bridge_open_document(doc) != NSERROR_OK) {
+        netsurf_bridge_status = "NetSurf scroll ignored: content open failed";
+        return 0;
+    }
+
+    if (content->handler == 0 || content->handler->scroll_at_point == 0) {
+        return 0;
+    }
+    handled = content->handler->scroll_at_point(content,
+                                                (int)x,
+                                                (int)y,
+                                                (int)scroll_x,
+                                                (int)scroll_y);
+    if (!handled) {
+        return 0;
+    }
+    doc->needs_redraw = true;
+    return 1;
+}
+
 int netsurf_core_key_event(uint32_t key) {
     netsurf_bridge_document_t *doc;
     struct content *content;
@@ -3378,12 +3415,27 @@ nserror browser_window_get_features(struct browser_window *bw,
 }
 
 bool browser_window_scroll_at_point(struct browser_window *bw, int x, int y, int scrx, int scry) {
-    (void)bw;
-    (void)x;
-    (void)y;
-    (void)scrx;
-    (void)scry;
-    return false;
+    netsurf_bridge_document_t *doc;
+    struct content *content;
+    bool handled;
+
+    if (bw == 0 || bw != (struct browser_window *)netsurf_bridge_cached_document) {
+        return false;
+    }
+    doc = netsurf_bridge_cached_document;
+    if (doc == 0 || doc->content == 0) {
+        return false;
+    }
+    content = doc->content;
+    if (content->handler == 0 || content->handler->scroll_at_point == 0) {
+        return false;
+    }
+    handled = content->handler->scroll_at_point(content, x, y, scrx, scry);
+    if (!handled) {
+        return false;
+    }
+    doc->needs_redraw = true;
+    return true;
 }
 
 bool browser_window_drop_file_at_point(struct browser_window *bw, int x, int y, char *file) {

@@ -52,6 +52,11 @@ NETSURF_BROWSER_ENTRY int netsurf_browser_mouse_html_view(const netsurf_browser_
                                                           uint32_t x,
                                                           uint32_t y,
                                                           uint32_t mouse_state);
+NETSURF_BROWSER_ENTRY int netsurf_browser_scroll_html_view(const netsurf_browser_view_t *view,
+                                                           uint32_t x,
+                                                           uint32_t y,
+                                                           int32_t scroll_x,
+                                                           int32_t scroll_y);
 NETSURF_BROWSER_ENTRY int netsurf_browser_key_event(uint32_t key);
 NETSURF_BROWSER_ENTRY int netsurf_browser_consume_navigation(uint8_t *out,
                                                              uint32_t capacity);
