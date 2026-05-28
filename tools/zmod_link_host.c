@@ -730,6 +730,7 @@ int main(int argc, char **argv) {
     const unsigned char *objects[HOST_MAX_OBJECTS];
     uint32_t object_sizes[HOST_MAX_OBJECTS];
     const char *include_dirs[HOST_MAX_INCLUDE_DIRS];
+    const char *output_path = 0;
     uint32_t include_dir_count = 0;
     uint32_t object_count;
     unsigned char *linked;
@@ -738,17 +739,31 @@ int main(int argc, char **argv) {
     int arg_index = 1;
     int status;
 
-    while (arg_index < argc && strcmp(argv[arg_index], "--include") == 0) {
-        if (include_dir_count >= HOST_MAX_INCLUDE_DIRS || arg_index + 1 >= argc) {
-            fprintf(stderr, "usage: zmod_link_host [--include dir/] source.Z object.zo [source.Z object.zo ...]\n");
-            return 2;
+    while (arg_index < argc && argv[arg_index][0] == '-') {
+        if (strcmp(argv[arg_index], "--include") == 0) {
+            if (include_dir_count >= HOST_MAX_INCLUDE_DIRS || arg_index + 1 >= argc) {
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                return 2;
+            }
+            include_dirs[include_dir_count++] = argv[arg_index + 1];
+            arg_index += 2;
+            continue;
         }
-        include_dirs[include_dir_count++] = argv[arg_index + 1];
-        arg_index += 2;
+        if (strcmp(argv[arg_index], "--output") == 0) {
+            if (output_path != 0 || arg_index + 1 >= argc) {
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                return 2;
+            }
+            output_path = argv[arg_index + 1];
+            arg_index += 2;
+            continue;
+        }
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        return 2;
     }
 
     if (argc - arg_index < 2 || ((argc - arg_index) % 2) != 0) {
-        fprintf(stderr, "usage: zmod_link_host [--include dir/] source.Z object.zo [source.Z object.zo ...]\n");
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
         return 2;
     }
 
@@ -828,6 +843,18 @@ int main(int argc, char **argv) {
     }
 
     fprintf(stderr, "linked %u object(s), bytes=%u\n", object_count, linked_size);
+    if (output_path != 0) {
+        if (write_file_raw(output_path, linked, linked_size) != 0) {
+            fprintf(stderr, "%s: failed to write linked output\n", output_path);
+            free(linked);
+            for (uint32_t i = 0; i < object_count; ++i) {
+                free(objects_storage[i]);
+            }
+            return 1;
+        }
+        fprintf(stderr, "wrote linked output %s bytes=%u\n", output_path, linked_size);
+    }
+
     free(linked);
     for (uint32_t i = 0; i < object_count; ++i) {
         free(objects_storage[i]);

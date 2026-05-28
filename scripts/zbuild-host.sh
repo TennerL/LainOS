@@ -49,6 +49,7 @@ make build/tools/zmod_link_host >/dev/null
 
 source_dir="$manifest_dir"
 build_dir="$(cd "$output_root" && pwd)"
+linked_output=
 link_output=1
 source_count=0
 declare -a include_args=()
@@ -87,6 +88,13 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
       include_args+=("--include" "$include_dir")
       ;;
     output|install|install-name|test-return)
+      if [[ "$directive" == output ]]; then
+        if [[ $# -ne 2 ]]; then
+          printf 'zbuild-host: bad output directive in %s\n' "$manifest_path" >&2
+          exit 1
+        fi
+        linked_output="$2"
+      fi
       ;;
     module|objects-only)
       if [[ $# -ne 1 ]]; then
@@ -116,10 +124,20 @@ if [[ $source_count -eq 0 ]]; then
   exit 1
 fi
 
-build/tools/zmod_link_host "${include_args[@]}" "${link_args[@]}"
+if [[ $link_output -ne 0 && -n "$linked_output" ]]; then
+  linked_output="$build_dir/$linked_output"
+  mkdir -p "$(dirname "$linked_output")"
+  build/tools/zmod_link_host "${include_args[@]}" --output "$linked_output" "${link_args[@]}"
+else
+  build/tools/zmod_link_host "${include_args[@]}" "${link_args[@]}"
+fi
 
 if [[ $link_output -ne 0 ]]; then
-  printf '%s -> validated linked build with %d object(s)\n' "$manifest_name" "$source_count"
+  if [[ -n "$linked_output" ]]; then
+    printf '%s -> validated linked build with %d object(s), output=%s\n' "$manifest_name" "$source_count" "$linked_output"
+  else
+    printf '%s -> validated linked build with %d object(s)\n' "$manifest_name" "$source_count"
+  fi
 else
   printf '%s -> built module object set with %d object(s)\n' "$manifest_name" "$source_count"
 fi
