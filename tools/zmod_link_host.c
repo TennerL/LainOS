@@ -1,8 +1,20 @@
+#define _DEFAULT_SOURCE
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <limits.h>
+
+#ifdef __unix__
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #ifdef __unix__
 #include <sys/mman.h>
@@ -22,6 +34,8 @@
 #define HOST_MAX_OBJECTS 32u
 #define HOST_MAX_ONCE_PATHS 128u
 #define HOST_MAX_PATH 768u
+#define HOST_RUNTIME_ENTRY_FILE 1
+#define HOST_RUNTIME_ENTRY_DIR 2
 
 typedef struct {
     const char *const *include_dirs;
@@ -42,6 +56,14 @@ typedef struct {
 typedef uint64_t (*host_exec_program_ret_t)(const host_exec_api_t *api);
 
 static int host_runtime_mode = 0;
+static int host_runtime_paths_ready = 0;
+static char host_runtime_repo_root[HOST_MAX_PATH];
+static char host_runtime_cwd[HOST_MAX_PATH];
+static unsigned char *host_runtime_file_buffer = 0;
+static uint32_t host_runtime_file_buffer_size = 0;
+
+static int join_path(const char *dir, const char *name, char *out, uint32_t out_capacity);
+static int path_is_absolute(const char *path);
 
 void *kmalloc(uint32_t size) {
     return malloc(size);
@@ -268,6 +290,276 @@ static int host_streq(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static int host_copy_text(char *out, uint32_t out_capacity, const char *text) {
+    size_t len;
+
+    if (!out || out_capacity == 0 || !text) {
+        return -1;
+    }
+
+    len = strlen(text);
+    if (len + 1u > out_capacity) {
+        return -1;
+    }
+    memcpy(out, text, len + 1u);
+    return 0;
+}
+
+static int host_runtime_init_paths(void) {
+    const char *repo_root = getenv("ZMOD_HOST_REPO_ROOT");
+    const char *run_root = getenv("ZMOD_HOST_RUN_ROOT");
+
+    if (host_runtime_paths_ready) {
+        return 0;
+    }
+
+    if (!repo_root || repo_root[0] == '\0') {
+        repo_root = ".";
+    }
+    if (!run_root || run_root[0] == '\0') {
+#ifdef __unix__
+        if (getcwd(host_runtime_cwd, sizeof(host_runtime_cwd)) == 0) {
+            return -1;
+        }
+#else
+        run_root = ".";
+#endif
+    } else if (host_copy_text(host_runtime_cwd, sizeof(host_runtime_cwd), run_root) != 0) {
+        return -1;
+    }
+
+    if (host_copy_text(host_runtime_repo_root, sizeof(host_runtime_repo_root), repo_root) != 0) {
+        return -1;
+    }
+#ifndef __unix__
+    if (run_root && run_root[0] != '\0' &&
+        host_copy_text(host_runtime_cwd, sizeof(host_runtime_cwd), run_root) != 0) {
+        return -1;
+    }
+#endif
+
+    host_runtime_paths_ready = 1;
+    return 0;
+}
+
+static int host_runtime_resolve_path(const char *path, char *out, uint32_t out_capacity) {
+    if (!path || !out || out_capacity == 0 || host_runtime_init_paths() != 0) {
+        return -1;
+    }
+    if (path_is_absolute(path)) {
+        return host_copy_text(out, out_capacity, path);
+    }
+    return join_path(host_runtime_cwd, path, out, out_capacity);
+}
+
+static int host_runtime_resolve_repo_path(const char *path, char *out, uint32_t out_capacity) {
+    if (!path || !out || out_capacity == 0 || host_runtime_init_paths() != 0) {
+        return -1;
+    }
+    if (path_is_absolute(path)) {
+        return host_copy_text(out, out_capacity, path);
+    }
+    return join_path(host_runtime_repo_root, path, out, out_capacity);
+}
+
+static int host_runtime_open_path(const char *path, const char *mode, FILE **out_file) {
+    char resolved[HOST_MAX_PATH];
+    FILE *file;
+
+    if (!mode || !out_file || host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+        return -1;
+    }
+    file = fopen(resolved, mode);
+    if (!file) {
+        return -1;
+    }
+    *out_file = file;
+    return 0;
+}
+
+static int host_runtime_stat_path(const char *path, struct stat *st) {
+    char resolved[HOST_MAX_PATH];
+
+    if (!st || host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+        return -1;
+    }
+    return stat(resolved, st);
+}
+
+static int host_runtime_scandir(const char *path, struct dirent ***out_list, int *out_count) {
+#ifdef __unix__
+    char resolved[HOST_MAX_PATH];
+    struct dirent **entries = 0;
+    int count;
+    int kept = 0;
+
+    if (!out_list || !out_count || host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+        return -1;
+    }
+
+    count = scandir(resolved, &entries, 0, alphasort);
+    if (count < 0) {
+        return -1;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        if (strcmp(entries[i]->d_name, ".") == 0 || strcmp(entries[i]->d_name, "..") == 0) {
+            free(entries[i]);
+            entries[i] = 0;
+            continue;
+        }
+        entries[kept++] = entries[i];
+    }
+
+    *out_list = entries;
+    *out_count = kept;
+    return 0;
+#else
+    (void)path;
+    (void)out_list;
+    (void)out_count;
+    return -1;
+#endif
+}
+
+static void host_runtime_free_scandir(struct dirent **list, int count) {
+#ifdef __unix__
+    if (!list) {
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        free(list[i]);
+    }
+    free(list);
+#else
+    (void)list;
+    (void)count;
+#endif
+}
+
+static int host_runtime_read_file_full_path(const char *path, unsigned char **out_data, uint32_t *out_size) {
+    FILE *file = 0;
+    long file_size;
+    unsigned char *data = 0;
+
+    if (!out_data || !out_size) {
+        return -1;
+    }
+
+    file = fopen(path, "rb");
+    if (!file) {
+        return -1;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return -1;
+    }
+    file_size = ftell(file);
+    if (file_size < 0 || file_size > (long)HOST_MAX_SOURCE_SIZE || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return -1;
+    }
+
+    data = (unsigned char *)malloc((size_t)file_size + 1u);
+    if (!data) {
+        fclose(file);
+        return -1;
+    }
+    if (file_size != 0 && fread(data, 1, (size_t)file_size, file) != (size_t)file_size) {
+        fclose(file);
+        free(data);
+        return -1;
+    }
+    fclose(file);
+    data[file_size] = '\0';
+    *out_data = data;
+    *out_size = (uint32_t)file_size;
+    return 0;
+}
+
+static int host_runtime_read_file_resolved(const char *path, unsigned char **out_data, uint32_t *out_size) {
+    char resolved[HOST_MAX_PATH];
+
+    if (host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+        return -1;
+    }
+    return host_runtime_read_file_full_path(resolved, out_data, out_size);
+}
+
+static int host_runtime_write_bytes(const char *path, const unsigned char *data, uint32_t size) {
+    FILE *file = 0;
+
+    if (host_runtime_open_path(path, "wb", &file) != 0) {
+        return -1;
+    }
+    if (size != 0 && fwrite(data, 1, size, file) != size) {
+        fclose(file);
+        return -1;
+    }
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int host_runtime_run_script(const char *script_name, const char *manifest_path, const char *root_path) {
+#ifdef __unix__
+    char script_path[HOST_MAX_PATH];
+    pid_t child;
+    int status = 0;
+
+    if (!script_name || !manifest_path || !root_path ||
+        host_runtime_resolve_repo_path(script_name, script_path, sizeof(script_path)) != 0) {
+        return -1;
+    }
+
+    child = fork();
+    if (child < 0) {
+        return -1;
+    }
+    if (child == 0) {
+        execl("/bin/bash", "bash", script_path, manifest_path, root_path, (char *)0);
+        _exit(127);
+    }
+
+    if (waitpid(child, &status, 0) < 0) {
+        return -1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        return -1;
+    }
+    return 0;
+#else
+    (void)script_name;
+    (void)manifest_path;
+    (void)root_path;
+    return -1;
+#endif
+}
+
+static int host_runtime_find_manifest(const char *target, char *manifest_path, uint32_t manifest_capacity) {
+    char candidate[HOST_MAX_PATH];
+    char target_name[64];
+
+    if (!target || !manifest_path || manifest_capacity == 0 || host_runtime_init_paths() != 0) {
+        return -1;
+    }
+    if (snprintf(target_name, sizeof(target_name), "%s.zbuild", target) >= (int)sizeof(target_name)) {
+        return -1;
+    }
+
+    if (snprintf(candidate, sizeof(candidate), "%s/examples/%s", host_runtime_repo_root, target_name) < (int)sizeof(candidate) &&
+        access(candidate, F_OK) == 0) {
+        return host_copy_text(manifest_path, manifest_capacity, candidate);
+    }
+    if (snprintf(candidate, sizeof(candidate), "%s/examples/zlang/%s", host_runtime_repo_root, target_name) < (int)sizeof(candidate) &&
+        access(candidate, F_OK) == 0) {
+        return host_copy_text(manifest_path, manifest_capacity, candidate);
+    }
+
+    return -1;
+}
+
 static void host_runtime_puts(const char *s) {
     fputs(s ? s : "", stdout);
     fflush(stdout);
@@ -402,6 +694,295 @@ static int host_runtime_mouse_wheel(void) {
     return 0;
 }
 
+static int host_runtime_mkdir(const char *path) {
+#ifdef __unix__
+    char resolved[HOST_MAX_PATH];
+    struct stat st;
+
+    if (host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+        return -1;
+    }
+    if (mkdir(resolved, 0777) == 0) {
+        return 0;
+    }
+    if (errno == EEXIST && stat(resolved, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return 0;
+    }
+    return -1;
+#else
+    (void)path;
+    return -1;
+#endif
+}
+
+static int host_runtime_delete(const char *path) {
+    char resolved[HOST_MAX_PATH];
+
+    if (host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+        return -1;
+    }
+    return remove(resolved) == 0 ? 0 : -1;
+}
+
+static int host_runtime_write_file(const char *path, const char *text) {
+    if (!text) {
+        return -1;
+    }
+    return host_runtime_write_bytes(path, (const unsigned char *)text, (uint32_t)strlen(text)) == 0 ? 0 : -1;
+}
+
+static int host_runtime_cat_file(const char *path) {
+    unsigned char *data = 0;
+    uint32_t size = 0;
+    int status = -1;
+
+    if (host_runtime_read_file_resolved(path, &data, &size) != 0) {
+        return -1;
+    }
+    if (size == 0 || fwrite(data, 1, size, stdout) == size) {
+        fflush(stdout);
+        status = 0;
+    }
+    free(data);
+    return status;
+}
+
+static int host_runtime_file_size(const char *path) {
+    struct stat st;
+
+    if (host_runtime_stat_path(path, &st) != 0 || st.st_size < 0 || st.st_size > INT32_MAX) {
+        return -1;
+    }
+    return (int)st.st_size;
+}
+
+static int host_runtime_read_file(const char *path, char *buffer, uint32_t capacity) {
+    unsigned char *data = 0;
+    uint32_t size = 0;
+    int result = -1;
+
+    if (!buffer || capacity == 0 || host_runtime_read_file_resolved(path, &data, &size) != 0 || size >= capacity) {
+        free(data);
+        return -1;
+    }
+
+    if (size != 0) {
+        memcpy(buffer, data, size);
+    }
+    buffer[size] = '\0';
+    result = (int)size;
+    free(data);
+    return result;
+}
+
+static int host_runtime_load_file_shared(const char *path) {
+    unsigned char *data = 0;
+    uint32_t size = 0;
+
+    if (host_runtime_read_file_resolved(path, &data, &size) != 0) {
+        return -1;
+    }
+
+    free(host_runtime_file_buffer);
+    host_runtime_file_buffer = data;
+    host_runtime_file_buffer_size = size;
+    return (int)size;
+}
+
+static uint8_t *host_runtime_file_buffer_ptr(void) {
+    return host_runtime_file_buffer;
+}
+
+static int host_runtime_rename(const char *old_path, const char *new_path) {
+    char old_resolved[HOST_MAX_PATH];
+    char new_resolved[HOST_MAX_PATH];
+
+    if (host_runtime_resolve_path(old_path, old_resolved, sizeof(old_resolved)) != 0 ||
+        host_runtime_resolve_path(new_path, new_resolved, sizeof(new_resolved)) != 0) {
+        return -1;
+    }
+    return rename(old_resolved, new_resolved) == 0 ? 0 : -1;
+}
+
+static int host_runtime_copy_file(const char *src_path, const char *dst_path) {
+    unsigned char *data = 0;
+    uint32_t size = 0;
+    int status = -1;
+
+    if (host_runtime_read_file_resolved(src_path, &data, &size) != 0) {
+        return -1;
+    }
+    if (host_runtime_write_bytes(dst_path, data, size) == 0) {
+        status = 0;
+    }
+    free(data);
+    return status;
+}
+
+static int host_runtime_strlen(const char *text) {
+    return text ? (int)strlen(text) : -1;
+}
+
+static int host_runtime_strcmp(const char *a, const char *b) {
+    if (!a || !b) {
+        return -1;
+    }
+    return strcmp(a, b);
+}
+
+static int host_runtime_starts_with(const char *text, const char *prefix) {
+    size_t prefix_len;
+
+    if (!text || !prefix) {
+        return 0;
+    }
+    prefix_len = strlen(prefix);
+    return strncmp(text, prefix, prefix_len) == 0 ? 1 : 0;
+}
+
+static int host_runtime_atoi(const char *text) {
+    return text ? atoi(text) : 0;
+}
+
+static int host_runtime_list_dir(const char *path) {
+    struct dirent **entries = 0;
+    int count = 0;
+
+    if (host_runtime_scandir(path, &entries, &count) != 0) {
+        return -1;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        puts(entries[i]->d_name);
+    }
+    host_runtime_free_scandir(entries, count);
+    return 0;
+}
+
+static int host_runtime_chdir(const char *path) {
+#ifdef __unix__
+    char resolved[HOST_MAX_PATH];
+    struct stat st;
+
+    if (host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0 ||
+        stat(resolved, &st) != 0 ||
+        !S_ISDIR(st.st_mode) ||
+        host_copy_text(host_runtime_cwd, sizeof(host_runtime_cwd), resolved) != 0) {
+        return -1;
+    }
+    return 0;
+#else
+    (void)path;
+    return -1;
+#endif
+}
+
+static int host_runtime_dir_count(const char *path) {
+    struct dirent **entries = 0;
+    int count = 0;
+
+    if (host_runtime_scandir(path, &entries, &count) != 0) {
+        return -1;
+    }
+    host_runtime_free_scandir(entries, count);
+    return count;
+}
+
+static int host_runtime_dir_name(const char *path, uint32_t index, char *buffer, uint32_t capacity) {
+    struct dirent **entries = 0;
+    int count = 0;
+    int status = -1;
+
+    if (!buffer || capacity == 0 || host_runtime_scandir(path, &entries, &count) != 0) {
+        return -1;
+    }
+    if ((int)index < count && host_copy_text(buffer, capacity, entries[index]->d_name) == 0) {
+        status = 0;
+    }
+    host_runtime_free_scandir(entries, count);
+    return status;
+}
+
+static int host_runtime_dir_type(const char *path, uint32_t index) {
+#ifdef __unix__
+    struct dirent **entries = 0;
+    int count = 0;
+    int status = -1;
+    char resolved_dir[HOST_MAX_PATH];
+    char child_path[HOST_MAX_PATH];
+    struct stat st;
+
+    if (host_runtime_scandir(path, &entries, &count) != 0 ||
+        (int)index >= count ||
+        host_runtime_resolve_path(path, resolved_dir, sizeof(resolved_dir)) != 0 ||
+        join_path(resolved_dir, entries[index]->d_name, child_path, sizeof(child_path)) != 0 ||
+        stat(child_path, &st) != 0) {
+        host_runtime_free_scandir(entries, count);
+        return -1;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        status = HOST_RUNTIME_ENTRY_DIR;
+    } else if (S_ISREG(st.st_mode)) {
+        status = HOST_RUNTIME_ENTRY_FILE;
+    }
+    host_runtime_free_scandir(entries, count);
+    return status;
+#else
+    (void)path;
+    (void)index;
+    return -1;
+#endif
+}
+
+static int host_runtime_dir_size(const char *path, uint32_t index) {
+#ifdef __unix__
+    struct dirent **entries = 0;
+    int count = 0;
+    char resolved_dir[HOST_MAX_PATH];
+    char child_path[HOST_MAX_PATH];
+    struct stat st;
+    int status = -1;
+
+    if (host_runtime_scandir(path, &entries, &count) != 0 ||
+        (int)index >= count ||
+        host_runtime_resolve_path(path, resolved_dir, sizeof(resolved_dir)) != 0 ||
+        join_path(resolved_dir, entries[index]->d_name, child_path, sizeof(child_path)) != 0 ||
+        stat(child_path, &st) != 0 ||
+        st.st_size < 0 ||
+        st.st_size > INT32_MAX) {
+        host_runtime_free_scandir(entries, count);
+        return -1;
+    }
+
+    status = (int)st.st_size;
+    host_runtime_free_scandir(entries, count);
+    return status;
+#else
+    (void)path;
+    (void)index;
+    return -1;
+#endif
+}
+
+static int host_runtime_ztest(const char *target) {
+    char manifest_path[HOST_MAX_PATH];
+
+    if (host_runtime_find_manifest(target, manifest_path, sizeof(manifest_path)) != 0) {
+        return -1;
+    }
+    return host_runtime_run_script("scripts/ztest-host.sh", manifest_path, host_runtime_cwd);
+}
+
+static int host_runtime_zinstall(const char *target) {
+    char manifest_path[HOST_MAX_PATH];
+
+    if (host_runtime_find_manifest(target, manifest_path, sizeof(manifest_path)) != 0) {
+        return -1;
+    }
+    return host_runtime_run_script("scripts/zinstall-host.sh", manifest_path, host_runtime_cwd);
+}
+
 static int host_runtime_export_value(const char *name, uint64_t *out) {
     if (host_streq(name, "puts")) {
         *out = (uint64_t)(uintptr_t)host_runtime_puts;
@@ -501,6 +1082,94 @@ static int host_runtime_export_value(const char *name, uint64_t *out) {
     }
     if (host_streq(name, "mouse_wheel")) {
         *out = (uint64_t)(uintptr_t)host_runtime_mouse_wheel;
+        return 0;
+    }
+    if (host_streq(name, "os_mkdir")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_mkdir;
+        return 0;
+    }
+    if (host_streq(name, "os_delete")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_delete;
+        return 0;
+    }
+    if (host_streq(name, "os_write_file")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_write_file;
+        return 0;
+    }
+    if (host_streq(name, "os_cat_file")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_cat_file;
+        return 0;
+    }
+    if (host_streq(name, "os_file_size")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_file_size;
+        return 0;
+    }
+    if (host_streq(name, "os_read_file")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_read_file;
+        return 0;
+    }
+    if (host_streq(name, "os_load_file_shared")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_load_file_shared;
+        return 0;
+    }
+    if (host_streq(name, "os_file_buffer")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_file_buffer_ptr;
+        return 0;
+    }
+    if (host_streq(name, "os_rename")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_rename;
+        return 0;
+    }
+    if (host_streq(name, "os_copy_file")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_copy_file;
+        return 0;
+    }
+    if (host_streq(name, "os_strlen")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_strlen;
+        return 0;
+    }
+    if (host_streq(name, "os_strcmp")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_strcmp;
+        return 0;
+    }
+    if (host_streq(name, "os_starts_with")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_starts_with;
+        return 0;
+    }
+    if (host_streq(name, "os_atoi")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_atoi;
+        return 0;
+    }
+    if (host_streq(name, "os_list_dir")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_list_dir;
+        return 0;
+    }
+    if (host_streq(name, "os_chdir")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_chdir;
+        return 0;
+    }
+    if (host_streq(name, "os_dir_count")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_dir_count;
+        return 0;
+    }
+    if (host_streq(name, "os_dir_name")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_dir_name;
+        return 0;
+    }
+    if (host_streq(name, "os_dir_type")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_dir_type;
+        return 0;
+    }
+    if (host_streq(name, "os_dir_size")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_dir_size;
+        return 0;
+    }
+    if (host_streq(name, "os_ztest")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_ztest;
+        return 0;
+    }
+    if (host_streq(name, "os_zinstall")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_zinstall;
         return 0;
     }
     return -1;

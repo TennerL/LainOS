@@ -27,6 +27,9 @@ scripts/ztest-host.sh examples/zlang/sysstat.zbuild build/zbrowser-smoke/ztest-s
 scripts/ztest-host.sh examples/zlang/hwinfo.zbuild build/zbrowser-smoke/ztest-hwinfo
 scripts/ztest-host.sh examples/zlang/gfxdemo.zbuild build/zbrowser-smoke/ztest-gfxdemo
 scripts/ztest-host.sh examples/zlang/mousedemo.zbuild build/zbrowser-smoke/ztest-mousedemo
+scripts/ztest-host.sh examples/zlang/selfhost.zbuild build/zbrowser-smoke/ztest-selfhost
+scripts/ztest-host.sh examples/zlang/zmake.zbuild build/zbrowser-smoke/ztest-zmake
+scripts/ztest-host.sh examples/zlang/zreport.zbuild build/zbrowser-smoke/ztest-zreport
 scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
 scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
 scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
@@ -278,6 +281,9 @@ check_testlog "build/zbrowser-smoke/ztest-sysstat/sysstat.testlog" "result 7" "e
 check_testlog "build/zbrowser-smoke/ztest-hwinfo/hwinfo.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-gfxdemo/gfxdemo.testlog" "result 9" "expected 9"
 check_testlog "build/zbrowser-smoke/ztest-mousedemo/mousedemo.testlog" "result 0" "expected 0"
+check_testlog "build/zbrowser-smoke/ztest-selfhost/selfhost.testlog" "result 41" "expected 41"
+check_testlog "build/zbrowser-smoke/ztest-zmake/zmake.testlog" "result 0" "expected 0"
+check_testlog "build/zbrowser-smoke/ztest-zreport/zreport.testlog" "result 13" "expected 13"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
 check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
 if [[ -e build/zbrowser-smoke/zclean-linked/zbcss_async.bin ||

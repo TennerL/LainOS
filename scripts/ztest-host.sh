@@ -41,7 +41,7 @@ scripts/zbuild-host.sh "$manifest_input" "$build_root" >/dev/null
 run_log="$ZBUILD_BUILD_DIR/$ZBUILD_TARGET_NAME.host-run.log"
 test_log="$ZBUILD_BUILD_DIR/$ZBUILD_TARGET_NAME.testlog"
 
-run_args=(build/tools/zmod_link_host)
+run_args=("$repo_root/build/tools/zmod_link_host")
 run_args+=("${ZBUILD_INCLUDE_ARGS[@]}")
 run_args+=(--run)
 if [[ $ZBUILD_HAS_EXPECTED_RETURN -ne 0 ]]; then
@@ -49,7 +49,9 @@ if [[ $ZBUILD_HAS_EXPECTED_RETURN -ne 0 ]]; then
 fi
 run_args+=("${ZBUILD_LINK_ARGS[@]}")
 
-"${run_args[@]}" >"$run_log" 2>&1
+ZMOD_HOST_REPO_ROOT="$repo_root" \
+ZMOD_HOST_RUN_ROOT="$ZBUILD_BUILD_DIR" \
+  "${run_args[@]}" >"$run_log" 2>&1
 
 result_line="$(tail -n 1 "$run_log")"
 result="$(printf '%s\n' "$result_line" | sed -n 's/^run result=\([0-9][0-9]*\).*/\1/p')"
