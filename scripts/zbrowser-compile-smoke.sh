@@ -12,6 +12,25 @@ mkdir -p build/zbrowser-smoke/all-installs
 mkdir -p build/zbrowser-smoke/all-ztests
 make build/tools/zmod_link_host
 
+check_kernel_export() {
+  local name="$1"
+
+  if ! rg -Fq "KERNEL_EXPORT(\"${name}\"" kernel/core/kernel_exports.c; then
+    printf 'zbrowser-compile-smoke: missing kernel export %s\n' "$name" >&2
+    exit 1
+  fi
+}
+
+check_kernel_export "netsurf_browser_render_html_view"
+check_kernel_export "netsurf_browser_prepare_html_view"
+check_kernel_export "netsurf_browser_mouse_html_view"
+check_kernel_export "netsurf_browser_scroll_html_view"
+check_kernel_export "netsurf_browser_key_event"
+check_kernel_export "netsurf_browser_consume_navigation"
+check_kernel_export "netsurf_browser_invalidate_cache"
+check_kernel_export "netsurf_browser_poll"
+check_kernel_export "netsurf_browser_status"
+
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zbrowser_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/zbrowser_netsurf
 scripts/zbuild-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zbrowser_css_repro
