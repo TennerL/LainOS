@@ -114,6 +114,18 @@ if ! rg -q 'bad include directive' "$invalid_include_dir_log"; then
   exit 1
 fi
 
+invalid_include_count_log="build/zbrowser-smoke/invalid_include_count.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_include_count.zbuild build/zbrowser-smoke/invalid_include_count >"$invalid_include_count_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: too-many-include manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_include_count_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad include directive' "$invalid_include_count_log"; then
+  printf 'zbrowser-compile-smoke: too-many-include manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_include_count_log" >&2
+  exit 1
+fi
+
 mkdir -p build/zbrowser-smoke/install-root
 invalid_install_dir_log="build/zbrowser-smoke/invalid_install_dir.log"
 if scripts/zinstall-host.sh examples/zlang/invalid_install_dir.zbuild build/zbrowser-smoke/install-root >"$invalid_install_dir_log" 2>&1; then
@@ -206,7 +218,7 @@ fi
 
 while IFS= read -r manifest; do
   case "$manifest" in
-    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_install_name.zbuild|examples/zlang/invalid_src_dir.zbuild|examples/zlang/invalid_build_dir.zbuild|examples/zlang/invalid_include_dir.zbuild|examples/zlang/invalid_install_dir.zbuild)
+    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_install_name.zbuild|examples/zlang/invalid_src_dir.zbuild|examples/zlang/invalid_build_dir.zbuild|examples/zlang/invalid_include_dir.zbuild|examples/zlang/invalid_include_count.zbuild|examples/zlang/invalid_install_dir.zbuild)
       continue
       ;;
   esac

@@ -1,3 +1,5 @@
+ZBUILD_HOST_MAX_INCLUDE_DIRS=4
+
 zbuild_host_fail_bad_directive() {
   local directive="$1"
   printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$ZBUILD_MANIFEST_PATH" >&2
@@ -131,6 +133,9 @@ zbuild_host_parse_manifest() {
         if [[ $field_count -ne 2 ]]; then
           printf 'zbuild-host: bad include directive in %s\n' "$ZBUILD_MANIFEST_PATH" >&2
           exit 1
+        fi
+        if [[ $((${#ZBUILD_INCLUDE_ARGS[@]} / 2)) -ge $ZBUILD_HOST_MAX_INCLUDE_DIRS ]]; then
+          zbuild_host_fail_bad_directive include
         fi
         include_dir="$(zbuild_host_resolve_dir "$ZBUILD_MANIFEST_DIR" "${fields[1]}" "include")"
         ZBUILD_INCLUDE_ARGS+=("--include" "$include_dir")

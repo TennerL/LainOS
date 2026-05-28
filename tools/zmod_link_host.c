@@ -8,7 +8,7 @@
 #include "kernel_exports.h"
 
 #define HOST_MAX_INCLUDE_DEPTH 16u
-#define HOST_MAX_INCLUDE_DIRS 16u
+#define HOST_MAX_INCLUDE_DIRS 4u
 #define HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
 #define HOST_MAX_ASM_SIZE (8u * 1024u * 1024u)
 #define HOST_MAX_OBJECT_SIZE (4u * 1024u * 1024u)

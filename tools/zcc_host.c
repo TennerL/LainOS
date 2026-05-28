@@ -6,7 +6,7 @@
 #include "zscript.h"
 
 #define ZCC_HOST_MAX_INCLUDE_DEPTH 16u
-#define ZCC_HOST_MAX_INCLUDE_DIRS 16u
+#define ZCC_HOST_MAX_INCLUDE_DIRS 4u
 #define ZCC_HOST_MAX_ONCE_PATHS 128u
 #define ZCC_HOST_MAX_PATH 768u
 #define ZCC_HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)

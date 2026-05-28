@@ -635,7 +635,25 @@ zcc-smoke: build/tools/zcc_host | build
 	printf 'ZCC %s\n' "examples/zlang/selfhost_project/src/selfhost_demo.Z"; \
 	build/tools/zcc_host --include examples/zlang/selfhost_project/include \
 		examples/zlang/selfhost_project/src/selfhost_demo.Z \
-		build/zcc-smoke/selfhost_demo_include.asm
+		build/zcc-smoke/selfhost_demo_include.asm; \
+	invalid_log="build/zcc-smoke/invalid_include_count.log"; \
+	if build/tools/zcc_host \
+		--include examples/zlang \
+		--include examples/zlang \
+		--include examples/zlang \
+		--include examples/zlang \
+		--include examples/zlang \
+		examples/zlang/hello.Z \
+		build/zcc-smoke/invalid_include_count.asm >"$$invalid_log" 2>&1; then \
+		printf 'zcc-smoke: too many host include dirs unexpectedly succeeded\n' >&2; \
+		cat "$$invalid_log" >&2; \
+		exit 1; \
+	fi; \
+	if ! rg -q '^usage: zcc_host ' "$$invalid_log"; then \
+		printf 'zcc-smoke: too many host include dirs failed for an unexpected reason\n' >&2; \
+		cat "$$invalid_log" >&2; \
+		exit 1; \
+	fi
 
 build/tools/lainfs_seed: tools/lainfs_seed.c | build
 	$(MKDIR_P) build/tools
