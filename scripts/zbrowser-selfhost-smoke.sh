@@ -89,6 +89,13 @@ cat >"$seed_root/autoexec" <<'EOF'
 mkdir mods
 cd mods
 cp R:/examples/kernel_api.Z kernel_api.Z
+cp R:/examples/libc_api.Z libc_api.Z
+cp R:/examples/mini_zlib.Z mini_zlib.Z
+cp R:/examples/mini_zlib_api.Z mini_zlib_api.Z
+cp R:/examples/clib_port_smoke_module.Z clib_port_smoke_module.Z
+cp R:/examples/clib_port_smoke_module.zbuild clib_port_smoke_module.zbuild
+cp R:/examples/libc_smoke_module.Z libc_smoke_module.Z
+cp R:/examples/libc_smoke_module.zbuild libc_smoke_module.zbuild
 cp R:/examples/zbrowser_module.Z zbrowser_module.Z
 cp R:/examples/zbrowser_netsurf.Z zbrowser_netsurf.Z
 cp R:/examples/zbrowser_html.Z zbrowser_html.Z
@@ -96,6 +103,8 @@ cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
 cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
 cp R:/examples/zbrowser_netsurf.zbuild zbrowser_netsurf.zbuild
 cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
+zinstall libc_smoke_module
+zinstall clib_port_smoke_module
 zinstall zbrowser_module
 zinstall zbrowser_netsurf
 poweroff
@@ -151,25 +160,32 @@ check_file "mods/zbrowser_html.zo"
 check_file "mods/zbrowser_module.zo"
 check_file "mods/zbrowser_netsurf.buildlog"
 check_file "mods/zbrowser_netsurf.zo"
+check_file "mods/libc_smoke_module.buildlog"
+check_file "mods/libc_smoke_module.zo"
+check_file "mods/clib_port_smoke_module.buildlog"
+check_file "mods/clib_port_smoke_module.zo"
+check_file "mods/mini_zlib.zo"
 
-build_log="$(build/tools/lainfs_check_host cat "$smoke_img" mods/zbrowser_module.buildlog)"
-if ! printf '%s\n' "$build_log" | grep -q '^status module$'; then
-  printf 'zbrowser self-host smoke: unexpected build log contents\n%s\n' "$build_log" >&2
-  exit 1
-fi
-if ! printf '%s\n' "$build_log" | grep -q '^objects 2$'; then
-  printf 'zbrowser self-host smoke: unexpected object count\n%s\n' "$build_log" >&2
-  exit 1
-fi
+check_buildlog() {
+  local fs_path="$1"
+  local expected_objects="$2"
+  local label="$3"
+  local build_log
 
-build_log="$(build/tools/lainfs_check_host cat "$smoke_img" mods/zbrowser_netsurf.buildlog)"
-if ! printf '%s\n' "$build_log" | grep -q '^status module$'; then
-  printf 'zbrowser self-host smoke: unexpected NetSurf build log contents\n%s\n' "$build_log" >&2
-  exit 1
-fi
-if ! printf '%s\n' "$build_log" | grep -q '^objects 1$'; then
-  printf 'zbrowser self-host smoke: unexpected NetSurf object count\n%s\n' "$build_log" >&2
-  exit 1
-fi
+  build_log="$(build/tools/lainfs_check_host cat "$smoke_img" "$fs_path")"
+  if ! printf '%s\n' "$build_log" | grep -q '^status module$'; then
+    printf 'zbrowser self-host smoke: unexpected %s build log contents\n%s\n' "$label" "$build_log" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$build_log" | grep -q "^objects ${expected_objects}\$"; then
+    printf 'zbrowser self-host smoke: unexpected %s object count\n%s\n' "$label" "$build_log" >&2
+    exit 1
+  fi
+}
+
+check_buildlog "mods/libc_smoke_module.buildlog" 1 "libc smoke module"
+check_buildlog "mods/clib_port_smoke_module.buildlog" 2 "clib port smoke module"
+check_buildlog "mods/zbrowser_module.buildlog" 2 "zbrowser module"
+check_buildlog "mods/zbrowser_netsurf.buildlog" 1 "NetSurf module"
 
 printf 'zbrowser self-host smoke: ok (timeout=%ss elapsed=%ss)\n' "$timeout_seconds" "$qemu_elapsed"
