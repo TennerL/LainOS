@@ -8,6 +8,7 @@ manifest_path="scripts/browser-selfhost-c-files.txt"
 units_manifest_path="scripts/browser-selfhost-c-units.txt"
 stage_root="${1:-build/browser-selfhost-c-stage}"
 workspace_root="$stage_root/browser_c"
+probe_root="$stage_root/browser_c_probe"
 notes_path="$workspace_root/README.txt"
 commands_path="$workspace_root/NEXT_C.txt"
 filelist_path="$workspace_root/FILES.txt"
@@ -22,7 +23,7 @@ if [[ ! -f "$units_manifest_path" ]]; then
   exit 1
 fi
 
-rm -rf "$workspace_root"
+rm -rf "$workspace_root" "$probe_root"
 mkdir -p "$workspace_root"
 
 cat >"$notes_path" <<'EOF'
@@ -39,6 +40,10 @@ commands can reuse the same include roots as the host build.
 COMPILE_UNITS.txt is the machine-readable first-pass browser-C build plan.
 It is validated on the host by scripts/zbrowser-c-host-compile-smoke.sh and is
 intended to become the first in-OS browser-C compile queue.
+
+browser_c_probe/ is a tiny Z project that runs from the same staged workspace
+and validates that the in-OS toolchain can consume that compile queue before a
+guest C compiler exists.
 EOF
 
 cp "$manifest_path" "$filelist_path"
@@ -87,5 +92,7 @@ Both units avoid generated parser tables and keep the first browser-C step
 generic and small.
 EOF
 } >"$commands_path"
+
+cp -R "$repo_root/examples/browser_c_probe" "$probe_root"
 
 printf '%s\n' "$workspace_root"

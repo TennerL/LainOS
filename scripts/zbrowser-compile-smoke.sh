@@ -12,6 +12,7 @@ mkdir -p build/zbrowser-smoke/all-installs
 mkdir -p build/zbrowser-smoke/all-ztests
 make build/tools/zmod_link_host
 scripts/zbrowser-c-selfhost-stage-smoke.sh
+scripts/zbrowser-c-queue-probe-smoke.sh
 scripts/zbrowser-c-host-compile-smoke.sh
 
 check_kernel_export() {
@@ -293,6 +294,18 @@ manifest_skips_module_validation() {
   return 1
 }
 
+manifest_skips_broad_ztest() {
+  local manifest="$1"
+
+  case "$manifest" in
+    examples/browser_c_probe/kernel.zbuild)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 manifest_needs_module_validation() {
   local manifest="$1"
   local build_root="$2"
@@ -326,6 +339,9 @@ ztest_manifest_list() {
   while IFS= read -r manifest; do
     [[ -n "$manifest" ]] || continue
     if manifest_is_known_negative "$manifest"; then
+      continue
+    fi
+    if manifest_skips_broad_ztest "$manifest"; then
       continue
     fi
 

@@ -1,0 +1,8 @@
+#pragma once
+
+extern int os_file_size(const uint8_t *path);
+extern int os_read_file(const uint8_t *path, uint8_t *buffer, uint32_t capacity);
+extern int os_write_file(const uint8_t *path, const uint8_t *text);
+extern int os_dir_count(const uint8_t *path);
+extern int os_strlen(const uint8_t *text);
+extern int os_strcmp(const uint8_t *a, const uint8_t *b);

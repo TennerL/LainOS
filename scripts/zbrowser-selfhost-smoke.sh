@@ -111,6 +111,11 @@ mkdir ../selfhost_project
 mkdir ../selfhost_project/include
 mkdir ../selfhost_project/src
 mkdir ../kernel_z
+cd ../browser_c_probe
+ztest kernel
+zinstall kernel
+exec browser_c_probe.bin
+cd ../mods
 cp R:/examples/zlang/selfhost_project/kernel.zbuild ../selfhost_project/kernel.zbuild
 cp R:/examples/zlang/selfhost_project/include/kernel_api.Z ../selfhost_project/include/kernel_api.Z
 cp R:/examples/zlang/selfhost_project/include/selfhost_once_leaf.Z ../selfhost_project/include/selfhost_once_leaf.Z
@@ -204,6 +209,10 @@ check_file "browser_c/NEXT_C.txt"
 check_file "browser_c/COMPILE_UNITS.txt"
 check_file "browser_c/third_party/netsurf/src/libnsutils/src/base64.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/bloom.c"
+check_file "browser_c_probe/browser_c_probe.bin"
+check_file "browser_c_probe/browser_c_probe.status"
+check_file "browser_c_probe/build/kernel.buildlog"
+check_file "browser_c_probe/build/kernel.testlog"
 
 check_buildlog() {
   local fs_path="$1"

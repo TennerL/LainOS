@@ -11,7 +11,7 @@ manifest_path="scripts/browser-selfhost-c-files.txt"
 make build/tools/lainfs_check_host build/tools/lainfs_seed reseed-data
 scripts/prepare-browser-selfhost-c-workspace.sh "$stage_root" >/dev/null
 cp build/data.img "$smoke_img"
-build/tools/lainfs_seed "$smoke_img" "$stage_root/browser_c" >/dev/null
+build/tools/lainfs_seed "$smoke_img" "$stage_root/browser_c" "$stage_root/browser_c_probe" >/dev/null
 
 check_seeded_path() {
   local fs_path="$1"
@@ -28,6 +28,9 @@ check_seeded_path "browser_c/README.txt"
 check_seeded_path "browser_c/NEXT_C.txt"
 check_seeded_path "browser_c/FILES.txt"
 check_seeded_path "browser_c/COMPILE_UNITS.txt"
+check_seeded_path "browser_c_probe/kernel.zbuild"
+check_seeded_path "browser_c_probe/include/browser_c_probe_api.Z"
+check_seeded_path "browser_c_probe/src/browser_c_probe.Z"
 
 seeded_count=0
 while IFS= read -r rel_path; do
@@ -36,4 +39,4 @@ while IFS= read -r rel_path; do
   seeded_count=$((seeded_count + 1))
 done <"$manifest_path"
 
-printf 'zbrowser-c-selfhost-stage-smoke: ok files=%u\n' "$seeded_count"
+printf 'zbrowser-c-selfhost-stage-smoke: ok files=%u probe=1\n' "$seeded_count"

@@ -1,0 +1,6 @@
+src src
+include include
+output browser_c_probe.bin
+install-name browser_c_probe.bin
+test-return 0
+browser_c_probe.Z browser_c_probe.zo

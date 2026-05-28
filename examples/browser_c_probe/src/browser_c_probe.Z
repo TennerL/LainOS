@@ -1,0 +1,40 @@
+#include "browser_c_probe_api.Z"
+
+uint8_t compile_units_path[32] = "../browser_c/COMPILE_UNITS.txt";
+uint8_t status_path[24] = "browser_c_probe.status";
+uint8_t expected_units[256] = "base64.o|third_party/netsurf/src/libnsutils/src/base64.c|third_party/netsurf/src/libnsutils/include\nbloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf\n";
+uint8_t base64_source[96] = "../browser_c/third_party/netsurf/src/libnsutils/src/base64.c";
+uint8_t bloom_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/bloom.c";
+uint8_t base64_include[96] = "../browser_c/third_party/netsurf/src/libnsutils/include";
+uint8_t bloom_root[96] = "../browser_c/third_party/netsurf/src/netsurf";
+uint8_t compile_units[512];
+
+int read_size;
+
+read_size = os_read_file(compile_units_path, compile_units, 512);
+if (read_size <= 0) {
+    print("browser_c probe: read failed\n");
+    return 11;
+}
+compile_units[read_size] = 0;
+
+if (os_strcmp(compile_units, expected_units) != 0) {
+    print("browser_c probe: compile queue mismatch\n");
+    return 12;
+}
+if (os_file_size(base64_source) <= 0 || os_file_size(bloom_source) <= 0) {
+    print("browser_c probe: missing staged source\n");
+    return 13;
+}
+if (os_dir_count(base64_include) < 0 ||
+    os_dir_count(bloom_root) < 0) {
+    print("browser_c probe: missing staged include root\n");
+    return 14;
+}
+if (os_write_file(status_path, "browser_c probe ok\n") != 0) {
+    print("browser_c probe: status write failed\n");
+    return 15;
+}
+
+print("browser_c probe: ok units=2\n");
+return 0;
