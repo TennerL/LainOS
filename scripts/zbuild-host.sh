@@ -8,6 +8,12 @@ usage() {
   printf 'usage: %s path/to/target.zbuild [output-dir]\n' "${0##*/}" >&2
 }
 
+fail_bad_directive() {
+  local directive="$1"
+  printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$manifest_path" >&2
+  exit 1
+}
+
 resolve_path() {
   local base_dir="$1"
   local path="$2"
@@ -88,13 +94,20 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
       include_dir="$(resolve_path "$manifest_dir" "$2")"
       include_args+=("--include" "$include_dir")
       ;;
-    output|install|install-name|test-return)
-      if [[ "$directive" == output ]]; then
-        if [[ $# -ne 2 ]]; then
-          printf 'zbuild-host: bad output directive in %s\n' "$manifest_path" >&2
-          exit 1
-        fi
-        linked_output="$2"
+    output)
+      if [[ $# -ne 2 ]]; then
+        fail_bad_directive output
+      fi
+      linked_output="$2"
+      ;;
+    install|install-name)
+      if [[ $# -ne 2 ]]; then
+        fail_bad_directive "$directive"
+      fi
+      ;;
+    test-return)
+      if [[ $# -ne 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+        fail_bad_directive test-return
       fi
       ;;
     module|objects-only)

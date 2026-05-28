@@ -1,0 +1,4 @@
+include .
+output invalid_test_return.bin
+test-return nope
+selfhost_demo.Z

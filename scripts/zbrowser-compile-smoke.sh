@@ -15,6 +15,18 @@ scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrow
 scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/zbrowser-smoke/manifest_cwd_project
 scripts/zbuild-host.sh examples/zlang/default_output_project/kernel.zbuild build/zbrowser-smoke/default_output_project
 
+invalid_log="build/zbrowser-smoke/invalid_test_return.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_test_return.zbuild build/zbrowser-smoke/invalid_test_return >"$invalid_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: invalid test-return manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad test-return directive' "$invalid_log"; then
+  printf 'zbrowser-compile-smoke: invalid test-return manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_log" >&2
+  exit 1
+fi
+
 check_output() {
   local path="$1"
 
