@@ -461,20 +461,11 @@ void zbrowser_ns_start_load(void) {
     netsurf_browser_invalidate_cache();
     if (kernel_task_async_supported() != 0) {
         zbrowser_ns_load_task_id = kernel_task_submit_async_named(zbrowser_ns_load_task, (uint8_t *)0, "zbrowser-netsurf-load");
-    } else if (zbrowser_ns_starts_http(zbrowser_ns_url) != 0) {
-        zbrowser_ns_load_task_id = 0;
     } else {
         zbrowser_ns_load_task_id = kernel_task_submit_named(zbrowser_ns_load_task, (uint8_t *)0, "zbrowser-netsurf-load");
     }
     if (zbrowser_ns_load_task_id == 0) {
-        if (zbrowser_ns_starts_http(zbrowser_ns_url) != 0 && kernel_task_async_supported() == 0) {
-            zbrowser_ns_copy(zbrowser_ns_status,
-                             ZBROWSER_NS_STATUS_CAPACITY,
-                             "load skipped: async networking unavailable");
-            zbrowser_ns_has_doc = 0;
-        } else {
-            zbrowser_ns_load_task((uint8_t *)0);
-        }
+        zbrowser_ns_load_task((uint8_t *)0);
         zbrowser_ns_load_in_progress = 0;
         if (zbrowser_ns_has_doc != 0) {
             zbrowser_ns_start_prepare();
