@@ -90,11 +90,14 @@ mkdir mods
 cd mods
 cp R:/examples/kernel_api.Z kernel_api.Z
 cp R:/examples/zbrowser_module.Z zbrowser_module.Z
+cp R:/examples/zbrowser_netsurf.Z zbrowser_netsurf.Z
 cp R:/examples/zbrowser_html.Z zbrowser_html.Z
 cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
 cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
+cp R:/examples/zbrowser_netsurf.zbuild zbrowser_netsurf.zbuild
 cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
 zinstall zbrowser_module
+zinstall zbrowser_netsurf
 poweroff
 EOF
 build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kernel examples "$seed_root/autoexec" >/dev/null
@@ -146,6 +149,8 @@ check_file() {
 check_file "mods/zbrowser_module.buildlog"
 check_file "mods/zbrowser_html.zo"
 check_file "mods/zbrowser_module.zo"
+check_file "mods/zbrowser_netsurf.buildlog"
+check_file "mods/zbrowser_netsurf.zo"
 
 build_log="$(build/tools/lainfs_check_host cat "$smoke_img" mods/zbrowser_module.buildlog)"
 if ! printf '%s\n' "$build_log" | grep -q '^status module$'; then
@@ -154,6 +159,16 @@ if ! printf '%s\n' "$build_log" | grep -q '^status module$'; then
 fi
 if ! printf '%s\n' "$build_log" | grep -q '^objects 2$'; then
   printf 'zbrowser self-host smoke: unexpected object count\n%s\n' "$build_log" >&2
+  exit 1
+fi
+
+build_log="$(build/tools/lainfs_check_host cat "$smoke_img" mods/zbrowser_netsurf.buildlog)"
+if ! printf '%s\n' "$build_log" | grep -q '^status module$'; then
+  printf 'zbrowser self-host smoke: unexpected NetSurf build log contents\n%s\n' "$build_log" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$build_log" | grep -q '^objects 1$'; then
+  printf 'zbrowser self-host smoke: unexpected NetSurf object count\n%s\n' "$build_log" >&2
   exit 1
 fi
 
