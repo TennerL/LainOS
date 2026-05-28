@@ -38,6 +38,8 @@ third_party/netsurf/src/netsurf/utils/hashmap.c
 third_party/netsurf/src/netsurf/utils/hashmap.h
 third_party/netsurf/src/netsurf/utils/hashtable.c
 third_party/netsurf/src/netsurf/utils/hashtable.h
+third_party/netsurf/src/netsurf/utils/punycode.c
+third_party/netsurf/src/netsurf/utils/punycode.h
 third_party/netsurf/src/netsurf/utils/filepath.c
 third_party/netsurf/src/netsurf/utils/filepath.h
 third_party/netsurf/src/netsurf/utils/log.h
