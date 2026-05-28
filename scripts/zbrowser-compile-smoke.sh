@@ -23,6 +23,12 @@ scripts/zbuild-host.sh examples/zlang/glob_literal_project/kernel.zbuild build/z
 scripts/zinstall-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/install/zbrowser_module
 scripts/zinstall-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/install/zbrowser_netsurf
 scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
+scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
+printf 'status ok\n' > build/zbrowser-smoke/zclean-linked/zbcss_async.testlog
+scripts/zclean-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
+scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zclean-module
+printf 'status ok\n' > build/zbrowser-smoke/zclean-module/zbrowser_module.testlog
+scripts/zclean-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zclean-module
 
 invalid_log="build/zbrowser-smoke/invalid_test_return.log"
 if scripts/zbuild-host.sh examples/zlang/invalid_test_return.zbuild build/zbrowser-smoke/invalid_test_return >"$invalid_log" 2>&1; then
@@ -134,6 +140,20 @@ check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "statu
 check_buildlog "examples/zlang/glob_literal_project/build/kernel.buildlog" "status ok"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
 check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
+if [[ -e build/zbrowser-smoke/zclean-linked/zbcss_async.bin ||
+      -e build/zbrowser-smoke/zclean-linked/zbcss_async.zo ||
+      -e build/zbrowser-smoke/zclean-linked/zbcss_async.buildlog ||
+      -e build/zbrowser-smoke/zclean-linked/zbcss_async.testlog ]]; then
+  printf 'zbrowser-compile-smoke: zclean-host left linked-build artifacts behind\n' >&2
+  exit 1
+fi
+if [[ -e build/zbrowser-smoke/zclean-module/zbrowser_html.zo ||
+      -e build/zbrowser-smoke/zclean-module/zbrowser_module.zo ||
+      -e build/zbrowser-smoke/zclean-module/zbrowser_module.buildlog ||
+      -e build/zbrowser-smoke/zclean-module/zbrowser_module.testlog ]]; then
+  printf 'zbrowser-compile-smoke: zclean-host left module-build artifacts behind\n' >&2
+  exit 1
+fi
 
 while IFS= read -r manifest; do
   case "$manifest" in
