@@ -1,0 +1,5 @@
+#pragma once
+
+int manifest_root_value(void) {
+    return 77;
+}

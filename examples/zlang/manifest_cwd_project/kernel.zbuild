@@ -1,0 +1,5 @@
+src src
+build build
+output manifest_cwd.bin
+
+manifest_cwd_demo.Z

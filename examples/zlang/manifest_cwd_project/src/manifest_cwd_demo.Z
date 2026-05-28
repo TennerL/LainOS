@@ -1,0 +1,8 @@
+#include "manifest_root_api.Z"
+
+int total = manifest_root_value();
+print("manifest cwd total=");
+print(total);
+print("\n");
+
+return total;

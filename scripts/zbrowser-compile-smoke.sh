@@ -12,6 +12,7 @@ scripts/zbuild-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/zbr
 scripts/zbuild-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zbrowser_css_repro
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zbcss_async
 scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/selfhost_project
+scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/zbrowser-smoke/manifest_cwd_project
 
 check_output() {
   local path="$1"
@@ -25,3 +26,4 @@ check_output() {
 check_output "build/zbrowser-smoke/zbrowser_css_repro/zbrowser_css_repro.bin"
 check_output "build/zbrowser-smoke/zbcss_async/zbcss_async.bin"
 check_output "examples/zlang/selfhost_project/build/kernel.bin"
+check_output "examples/zlang/manifest_cwd_project/build/manifest_cwd.bin"

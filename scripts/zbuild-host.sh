@@ -52,7 +52,7 @@ build_dir="$(cd "$output_root" && pwd)"
 linked_output=
 link_output=1
 source_count=0
-declare -a include_args=()
+declare -a include_args=("--include" "$manifest_dir")
 declare -a link_args=()
 
 while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
