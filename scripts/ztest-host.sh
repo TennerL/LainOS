@@ -51,6 +51,7 @@ run_args+=("${ZBUILD_LINK_ARGS[@]}")
 
 ZMOD_HOST_REPO_ROOT="$repo_root" \
 ZMOD_HOST_RUN_ROOT="$ZBUILD_BUILD_DIR" \
+ZMOD_HOST_MANIFEST_DIR="$ZBUILD_MANIFEST_DIR" \
   "${run_args[@]}" >"$run_log" 2>&1
 
 result_line="$(tail -n 1 "$run_log")"

@@ -23,6 +23,7 @@
 #include "zobject.h"
 #include "zscript.h"
 #include "kernel_exports.h"
+#include "weblayout.h"
 
 #define HOST_RUN_EXEC_API_MAGIC 0x4C41494E45584543ull
 #define HOST_MAX_INCLUDE_DEPTH 16u
@@ -59,14 +60,29 @@ static int host_runtime_mode = 0;
 static int host_runtime_paths_ready = 0;
 static char host_runtime_repo_root[HOST_MAX_PATH];
 static char host_runtime_cwd[HOST_MAX_PATH];
+static char host_runtime_manifest_dir[HOST_MAX_PATH];
 static unsigned char *host_runtime_file_buffer = 0;
 static uint32_t host_runtime_file_buffer_size = 0;
+static uint32_t host_runtime_task_next_id = 1u;
+static uint32_t host_runtime_dom_status = 0u;
+
+#define HOST_RUNTIME_TASK_SLOTS 16u
+typedef struct {
+    uint32_t id;
+    char name[32];
+} host_runtime_task_slot_t;
+
+static host_runtime_task_slot_t host_runtime_task_slots[HOST_RUNTIME_TASK_SLOTS];
 
 static int join_path(const char *dir, const char *name, char *out, uint32_t out_capacity);
 static int path_is_absolute(const char *path);
 
 void *kmalloc(uint32_t size) {
     return malloc(size);
+}
+
+void *kzalloc(uint32_t size) {
+    return calloc(1u, size);
 }
 
 void kfree(void *ptr) {
@@ -308,6 +324,7 @@ static int host_copy_text(char *out, uint32_t out_capacity, const char *text) {
 static int host_runtime_init_paths(void) {
     const char *repo_root = getenv("ZMOD_HOST_REPO_ROOT");
     const char *run_root = getenv("ZMOD_HOST_RUN_ROOT");
+    const char *manifest_dir = getenv("ZMOD_HOST_MANIFEST_DIR");
 
     if (host_runtime_paths_ready) {
         return 0;
@@ -330,6 +347,13 @@ static int host_runtime_init_paths(void) {
 
     if (host_copy_text(host_runtime_repo_root, sizeof(host_runtime_repo_root), repo_root) != 0) {
         return -1;
+    }
+    if (manifest_dir && manifest_dir[0] != '\0') {
+        if (host_copy_text(host_runtime_manifest_dir, sizeof(host_runtime_manifest_dir), manifest_dir) != 0) {
+            return -1;
+        }
+    } else {
+        host_runtime_manifest_dir[0] = '\0';
     }
 #ifndef __unix__
     if (run_root && run_root[0] != '\0' &&
@@ -362,6 +386,28 @@ static int host_runtime_resolve_repo_path(const char *path, char *out, uint32_t 
     return join_path(host_runtime_repo_root, path, out, out_capacity);
 }
 
+static int host_runtime_resolve_input_path(const char *path, char *out, uint32_t out_capacity) {
+    char candidate[HOST_MAX_PATH];
+    struct stat st;
+
+    if (!path || !out || out_capacity == 0 || host_runtime_init_paths() != 0) {
+        return -1;
+    }
+    if (path_is_absolute(path)) {
+        return host_copy_text(out, out_capacity, path);
+    }
+    if (join_path(host_runtime_cwd, path, candidate, sizeof(candidate)) == 0 &&
+        stat(candidate, &st) == 0) {
+        return host_copy_text(out, out_capacity, candidate);
+    }
+    if (host_runtime_manifest_dir[0] != '\0' &&
+        join_path(host_runtime_manifest_dir, path, candidate, sizeof(candidate)) == 0 &&
+        stat(candidate, &st) == 0) {
+        return host_copy_text(out, out_capacity, candidate);
+    }
+    return join_path(host_runtime_cwd, path, out, out_capacity);
+}
+
 static int host_runtime_open_path(const char *path, const char *mode, FILE **out_file) {
     char resolved[HOST_MAX_PATH];
     FILE *file;
@@ -380,7 +426,7 @@ static int host_runtime_open_path(const char *path, const char *mode, FILE **out
 static int host_runtime_stat_path(const char *path, struct stat *st) {
     char resolved[HOST_MAX_PATH];
 
-    if (!st || host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    if (!st || host_runtime_resolve_input_path(path, resolved, sizeof(resolved)) != 0) {
         return -1;
     }
     return stat(resolved, st);
@@ -393,7 +439,7 @@ static int host_runtime_scandir(const char *path, struct dirent ***out_list, int
     int count;
     int kept = 0;
 
-    if (!out_list || !out_count || host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    if (!out_list || !out_count || host_runtime_resolve_input_path(path, resolved, sizeof(resolved)) != 0) {
         return -1;
     }
 
@@ -480,7 +526,7 @@ static int host_runtime_read_file_full_path(const char *path, unsigned char **ou
 static int host_runtime_read_file_resolved(const char *path, unsigned char **out_data, uint32_t *out_size) {
     char resolved[HOST_MAX_PATH];
 
-    if (host_runtime_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    if (host_runtime_resolve_input_path(path, resolved, sizeof(resolved)) != 0) {
         return -1;
     }
     return host_runtime_read_file_full_path(resolved, out_data, out_size);
@@ -983,6 +1029,152 @@ static int host_runtime_zinstall(const char *target) {
     return host_runtime_run_script("scripts/zinstall-host.sh", manifest_path, host_runtime_cwd);
 }
 
+static host_runtime_task_slot_t *host_runtime_find_task_slot(uint32_t id) {
+    for (uint32_t i = 0; i < HOST_RUNTIME_TASK_SLOTS; ++i) {
+        if (host_runtime_task_slots[i].id == id) {
+            return &host_runtime_task_slots[i];
+        }
+    }
+    return 0;
+}
+
+static host_runtime_task_slot_t *host_runtime_alloc_task_slot(uint32_t id, const char *name) {
+    for (uint32_t i = 0; i < HOST_RUNTIME_TASK_SLOTS; ++i) {
+        if (host_runtime_task_slots[i].id == 0u) {
+            host_runtime_task_slots[i].id = id;
+            if (host_copy_text(host_runtime_task_slots[i].name,
+                               sizeof(host_runtime_task_slots[i].name),
+                               name && name[0] ? name : "task") != 0) {
+                host_runtime_task_slots[i].name[0] = '\0';
+            }
+            return &host_runtime_task_slots[i];
+        }
+    }
+    return 0;
+}
+
+static uint32_t host_runtime_kernel_task_submit_named(void (*fn)(void *arg), void *arg, const char *name) {
+    uint32_t id;
+
+    if (!fn) {
+        return 0u;
+    }
+
+    id = host_runtime_task_next_id++;
+    if (id == 0u) {
+        id = host_runtime_task_next_id++;
+    }
+    if (!host_runtime_alloc_task_slot(id, name)) {
+        return 0u;
+    }
+
+    /* Host ztest runs execute tasks eagerly but preserve task ids for wait/release parity. */
+    fn(arg);
+    return id;
+}
+
+static uint32_t host_runtime_kernel_task_submit(void (*fn)(void *arg), void *arg) {
+    return host_runtime_kernel_task_submit_named(fn, arg, "task");
+}
+
+static uint32_t host_runtime_kernel_task_submit_async_named(void (*fn)(void *arg), void *arg, const char *name) {
+    return host_runtime_kernel_task_submit_named(fn, arg, name);
+}
+
+static int host_runtime_kernel_task_async_supported(void) {
+    return 1;
+}
+
+static int host_runtime_kernel_task_done(uint32_t id) {
+    if (id == 0u) {
+        return 1;
+    }
+    return host_runtime_find_task_slot(id) != 0 ? 1 : 0;
+}
+
+static void host_runtime_kernel_task_release(uint32_t id) {
+    host_runtime_task_slot_t *slot;
+
+    if (id == 0u) {
+        return;
+    }
+
+    slot = host_runtime_find_task_slot(id);
+    if (slot) {
+        slot->id = 0u;
+        slot->name[0] = '\0';
+    }
+}
+
+static void host_runtime_kernel_task_wait(uint32_t id) {
+    (void)id;
+}
+
+static int host_runtime_copy_rewritten_html(const uint8_t *html,
+                                            uint32_t len,
+                                            uint8_t *out,
+                                            uint32_t out_capacity) {
+    if (!html || !out || out_capacity == 0u || len >= out_capacity) {
+        host_runtime_dom_status = 1u;
+        return -1;
+    }
+
+    if (len != 0u) {
+        memmove(out, html, len);
+    }
+    out[len] = '\0';
+    host_runtime_dom_status = 0u;
+    return (int)len;
+}
+
+static int host_runtime_web_style_prepare_document(const uint8_t *html,
+                                                   uint32_t viewport_width,
+                                                   uint32_t viewport_height) {
+    (void)viewport_width;
+    (void)viewport_height;
+    return html ? 0 : -1;
+}
+
+static int host_runtime_web_style_for_tag(const uint8_t *html,
+                                          uint32_t tag_pos,
+                                          uint32_t viewport_width,
+                                          uint32_t viewport_height,
+                                          web_style_t *out_style) {
+    (void)viewport_width;
+    (void)viewport_height;
+
+    if (!html || !out_style) {
+        return -1;
+    }
+    if (html[tag_pos] == '\0') {
+        return -1;
+    }
+
+    memset(out_style, 0, sizeof(*out_style));
+    out_style->display = 1u;
+    out_style->font_size = 16u;
+    out_style->line_height = 16u;
+    return 0;
+}
+
+static uint32_t host_runtime_netsurf_port_dom_status(void) {
+    return host_runtime_dom_status;
+}
+
+static int host_runtime_netsurf_port_rewrite_html(const uint8_t *html,
+                                                  uint32_t len,
+                                                  uint8_t *out,
+                                                  uint32_t out_capacity) {
+    return host_runtime_copy_rewritten_html(html, len, out, out_capacity);
+}
+
+static int host_runtime_netsurf_port_rewrite_render_html(const uint8_t *html,
+                                                         uint32_t len,
+                                                         uint8_t *out,
+                                                         uint32_t out_capacity) {
+    return host_runtime_copy_rewritten_html(html, len, out, out_capacity);
+}
+
 static int host_runtime_export_value(const char *name, uint64_t *out) {
     if (host_streq(name, "puts")) {
         *out = (uint64_t)(uintptr_t)host_runtime_puts;
@@ -998,6 +1190,46 @@ static int host_runtime_export_value(const char *name, uint64_t *out) {
     }
     if (host_streq(name, "ticks")) {
         *out = (uint64_t)(uintptr_t)host_runtime_ticks;
+        return 0;
+    }
+    if (host_streq(name, "kmalloc") || host_streq(name, "malloc")) {
+        *out = (uint64_t)(uintptr_t)kmalloc;
+        return 0;
+    }
+    if (host_streq(name, "kzalloc") || host_streq(name, "calloc")) {
+        *out = (uint64_t)(uintptr_t)kzalloc;
+        return 0;
+    }
+    if (host_streq(name, "kfree") || host_streq(name, "free")) {
+        *out = (uint64_t)(uintptr_t)kfree;
+        return 0;
+    }
+    if (host_streq(name, "kernel_task_submit_named")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_kernel_task_submit_named;
+        return 0;
+    }
+    if (host_streq(name, "kernel_task_submit")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_kernel_task_submit;
+        return 0;
+    }
+    if (host_streq(name, "kernel_task_submit_async_named")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_kernel_task_submit_async_named;
+        return 0;
+    }
+    if (host_streq(name, "kernel_task_async_supported")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_kernel_task_async_supported;
+        return 0;
+    }
+    if (host_streq(name, "kernel_task_done")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_kernel_task_done;
+        return 0;
+    }
+    if (host_streq(name, "kernel_task_release")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_kernel_task_release;
+        return 0;
+    }
+    if (host_streq(name, "kernel_task_wait")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_kernel_task_wait;
         return 0;
     }
     if (host_streq(name, "mem_total_kb") || host_streq(name, "status_memory_total_kb")) {
@@ -1054,6 +1286,26 @@ static int host_runtime_export_value(const char *name, uint64_t *out) {
     }
     if (host_streq(name, "set_margin")) {
         *out = (uint64_t)(uintptr_t)host_runtime_set_margin;
+        return 0;
+    }
+    if (host_streq(name, "web_style_prepare_document")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_web_style_prepare_document;
+        return 0;
+    }
+    if (host_streq(name, "web_style_for_tag")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_web_style_for_tag;
+        return 0;
+    }
+    if (host_streq(name, "netsurf_port_dom_status")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_netsurf_port_dom_status;
+        return 0;
+    }
+    if (host_streq(name, "netsurf_port_rewrite_html")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_netsurf_port_rewrite_html;
+        return 0;
+    }
+    if (host_streq(name, "netsurf_port_rewrite_render_html")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_netsurf_port_rewrite_render_html;
         return 0;
     }
     if (host_streq(name, "mouse_enabled")) {

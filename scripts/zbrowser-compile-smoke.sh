@@ -23,6 +23,8 @@ scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/z
 scripts/zbuild-host.sh examples/zlang/default_output_project/kernel.zbuild build/zbrowser-smoke/default_output_project
 scripts/zbuild-host.sh examples/zlang/output_name_project/kernel.zbuild build/zbrowser-smoke/output_name_project
 scripts/zbuild-host.sh examples/zlang/glob_literal_project/kernel.zbuild build/zbrowser-smoke/glob_literal_project
+scripts/ztest-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/ztest-zbrowser-css-repro
+scripts/ztest-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/ztest-zbcss-async
 scripts/ztest-host.sh examples/zlang/sysstat.zbuild build/zbrowser-smoke/ztest-sysstat
 scripts/ztest-host.sh examples/zlang/hwinfo.zbuild build/zbrowser-smoke/ztest-hwinfo
 scripts/ztest-host.sh examples/zlang/gfxdemo.zbuild build/zbrowser-smoke/ztest-gfxdemo
@@ -277,6 +279,8 @@ check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "stat
 check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/glob_literal_project/build/kernel.buildlog" "status ok"
+check_testlog "build/zbrowser-smoke/ztest-zbrowser-css-repro/zbrowser_css_repro.testlog" "result 0" "expected 0"
+check_testlog "build/zbrowser-smoke/ztest-zbcss-async/zbcss_async.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-sysstat/sysstat.testlog" "result 7" "expected 7"
 check_testlog "build/zbrowser-smoke/ztest-hwinfo/hwinfo.testlog" "result 0" "expected 0"
 check_testlog "build/zbrowser-smoke/ztest-gfxdemo/gfxdemo.testlog" "result 9" "expected 9"
