@@ -78,6 +78,55 @@ if ! rg -q 'bad install-name directive' "$invalid_install_name_log"; then
   exit 1
 fi
 
+invalid_src_dir_log="build/zbrowser-smoke/invalid_src_dir.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_src_dir.zbuild build/zbrowser-smoke/invalid_src_dir >"$invalid_src_dir_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: invalid src-dir manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_src_dir_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad src directive' "$invalid_src_dir_log"; then
+  printf 'zbrowser-compile-smoke: invalid src-dir manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_src_dir_log" >&2
+  exit 1
+fi
+
+invalid_build_dir_log="build/zbrowser-smoke/invalid_build_dir.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_build_dir.zbuild build/zbrowser-smoke/invalid_build_dir >"$invalid_build_dir_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: invalid build-dir manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_build_dir_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad build directive' "$invalid_build_dir_log"; then
+  printf 'zbrowser-compile-smoke: invalid build-dir manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_build_dir_log" >&2
+  exit 1
+fi
+
+invalid_include_dir_log="build/zbrowser-smoke/invalid_include_dir.log"
+if scripts/zbuild-host.sh examples/zlang/invalid_include_dir.zbuild build/zbrowser-smoke/invalid_include_dir >"$invalid_include_dir_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: invalid include-dir manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_include_dir_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad include directive' "$invalid_include_dir_log"; then
+  printf 'zbrowser-compile-smoke: invalid include-dir manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_include_dir_log" >&2
+  exit 1
+fi
+
+mkdir -p build/zbrowser-smoke/install-root
+invalid_install_dir_log="build/zbrowser-smoke/invalid_install_dir.log"
+if scripts/zinstall-host.sh examples/zlang/invalid_install_dir.zbuild build/zbrowser-smoke/install-root >"$invalid_install_dir_log" 2>&1; then
+  printf 'zbrowser-compile-smoke: invalid install-dir manifest unexpectedly succeeded\n' >&2
+  cat "$invalid_install_dir_log" >&2
+  exit 1
+fi
+if ! rg -q 'bad install directive' "$invalid_install_dir_log"; then
+  printf 'zbrowser-compile-smoke: invalid install-dir manifest failed for an unexpected reason\n' >&2
+  cat "$invalid_install_dir_log" >&2
+  exit 1
+fi
+
 check_output() {
   local path="$1"
 
@@ -157,7 +206,7 @@ fi
 
 while IFS= read -r manifest; do
   case "$manifest" in
-    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_install_name.zbuild)
+    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_install_name.zbuild|examples/zlang/invalid_src_dir.zbuild|examples/zlang/invalid_build_dir.zbuild|examples/zlang/invalid_include_dir.zbuild|examples/zlang/invalid_install_dir.zbuild)
       continue
       ;;
   esac

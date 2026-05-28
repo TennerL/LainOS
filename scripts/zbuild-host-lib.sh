@@ -28,6 +28,23 @@ zbuild_host_resolve_path() {
   fi
 }
 
+zbuild_host_resolve_dir() {
+  local base_dir="$1"
+  local path="$2"
+  local directive="$3"
+  local resolved=
+
+  resolved="$(zbuild_host_resolve_path "$base_dir" "$path")"
+  if [[ ! -d "$resolved" ]]; then
+    zbuild_host_fail_bad_directive "$directive"
+  fi
+  if ! resolved="$(cd "$resolved" && pwd)"; then
+    zbuild_host_fail_bad_directive "$directive"
+  fi
+
+  printf '%s\n' "$resolved"
+}
+
 zbuild_host_trim_line() {
   sed 's/\r$//; s/^[[:space:]]*//; s/[[:space:]]*$//'
 }
@@ -101,22 +118,21 @@ zbuild_host_parse_manifest() {
           printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$ZBUILD_MANIFEST_PATH" >&2
           exit 1
         fi
-        ZBUILD_SOURCE_DIR="$(zbuild_host_resolve_path "$ZBUILD_MANIFEST_DIR" "${fields[1]}")"
+        ZBUILD_SOURCE_DIR="$(zbuild_host_resolve_dir "$ZBUILD_MANIFEST_DIR" "${fields[1]}" "$directive")"
         ;;
       build)
         if [[ $field_count -ne 2 ]]; then
           printf 'zbuild-host: bad build directive in %s\n' "$ZBUILD_MANIFEST_PATH" >&2
           exit 1
         fi
-        ZBUILD_BUILD_DIR="$(zbuild_host_resolve_path "$ZBUILD_MANIFEST_DIR" "${fields[1]}")"
-        mkdir -p "$ZBUILD_BUILD_DIR"
+        ZBUILD_BUILD_DIR="$(zbuild_host_resolve_dir "$ZBUILD_MANIFEST_DIR" "${fields[1]}" "build")"
         ;;
       include)
         if [[ $field_count -ne 2 ]]; then
           printf 'zbuild-host: bad include directive in %s\n' "$ZBUILD_MANIFEST_PATH" >&2
           exit 1
         fi
-        include_dir="$(zbuild_host_resolve_path "$ZBUILD_MANIFEST_DIR" "${fields[1]}")"
+        include_dir="$(zbuild_host_resolve_dir "$ZBUILD_MANIFEST_DIR" "${fields[1]}" "include")"
         ZBUILD_INCLUDE_ARGS+=("--include" "$include_dir")
         ;;
       output)
@@ -132,8 +148,7 @@ zbuild_host_parse_manifest() {
         if [[ $field_count -ne 2 ]]; then
           zbuild_host_fail_bad_directive install
         fi
-        ZBUILD_INSTALL_DIR="$(zbuild_host_resolve_path "$ZBUILD_INSTALL_ROOT" "${fields[1]}")"
-        mkdir -p "$ZBUILD_INSTALL_DIR"
+        ZBUILD_INSTALL_DIR="$(zbuild_host_resolve_dir "$ZBUILD_INSTALL_ROOT" "${fields[1]}" "install")"
         ;;
       install-name)
         if [[ $field_count -ne 2 ]]; then
