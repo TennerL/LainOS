@@ -1,0 +1,39 @@
+#include "kernel_api.Z"
+
+uint8_t libc_smoke_name[32] = "libc_smoke_module";
+uint8_t clib_port_name[32] = "clib_port_smoke_module";
+uint8_t zbrowser_module_name[32] = "zbrowser_module";
+uint8_t zbrowser_netsurf_name[32] = "zbrowser_netsurf";
+uint8_t status_path[32] = "browser_selfhost.status";
+
+print("browser selfhost: install libc_smoke_module\n");
+if (os_zinstall(libc_smoke_name) != 0) {
+    print("browser selfhost: libc_smoke_module failed\n");
+    return 11;
+}
+
+print("browser selfhost: install clib_port_smoke_module\n");
+if (os_zinstall(clib_port_name) != 0) {
+    print("browser selfhost: clib_port_smoke_module failed\n");
+    return 12;
+}
+
+print("browser selfhost: install zbrowser_module\n");
+if (os_zinstall(zbrowser_module_name) != 0) {
+    print("browser selfhost: zbrowser_module failed\n");
+    return 13;
+}
+
+print("browser selfhost: install zbrowser_netsurf\n");
+if (os_zinstall(zbrowser_netsurf_name) != 0) {
+    print("browser selfhost: zbrowser_netsurf failed\n");
+    return 14;
+}
+
+if (os_write_file(status_path, "browser selfhost install ok\n") != 0) {
+    print("browser selfhost: status write failed\n");
+    return 15;
+}
+
+print("browser selfhost: ok\n");
+return 0;

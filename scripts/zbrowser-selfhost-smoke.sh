@@ -96,6 +96,8 @@ cp R:/examples/clib_port_smoke_module.Z clib_port_smoke_module.Z
 cp R:/examples/clib_port_smoke_module.zbuild clib_port_smoke_module.zbuild
 cp R:/examples/libc_smoke_module.Z libc_smoke_module.Z
 cp R:/examples/libc_smoke_module.zbuild libc_smoke_module.zbuild
+cp R:/examples/browser_selfhost_driver.Z browser_selfhost_driver.Z
+cp R:/examples/browser_selfhost_driver.zbuild browser_selfhost_driver.zbuild
 cp R:/examples/zbrowser_module.Z zbrowser_module.Z
 cp R:/examples/zbrowser_netsurf.Z zbrowser_netsurf.Z
 cp R:/examples/zbrowser_html.Z zbrowser_html.Z
@@ -112,10 +114,8 @@ cp R:/examples/zlang/selfhost_project/include/selfhost_once_leaf.Z ../selfhost_p
 cp R:/examples/zlang/selfhost_project/include/selfhost_once_middle.Z ../selfhost_project/include/selfhost_once_middle.Z
 cp R:/examples/zlang/selfhost_project/include/selfhost_once_root.Z ../selfhost_project/include/selfhost_once_root.Z
 cp R:/examples/zlang/selfhost_project/src/selfhost_demo.Z ../selfhost_project/src/selfhost_demo.Z
-zinstall libc_smoke_module
-zinstall clib_port_smoke_module
-zinstall zbrowser_module
-zinstall zbrowser_netsurf
+zinstall browser_selfhost_driver
+exec browser_selfhost_driver.bin
 cd ../selfhost_project
 ztest kernel
 zinstall kernel
@@ -173,6 +173,8 @@ check_file "mods/zbrowser_html.zo"
 check_file "mods/zbrowser_module.zo"
 check_file "mods/zbrowser_netsurf.buildlog"
 check_file "mods/zbrowser_netsurf.zo"
+check_file "mods/browser_selfhost_driver.bin"
+check_file "mods/browser_selfhost.status"
 check_file "mods/libc_smoke_module.buildlog"
 check_file "mods/libc_smoke_module.zo"
 check_file "mods/clib_port_smoke_module.buildlog"
@@ -220,11 +222,18 @@ check_log_contains() {
   fi
 }
 
+check_log_contains "mods/browser_selfhost.status" 'browser selfhost install ok' "browser selfhost status"
 check_log_contains "selfhost_project/build/kernel.buildlog" '^status ok$' "selfhost build log"
 check_log_contains "selfhost_project/build/kernel.buildlog" '^objects 1$' "selfhost build log"
 check_log_contains "selfhost_project/build/kernel.testlog" '^result 42$' "selfhost test log"
 check_log_contains "selfhost_project/build/kernel.testlog" '^status ok$' "selfhost test log"
 check_log_contains "selfhost_project/build/from_z_renamed.txt" 'created from selfhost_project' "selfhost output file"
+
+if ! grep -q 'browser selfhost: ok' "$serial_log"; then
+  printf 'zbrowser self-host smoke: expected browser selfhost driver success output\n' >&2
+  tail -n 120 "$serial_log" >&2 || true
+  exit 1
+fi
 
 if [ "$(grep -c 'selfhost project 42' "$serial_log" || true)" -lt 2 ]; then
   printf 'zbrowser self-host smoke: expected selfhost project to print twice (ztest + exec)\n' >&2
