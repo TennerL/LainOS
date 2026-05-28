@@ -157,6 +157,7 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("netsurf_browser_key_event", netsurf_browser_key_event),
     KERNEL_EXPORT("netsurf_browser_consume_navigation", netsurf_browser_consume_navigation),
     KERNEL_EXPORT("netsurf_browser_consume_history_navigation", netsurf_browser_consume_history_navigation),
+    KERNEL_EXPORT("netsurf_browser_content_height", netsurf_browser_content_height),
     KERNEL_EXPORT("netsurf_browser_invalidate_cache", netsurf_browser_invalidate_cache),
     KERNEL_EXPORT("netsurf_browser_poll", netsurf_browser_poll),
     KERNEL_EXPORT("netsurf_browser_status", netsurf_browser_status),

@@ -3128,6 +3128,22 @@ int netsurf_core_consume_history_navigation(int32_t *out_direction) {
     return 1;
 }
 
+uint32_t netsurf_core_content_height(void) {
+    netsurf_bridge_document_t *doc;
+
+    doc = netsurf_bridge_cached_document;
+    if (doc == 0 || doc->content == 0) {
+        return 0;
+    }
+    if (doc->content->height > 0) {
+        return (uint32_t)doc->content->height;
+    }
+    if (doc->view.height > 0) {
+        return (uint32_t)doc->view.height;
+    }
+    return 0;
+}
+
 const char *netsurf_core_status(void) {
     return netsurf_bridge_status;
 }

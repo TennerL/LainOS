@@ -715,6 +715,7 @@ int netsurf_core_scroll_event(uint32_t x, uint32_t y, int32_t scroll_x, int32_t 
 int netsurf_core_key_event(uint32_t key);
 int netsurf_core_consume_navigation(uint8_t *out, uint32_t capacity);
 int netsurf_core_consume_history_navigation(int32_t *out_direction);
+uint32_t netsurf_core_content_height(void);
 
 int netsurf_browser_render_html(const uint8_t *url,
                                 const uint8_t *html,
@@ -818,6 +819,10 @@ int netsurf_browser_render_html(const uint8_t *url,
 
 const char *netsurf_browser_status(void) {
     return netsurf_browser_last_status;
+}
+
+uint32_t netsurf_browser_content_height(void) {
+    return netsurf_core_content_height();
 }
 
 int netsurf_browser_poll(void) {

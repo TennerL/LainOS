@@ -4,6 +4,7 @@
 #define ZBROWSER_NS_LINE_CAPACITY 512
 #define ZBROWSER_NS_HISTORY_LIMIT 24
 #define ZBROWSER_NS_HISTORY_BYTES 24576
+#define ZBROWSER_NS_SCROLL_STEP 18
 #define KEY_CHAR 1
 #define KEY_ENTER 2
 #define KEY_BACKSPACE 3
@@ -94,6 +95,7 @@ extern int netsurf_browser_scroll_html_view(struct NetSurfBrowserView *view,
 extern int netsurf_browser_key_event(uint32_t key);
 extern int netsurf_browser_consume_navigation(uint8_t *out, uint32_t capacity);
 extern int netsurf_browser_consume_history_navigation(int32_t *out_direction);
+extern uint32_t netsurf_browser_content_height(void);
 extern void netsurf_browser_invalidate_cache(void);
 extern int netsurf_browser_poll(void);
 extern uint8_t *netsurf_browser_status(void);
@@ -125,6 +127,7 @@ global uint64_t zbrowser_ns_last_render_tick;
 global uint64_t zbrowser_ns_last_poll_tick;
 global uint64_t zbrowser_ns_doc_addr;
 global uint64_t zbrowser_ns_history_addr;
+global uint32_t zbrowser_ns_content_height_px;
 global uint32_t zbrowser_ns_mouse_last_x;
 global uint32_t zbrowser_ns_mouse_last_y;
 global uint32_t zbrowser_ns_mouse_last_buttons;
@@ -265,6 +268,36 @@ void zbrowser_ns_set_status_loaded(void) {
     }
 }
 
+uint32_t zbrowser_ns_max_scroll_units(void) {
+    uint32_t max_scroll_px;
+
+    if (zbrowser_ns_content_height_px <= zbrowser_ns_view.height) {
+        return 0;
+    }
+    max_scroll_px = zbrowser_ns_content_height_px - zbrowser_ns_view.height;
+    return (max_scroll_px + (ZBROWSER_NS_SCROLL_STEP - 1)) / ZBROWSER_NS_SCROLL_STEP;
+}
+
+void zbrowser_ns_sync_scroll_metrics(void) {
+    uint32_t max_scroll;
+
+    if (zbrowser_ns_render_ready == 0) {
+        zbrowser_ns_content_height_px = 0;
+        zbrowser_ns_scroll = 0;
+        zbrowser_ns_view.scroll = 0;
+        return;
+    }
+    zbrowser_ns_content_height_px = netsurf_browser_content_height();
+    if (zbrowser_ns_content_height_px < zbrowser_ns_view.height) {
+        zbrowser_ns_content_height_px = zbrowser_ns_view.height;
+    }
+    max_scroll = zbrowser_ns_max_scroll_units();
+    if (zbrowser_ns_scroll > max_scroll) {
+        zbrowser_ns_scroll = max_scroll;
+    }
+    zbrowser_ns_view.scroll = zbrowser_ns_scroll;
+}
+
 void zbrowser_ns_update_view(void) {
     uint32_t w;
     uint32_t h;
@@ -287,7 +320,30 @@ void zbrowser_ns_update_view(void) {
         zbrowser_ns_view.width = 16;
     }
     zbrowser_ns_view.height = doc_h;
-    zbrowser_ns_view.scroll = zbrowser_ns_scroll;
+    zbrowser_ns_sync_scroll_metrics();
+}
+
+void zbrowser_ns_scroll_up(uint32_t amount) {
+    zbrowser_ns_update_view();
+    if (zbrowser_ns_scroll > amount) {
+        zbrowser_ns_scroll = zbrowser_ns_scroll - amount;
+    } else {
+        zbrowser_ns_scroll = 0;
+    }
+}
+
+void zbrowser_ns_scroll_down(uint32_t amount) {
+    uint32_t max_scroll;
+
+    zbrowser_ns_update_view();
+    max_scroll = zbrowser_ns_max_scroll_units();
+    if (zbrowser_ns_scroll + amount < zbrowser_ns_scroll) {
+        zbrowser_ns_scroll = max_scroll;
+    } else if (zbrowser_ns_scroll + amount > max_scroll) {
+        zbrowser_ns_scroll = max_scroll;
+    } else {
+        zbrowser_ns_scroll = zbrowser_ns_scroll + amount;
+    }
 }
 
 void zbrowser_ns_load_task(uint8_t *arg) {
@@ -486,6 +542,7 @@ void zbrowser_ns_start_load(void) {
     zbrowser_ns_poll_task_id = 0;
     zbrowser_ns_poll_result = 0;
     zbrowser_ns_scroll = 0;
+    zbrowser_ns_content_height_px = 0;
     zbrowser_ns_last_poll_tick = 0;
     zbrowser_ns_reset_page_mouse_state();
     netsurf_browser_invalidate_cache();
@@ -1067,12 +1124,12 @@ export void zmodule_key(uint32_t key_type, uint32_t ch) {
         return;
     }
     if (key_type == KEY_UP && zbrowser_ns_scroll > 0) {
-        zbrowser_ns_scroll = zbrowser_ns_scroll - 1;
+        zbrowser_ns_scroll_up(1);
         zbrowser_ns_scroll_redraw();
         return;
     }
     if (key_type == KEY_DOWN) {
-        zbrowser_ns_scroll = zbrowser_ns_scroll + 1;
+        zbrowser_ns_scroll_down(1);
         zbrowser_ns_scroll_redraw();
         return;
     }
@@ -1116,17 +1173,13 @@ export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t whee
         }
     }
     if (wheel > 0 && zbrowser_ns_scroll > 0) {
-        if (zbrowser_ns_scroll > 2) {
-            zbrowser_ns_scroll = zbrowser_ns_scroll - 3;
-        } else {
-            zbrowser_ns_scroll = 0;
-        }
+        zbrowser_ns_scroll_up(3);
         zbrowser_ns_scroll_redraw();
         zbrowser_ns_store_mouse_sample(x, y, buttons);
         return;
     }
     if (wheel < 0) {
-        zbrowser_ns_scroll = zbrowser_ns_scroll + 3;
+        zbrowser_ns_scroll_down(3);
         zbrowser_ns_scroll_redraw();
         zbrowser_ns_store_mouse_sample(x, y, buttons);
         return;
@@ -1270,6 +1323,7 @@ zbrowser_ns_needs_redraw = 1;
 zbrowser_ns_needs_chrome_redraw = 0;
 zbrowser_ns_editing = 0;
 zbrowser_ns_scroll = 0;
+zbrowser_ns_content_height_px = 0;
 zbrowser_ns_load_in_progress = 0;
 zbrowser_ns_load_task_id = 0;
 zbrowser_ns_prepare_in_progress = 0;
