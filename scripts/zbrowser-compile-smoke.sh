@@ -4,8 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+source scripts/zbuild-host-lib.sh
+
 mkdir -p build/zbrowser-smoke
 mkdir -p build/zbrowser-smoke/all-manifests
+mkdir -p build/zbrowser-smoke/all-installs
 make build/tools/zmod_link_host
 
 scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zbrowser_module
@@ -186,6 +189,36 @@ check_buildlog_line() {
   fi
 }
 
+manifest_is_known_negative() {
+  local manifest="$1"
+
+  case "$manifest" in
+    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_object_count.zbuild|examples/zlang/invalid_install_name.zbuild|examples/zlang/invalid_src_dir.zbuild|examples/zlang/invalid_build_dir.zbuild|examples/zlang/invalid_include_dir.zbuild|examples/zlang/invalid_include_count.zbuild|examples/zlang/invalid_install_dir.zbuild)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+check_installed_manifest() {
+  local manifest="$1"
+  local install_root="$2"
+  local i=
+
+  zbuild_host_prepare_manifest "$manifest" "$install_root/build" "$install_root"
+  zbuild_host_parse_manifest
+
+  if [[ $ZBUILD_OBJECTS_ONLY -ne 0 && $ZBUILD_SOURCE_COUNT -ne 1 ]]; then
+    for i in "${!ZBUILD_OBJECT_NAMES[@]}"; do
+      check_output "$ZBUILD_INSTALL_DIR/${ZBUILD_OBJECT_NAMES[$i]}"
+    done
+    return
+  fi
+
+  check_output "$ZBUILD_INSTALL_DIR/$ZBUILD_INSTALL_NAME"
+}
+
 check_output "build/zbrowser-smoke/zbrowser_css_repro/zbrowser_css_repro.bin"
 check_output "build/zbrowser-smoke/zbcss_async/zbcss_async.bin"
 check_output "build/zbrowser-smoke/jpg_decode_demo/jpg_decode_demo.bin"
@@ -229,11 +262,9 @@ if [[ -e build/zbrowser-smoke/zclean-module/zbrowser_html.zo ||
 fi
 
 while IFS= read -r manifest; do
-  case "$manifest" in
-    examples/zlang/invalid_test_return.zbuild|examples/zlang/invalid_output_name.zbuild|examples/zlang/invalid_object_name.zbuild|examples/zlang/invalid_object_count.zbuild|examples/zlang/invalid_install_name.zbuild|examples/zlang/invalid_src_dir.zbuild|examples/zlang/invalid_build_dir.zbuild|examples/zlang/invalid_include_dir.zbuild|examples/zlang/invalid_include_count.zbuild|examples/zlang/invalid_install_dir.zbuild)
-      continue
-      ;;
-  esac
+  if manifest_is_known_negative "$manifest"; then
+    continue
+  fi
 
   probe_rel="${manifest#examples/}"
   probe_dir="build/zbrowser-smoke/all-manifests/${probe_rel%.zbuild}"
@@ -243,4 +274,20 @@ while IFS= read -r manifest; do
     cat "$probe_dir/probe.log" >&2
     exit 1
   fi
+done < <(find examples -name '*.zbuild' -type f | sort)
+
+while IFS= read -r manifest; do
+  if manifest_is_known_negative "$manifest"; then
+    continue
+  fi
+
+  install_rel="${manifest#examples/}"
+  install_root="build/zbrowser-smoke/all-installs/${install_rel%.zbuild}"
+  mkdir -p "$install_root"
+  if ! scripts/zinstall-host.sh "$manifest" "$install_root" >"$install_root/install.log" 2>&1; then
+    printf 'zbrowser-compile-smoke: broad install probe failed for %s\n' "$manifest" >&2
+    cat "$install_root/install.log" >&2
+    exit 1
+  fi
+  check_installed_manifest "$manifest" "$install_root"
 done < <(find examples -name '*.zbuild' -type f | sort)
