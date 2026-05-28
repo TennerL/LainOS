@@ -6,11 +6,14 @@
 #include "zscript.h"
 
 #define ZCC_HOST_MAX_INCLUDE_DEPTH 16u
+#define ZCC_HOST_MAX_INCLUDE_DIRS 16u
 #define ZCC_HOST_MAX_ONCE_PATHS 128u
 #define ZCC_HOST_MAX_PATH 768u
 #define ZCC_HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
 
 typedef struct {
+    const char *const *include_dirs;
+    uint32_t include_dir_count;
     char once_paths[ZCC_HOST_MAX_ONCE_PATHS][ZCC_HOST_MAX_PATH];
     uint32_t once_count;
 } zcc_host_source_context_t;
@@ -100,14 +103,22 @@ static int dirname_from_path(const char *path, char *out, uint32_t out_capacity)
 static int join_path(const char *dir, const char *name, char *out, uint32_t out_capacity) {
     uint32_t dir_len = (uint32_t)strlen(dir);
     uint32_t name_len = (uint32_t)strlen(name);
+    int needs_slash = dir_len != 0u && dir[dir_len - 1u] != '/';
 
-    if (dir_len + name_len + 1u > out_capacity) {
+    if (dir_len + (uint32_t)needs_slash + name_len + 1u > out_capacity) {
         return -1;
     }
     memcpy(out, dir, dir_len);
+    if (needs_slash) {
+        out[dir_len++] = '/';
+    }
     memcpy(out + dir_len, name, name_len);
     out[dir_len + name_len] = '\0';
     return 0;
+}
+
+static int path_is_absolute(const char *path) {
+    return path != 0 && path[0] == '/';
 }
 
 static const char *skip_line_spaces(const char *p, const char *end) {
@@ -253,6 +264,42 @@ static int read_file_raw(const char *path, char **out_data, uint32_t *out_size) 
     return 0;
 }
 
+static int resolve_include_path(const char *source_dir,
+                                const char *include_name,
+                                const char *const *include_dirs,
+                                uint32_t include_dir_count,
+                                char *resolved_path,
+                                uint32_t resolved_capacity) {
+    if (path_is_absolute(include_name)) {
+        if (strlen(include_name) + 1u > resolved_capacity) {
+            return -1;
+        }
+        memcpy(resolved_path, include_name, strlen(include_name) + 1u);
+        return 0;
+    }
+
+    if (join_path(source_dir, include_name, resolved_path, resolved_capacity) == 0) {
+        FILE *probe = fopen(resolved_path, "rb");
+        if (probe != 0) {
+            fclose(probe);
+            return 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < include_dir_count; ++i) {
+        if (join_path(include_dirs[i], include_name, resolved_path, resolved_capacity) != 0) {
+            continue;
+        }
+        FILE *probe = fopen(resolved_path, "rb");
+        if (probe != 0) {
+            fclose(probe);
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 static int expand_source_file(zcc_host_source_context_t *ctx,
                               const char *path,
                               char *out,
@@ -292,7 +339,12 @@ static int expand_source_file(zcc_host_source_context_t *ctx,
 
         if (include_status > 0) {
             char include_path[ZCC_HOST_MAX_PATH];
-            if (join_path(dir, include_name, include_path, sizeof(include_path)) != 0 ||
+            if (resolve_include_path(dir,
+                                     include_name,
+                                     ctx->include_dirs,
+                                     ctx->include_dir_count,
+                                     include_path,
+                                     sizeof(include_path)) != 0 ||
                 expand_source_file(ctx, include_path, out, out_capacity, out_size, depth + 1u) != 0 ||
                 append_char(out, out_capacity, out_size, '\n') != 0) {
                 free(source);
@@ -327,6 +379,8 @@ int main(int argc, char **argv) {
     FILE *out;
     char *source;
     char *asm_output;
+    const char *include_dirs[ZCC_HOST_MAX_INCLUDE_DIRS];
+    uint32_t include_dir_count = 0;
     uint32_t source_capacity = ZCC_HOST_MAX_SOURCE_SIZE;
     uint32_t source_size = 0;
     uint32_t asm_capacity = 8u * 1024u * 1024u;
@@ -334,12 +388,26 @@ int main(int argc, char **argv) {
     uint32_t error_line = 0;
     char entry_label[64];
     const char *label_prefix = "kz";
+    const char *input_path;
+    const char *output_path;
     zcc_host_source_context_t source_ctx;
+    int arg_index = 1;
 
-    if (argc != 3) {
-        fprintf(stderr, "usage: zcc_host input.Z output.asm\n");
+    while (arg_index < argc && strcmp(argv[arg_index], "--include") == 0) {
+        if (include_dir_count >= ZCC_HOST_MAX_INCLUDE_DIRS || arg_index + 1 >= argc) {
+            fprintf(stderr, "usage: zcc_host [--include dir/] input.Z output.asm\n");
+            return 2;
+        }
+        include_dirs[include_dir_count++] = argv[arg_index + 1];
+        arg_index += 2;
+    }
+
+    if (argc - arg_index != 2) {
+        fprintf(stderr, "usage: zcc_host [--include dir/] input.Z output.asm\n");
         return 2;
     }
+    input_path = argv[arg_index];
+    output_path = argv[arg_index + 1];
 
     source = (char *)malloc(source_capacity + 1u);
     asm_output = (char *)malloc(asm_capacity);
@@ -349,9 +417,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    source_ctx.include_dirs = include_dirs;
+    source_ctx.include_dir_count = include_dir_count;
     source_ctx.once_count = 0;
-    if (expand_source_file(&source_ctx, argv[1], source, source_capacity, &source_size, 0) != 0) {
-        fprintf(stderr, "%s: failed to load expanded .Z source\n", argv[1]);
+    if (expand_source_file(&source_ctx, input_path, source, source_capacity, &source_size, 0) != 0) {
+        fprintf(stderr, "%s: failed to load expanded .Z source\n", input_path);
         free(source);
         free(asm_output);
         return 1;
@@ -368,18 +438,18 @@ int main(int argc, char **argv) {
                                       entry_label,
                                       sizeof(entry_label)) != 0) {
         if (zscript_last_error() == ZSCRIPT_ERROR_OUTPUT_FULL) {
-            fprintf(stderr, "%s:%u: generated asm exceeded host build buffer\n", argv[1], error_line);
+            fprintf(stderr, "%s:%u: generated asm exceeded host build buffer\n", input_path, error_line);
         } else {
-            fprintf(stderr, "%s:%u: unsupported .Z syntax\n", argv[1], error_line);
+            fprintf(stderr, "%s:%u: unsupported .Z syntax\n", input_path, error_line);
         }
         free(source);
         free(asm_output);
         return 1;
     }
 
-    out = fopen(argv[2], "wb");
+    out = fopen(output_path, "wb");
     if (!out) {
-        perror(argv[2]);
+        perror(output_path);
         free(source);
         free(asm_output);
         return 1;

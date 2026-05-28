@@ -631,7 +631,11 @@ zcc-smoke: build/tools/zcc_host | build
 		out="build/zcc-smoke/$$(basename "$$f" .Z).asm"; \
 		printf 'ZCC %s\n' "$$f"; \
 		build/tools/zcc_host "$$f" "$$out"; \
-	done
+	done; \
+	printf 'ZCC %s\n' "examples/zlang/selfhost_project/src/selfhost_demo.Z"; \
+	build/tools/zcc_host --include examples/zlang/selfhost_project/include \
+		examples/zlang/selfhost_project/src/selfhost_demo.Z \
+		build/zcc-smoke/selfhost_demo_include.asm
 
 build/tools/lainfs_seed: tools/lainfs_seed.c | build
 	$(MKDIR_P) build/tools
