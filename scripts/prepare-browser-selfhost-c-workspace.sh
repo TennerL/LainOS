@@ -31,7 +31,7 @@ browser_c is the first staged in-OS C selfhost slice for browser work.
 
 It is intentionally small:
 - libnsutils base64
-- netsurf utils bloom
+- netsurf utils bloom/hashmap/hashtable/talloc/time
 
 The goal is to remove the guest-side source staging blocker before the in-OS
 C compiler lands. The tree preserves upstream-relative paths so future compile
@@ -44,6 +44,10 @@ intended to become the first in-OS browser-C compile queue.
 browser_c_probe/ is a tiny Z project that runs from the same staged workspace
 and validates that the in-OS toolchain can consume that compile queue before a
 guest C compiler exists.
+
+hashtable.c intentionally uses the generic kernel zlib ABI header so the queue
+exercises one concrete browser-C dependency without introducing browser-specific
+kernel logic.
 EOF
 
 cp "$manifest_path" "$filelist_path"
