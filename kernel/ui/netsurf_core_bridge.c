@@ -3698,7 +3698,7 @@ void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, co
     uint8_t *items = base;
     uint8_t tmp[128];
     size_t i;
-    if (base == 0 || compar == 0 || size == 0 || size > sizeof(tmp)) {
+    if (nmemb < 2u || size == 0 || size > sizeof(tmp)) {
         return;
     }
     for (i = 1; i < nmemb; ++i) {

@@ -318,7 +318,7 @@ char *strptime(const char *s, const char *format, struct tm *tm) {
 size_t strftime(char *s, size_t max, const char *format, const struct tm *tm) {
     (void)format;
     (void)tm;
-    if (max != 0u && s != NULL) {
+    if (max != 0u) {
         s[0] = '\0';
     }
     return 0;
