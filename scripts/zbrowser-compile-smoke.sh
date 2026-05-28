@@ -43,11 +43,13 @@ scripts/zinstall-host.sh examples/zlang/install_dir_project/kernel.zbuild build/
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
 printf 'status ok\n' > build/zbrowser-smoke/zclean-linked/zbcss_async.testlog
 scripts/zclean-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
-scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zclean-module
+ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zclean-module
 printf 'status ok\n' > build/zbrowser-smoke/zclean-module/zbrowser_module.testlog
 scripts/zclean-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zclean-module
 scripts/ztest-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zclean-ztest
 scripts/zclean-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zclean-ztest
+ZBUILD_HOST_FORCE_BUILD_ROOT=1 scripts/ztest-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/zclean-wrapper-ztest
+ZBUILD_HOST_FORCE_BUILD_ROOT=1 scripts/zclean-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/zclean-wrapper-ztest
 
 invalid_log="build/zbrowser-smoke/invalid_test_return.log"
 if scripts/zbuild-host.sh examples/zlang/invalid_test_return.zbuild build/zbrowser-smoke/invalid_test_return >"$invalid_log" 2>&1; then
@@ -446,6 +448,14 @@ if [[ -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.bin ||
       -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.testlog ||
       -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.host-run.log ]]; then
   printf 'zbrowser-compile-smoke: zclean-host left ztest artifacts behind\n' >&2
+  exit 1
+fi
+if [[ -e build/zbrowser-smoke/zclean-wrapper-ztest/install_dir.bin ||
+      -e build/zbrowser-smoke/zclean-wrapper-ztest/default_output_demo.zo ||
+      -e build/zbrowser-smoke/zclean-wrapper-ztest/kernel.buildlog ||
+      -e build/zbrowser-smoke/zclean-wrapper-ztest/kernel.testlog ||
+      -e build/zbrowser-smoke/zclean-wrapper-ztest/kernel.host-run.log ]]; then
+  printf 'zbrowser-compile-smoke: zclean-host left forced-wrapper ztest artifacts behind\n' >&2
   exit 1
 fi
 
