@@ -27,6 +27,7 @@ check_seeded_path() {
 check_seeded_path "browser_c/README.txt"
 check_seeded_path "browser_c/NEXT_C.txt"
 check_seeded_path "browser_c/FILES.txt"
+check_seeded_path "browser_c/COMPILE_UNITS.txt"
 
 seeded_count=0
 while IFS= read -r rel_path; do

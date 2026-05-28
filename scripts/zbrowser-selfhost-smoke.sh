@@ -201,6 +201,7 @@ check_file "selfhost_project/build/from_z_renamed.txt"
 check_file "selfhost_project/selfhost_project.bin"
 check_file "browser_c/README.txt"
 check_file "browser_c/NEXT_C.txt"
+check_file "browser_c/COMPILE_UNITS.txt"
 check_file "browser_c/third_party/netsurf/src/libnsutils/src/base64.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/bloom.c"
 

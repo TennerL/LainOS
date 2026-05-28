@@ -5,14 +5,20 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 manifest_path="scripts/browser-selfhost-c-files.txt"
+units_manifest_path="scripts/browser-selfhost-c-units.txt"
 stage_root="${1:-build/browser-selfhost-c-stage}"
 workspace_root="$stage_root/browser_c"
 notes_path="$workspace_root/README.txt"
 commands_path="$workspace_root/NEXT_C.txt"
 filelist_path="$workspace_root/FILES.txt"
+compile_units_path="$workspace_root/COMPILE_UNITS.txt"
 
 if [[ ! -f "$manifest_path" ]]; then
   printf 'prepare-browser-selfhost-c-workspace: missing manifest %s\n' "$manifest_path" >&2
+  exit 1
+fi
+if [[ ! -f "$units_manifest_path" ]]; then
+  printf 'prepare-browser-selfhost-c-workspace: missing units manifest %s\n' "$units_manifest_path" >&2
   exit 1
 fi
 
@@ -29,22 +35,14 @@ It is intentionally small:
 The goal is to remove the guest-side source staging blocker before the in-OS
 C compiler lands. The tree preserves upstream-relative paths so future compile
 commands can reuse the same include roots as the host build.
-EOF
 
-cat >"$commands_path" <<'EOF'
-When an in-OS C compiler exists, start with these compile units:
-1. third_party/netsurf/src/libnsutils/src/base64.c
-   include root: third_party/netsurf/src/libnsutils/include
-2. third_party/netsurf/src/netsurf/utils/bloom.c
-   include roots:
-   - third_party/netsurf/src/netsurf
-   - third_party/netsurf/src/netsurf/include
-
-Both units avoid generated parser tables and keep the first browser-C step
-generic and small.
+COMPILE_UNITS.txt is the machine-readable first-pass browser-C build plan.
+It is validated on the host by scripts/zbrowser-c-host-compile-smoke.sh and is
+intended to become the first in-OS browser-C compile queue.
 EOF
 
 cp "$manifest_path" "$filelist_path"
+cp "$units_manifest_path" "$compile_units_path"
 
 while IFS= read -r rel_path; do
   src_path="$repo_root/$rel_path"
@@ -60,5 +58,34 @@ while IFS= read -r rel_path; do
   mkdir -p "$(dirname "$dst_path")"
   cp "$src_path" "$dst_path"
 done <"$manifest_path"
+
+{
+  cat <<'EOF'
+When the in-OS C compiler lands, mirror these validated host-equivalent
+commands from browser_c/ and write the objects under browser_c/build/:
+EOF
+
+  unit_index=1
+  while IFS='|' read -r object_name rel_source include_roots; do
+    include_flags=
+    [[ -n "$object_name" ]] || continue
+
+    IFS=':' read -r -a include_array <<< "$include_roots"
+    for include_root in "${include_array[@]}"; do
+      [[ -n "$include_root" ]] || continue
+      include_flags="${include_flags} -I${include_root}"
+    done
+
+    printf '%u. cc -c -ffreestanding%s %s -o build/%s\n' \
+      "$unit_index" "$include_flags" "$rel_source" "$object_name"
+    unit_index=$((unit_index + 1))
+  done <"$units_manifest_path"
+
+  cat <<'EOF'
+
+Both units avoid generated parser tables and keep the first browser-C step
+generic and small.
+EOF
+} >"$commands_path"
 
 printf '%s\n' "$workspace_root"

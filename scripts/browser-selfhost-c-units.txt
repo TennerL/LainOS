@@ -1,0 +1,2 @@
+base64.o|third_party/netsurf/src/libnsutils/src/base64.c|third_party/netsurf/src/libnsutils/include
+bloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include
