@@ -1,0 +1,6 @@
+#ifndef LAINOS_FREESTANDING_INTTYPES_H
+#define LAINOS_FREESTANDING_INTTYPES_H
+
+#include <stdint.h>
+
+#endif

@@ -35,11 +35,13 @@ It is intentionally small:
 
 The goal is to remove the guest-side source staging blocker before the in-OS
 C compiler lands. The tree preserves upstream-relative paths so future compile
-commands can reuse the same include roots as the host build.
+commands can reuse the same include roots as the host build without depending
+on host system headers.
 
 COMPILE_UNITS.txt is the machine-readable first-pass browser-C build plan.
-It is validated on the host by scripts/zbrowser-c-host-compile-smoke.sh and is
-intended to become the first in-OS browser-C compile queue.
+It is validated on the host by scripts/zbrowser-c-host-compile-smoke.sh with
+-nostdinc plus repo-staged freestanding headers, and is intended to become the
+first in-OS browser-C compile queue.
 
 browser_c_probe/ is a tiny Z project that runs from the same staged workspace
 and validates that the in-OS toolchain can consume that compile queue before a

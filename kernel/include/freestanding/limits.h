@@ -1,0 +1,9 @@
+#ifndef LAINOS_FREESTANDING_LIMITS_H
+#define LAINOS_FREESTANDING_LIMITS_H
+
+#define CHAR_BIT __CHAR_BIT__
+
+#define INT_MIN (-__INT_MAX__ - 1)
+#define INT_MAX __INT_MAX__
+
+#endif

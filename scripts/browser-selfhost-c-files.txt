@@ -1,3 +1,14 @@
+kernel/include/freestanding/stddef.h
+kernel/include/freestanding/stdint.h
+kernel/include/freestanding/inttypes.h
+kernel/include/freestanding/stdbool.h
+kernel/include/freestanding/stdarg.h
+kernel/include/freestanding/stdlib.h
+kernel/include/freestanding/string.h
+kernel/include/freestanding/stdio.h
+kernel/include/freestanding/errno.h
+kernel/include/freestanding/time.h
+kernel/include/freestanding/limits.h
 third_party/netsurf/src/libnsutils/include/nsutils/assert.h
 third_party/netsurf/src/libnsutils/include/nsutils/base64.h
 third_party/netsurf/src/libnsutils/include/nsutils/errors.h
