@@ -312,6 +312,8 @@ void zbrowser_ns_prepare_task(uint8_t *arg) {
 }
 
 void zbrowser_ns_start_prepare(void) {
+    uint32_t async_supported;
+
     if (zbrowser_ns_has_doc == 0) {
         return;
     }
@@ -324,7 +326,8 @@ void zbrowser_ns_start_prepare(void) {
     zbrowser_ns_prepare_in_progress = 1;
     zbrowser_ns_copy(zbrowser_ns_status, ZBROWSER_NS_STATUS_CAPACITY, "preparing render in background");
 
-    if (kernel_task_async_supported() != 0) {
+    async_supported = (uint32_t)kernel_task_async_supported();
+    if (async_supported != 0) {
         zbrowser_ns_prepare_task_id = kernel_task_submit_async_named(zbrowser_ns_prepare_task,
                                                                      (uint8_t *)0,
                                                                      "zbrowser-netsurf-render");
@@ -334,15 +337,7 @@ void zbrowser_ns_start_prepare(void) {
 
     if (zbrowser_ns_prepare_task_id == 0) {
         zbrowser_ns_prepare_in_progress = 0;
-        if (kernel_task_async_supported() == 0) {
-            zbrowser_ns_copy(zbrowser_ns_status,
-                             ZBROWSER_NS_STATUS_CAPACITY,
-                             "render skipped: async SMP unavailable");
-        } else {
-            zbrowser_ns_copy(zbrowser_ns_status,
-                             ZBROWSER_NS_STATUS_CAPACITY,
-                             "render task start failed");
-        }
+        zbrowser_ns_prepare_task((uint8_t *)0);
         zbrowser_ns_needs_redraw = 1;
         return;
     }
