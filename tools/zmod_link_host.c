@@ -739,33 +739,43 @@ int main(int argc, char **argv) {
     uint32_t linked_size = 0;
     uint32_t error_line = 0;
     int arg_index = 1;
+    int objects_only = 0;
     int status;
 
     while (arg_index < argc && argv[arg_index][0] == '-') {
         if (strcmp(argv[arg_index], "--include") == 0) {
             if (include_dir_count >= HOST_MAX_INCLUDE_DIRS || arg_index + 1 >= argc) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             include_dirs[include_dir_count++] = argv[arg_index + 1];
             arg_index += 2;
             continue;
         }
+        if (strcmp(argv[arg_index], "--objects-only") == 0) {
+            if (objects_only) {
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                return 2;
+            }
+            objects_only = 1;
+            ++arg_index;
+            continue;
+        }
         if (strcmp(argv[arg_index], "--output") == 0) {
             if (output_path != 0 || arg_index + 1 >= argc) {
-                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+                fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
                 return 2;
             }
             output_path = argv[arg_index + 1];
             arg_index += 2;
             continue;
         }
-        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
         return 2;
     }
 
     if (argc - arg_index < 2 || ((argc - arg_index) % 2) != 0) {
-        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
+        fprintf(stderr, "usage: zmod_link_host [--include dir/] [--objects-only] [--output target.bin] source.Z object.zo [source.Z object.zo ...]\n");
         return 2;
     }
 
@@ -802,6 +812,14 @@ int main(int argc, char **argv) {
             return 1;
         }
         objects[i] = objects_storage[i];
+    }
+
+    if (objects_only) {
+        fprintf(stderr, "built %u object(s) without host link validation\n", object_count);
+        for (uint32_t i = 0; i < object_count; ++i) {
+            free(objects_storage[i]);
+        }
+        return 0;
     }
 
     linked = (unsigned char *)malloc(HOST_MAX_LINK_SIZE);

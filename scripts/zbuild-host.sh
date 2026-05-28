@@ -147,7 +147,7 @@ if [[ $link_output -ne 0 ]]; then
   mkdir -p "$(dirname "$effective_output")"
   build/tools/zmod_link_host "${include_args[@]}" --output "$effective_output" "${link_args[@]}"
 else
-  build/tools/zmod_link_host "${include_args[@]}" "${link_args[@]}"
+  build/tools/zmod_link_host "${include_args[@]}" --objects-only "${link_args[@]}"
 fi
 
 if [[ $link_output -ne 0 ]]; then
