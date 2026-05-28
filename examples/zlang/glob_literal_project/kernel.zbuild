@@ -1,0 +1,4 @@
+src ../../..
+build build
+output glob_literal.bin
+examples/zlang/glob_literal_project/literal[demo].Z literal_glob.zo

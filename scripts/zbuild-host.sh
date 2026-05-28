@@ -77,73 +77,75 @@ declare -a include_args=("--include" "$manifest_dir")
 declare -a link_args=()
 
 while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+  fields=()
   line="$(printf '%s\n' "$raw_line" | trim_line)"
   if [[ -z "$line" || "$line" == \#* || "$line" == \;* || "$line" == //* ]]; then
     continue
   fi
 
-  set -- $line
-  directive="${1:-}"
+  read -r -a fields <<<"$line"
+  field_count="${#fields[@]}"
+  directive="${fields[0]:-}"
   case "$directive" in
     src|source)
-      if [[ $# -ne 2 ]]; then
+      if [[ $field_count -ne 2 ]]; then
         printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$manifest_path" >&2
         exit 1
       fi
-      source_dir="$(resolve_path "$manifest_dir" "$2")"
+      source_dir="$(resolve_path "$manifest_dir" "${fields[1]}")"
       ;;
     build)
-      if [[ $# -ne 2 ]]; then
+      if [[ $field_count -ne 2 ]]; then
         printf 'zbuild-host: bad build directive in %s\n' "$manifest_path" >&2
         exit 1
       fi
-      build_dir="$(resolve_path "$manifest_dir" "$2")"
+      build_dir="$(resolve_path "$manifest_dir" "${fields[1]}")"
       mkdir -p "$build_dir"
       ;;
     include)
-      if [[ $# -ne 2 ]]; then
+      if [[ $field_count -ne 2 ]]; then
         printf 'zbuild-host: bad include directive in %s\n' "$manifest_path" >&2
         exit 1
       fi
-      include_dir="$(resolve_path "$manifest_dir" "$2")"
+      include_dir="$(resolve_path "$manifest_dir" "${fields[1]}")"
       include_args+=("--include" "$include_dir")
       ;;
     output)
-      if [[ $# -ne 2 ]]; then
+      if [[ $field_count -ne 2 ]]; then
         fail_bad_directive output
       fi
-      if ! valid_lainfs_name "$2"; then
+      if ! valid_lainfs_name "${fields[1]}"; then
         fail_bad_directive output
       fi
-      linked_output="$2"
+      linked_output="${fields[1]}"
       ;;
     install|install-name)
-      if [[ $# -ne 2 ]]; then
+      if [[ $field_count -ne 2 ]]; then
         fail_bad_directive "$directive"
       fi
-      if [[ "$directive" == "install-name" ]] && ! valid_lainfs_name "$2"; then
+      if [[ "$directive" == "install-name" ]] && ! valid_lainfs_name "${fields[1]}"; then
         fail_bad_directive "$directive"
       fi
       ;;
     test-return)
-      if [[ $# -ne 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+      if [[ $field_count -ne 2 || ! "${fields[1]}" =~ ^[0-9]+$ ]]; then
         fail_bad_directive test-return
       fi
       ;;
     module|objects-only)
-      if [[ $# -ne 1 ]]; then
+      if [[ $field_count -ne 1 ]]; then
         printf 'zbuild-host: bad %s directive in %s\n' "$directive" "$manifest_path" >&2
         exit 1
       fi
       link_output=0
       ;;
     *)
-      if [[ $# -gt 2 ]]; then
+      if [[ $field_count -gt 2 ]]; then
         printf 'zbuild-host: too many fields in %s: %s\n' "$manifest_path" "$line" >&2
         exit 1
       fi
-      source_name="$1"
-      object_name="${2:-${source_name%.Z}.zo}"
+      source_name="${fields[0]}"
+      object_name="${fields[1]:-${source_name%.Z}.zo}"
       if ! valid_lainfs_name "$object_name"; then
         printf 'zbuild-host: bad object name in %s: %s\n' "$manifest_path" "$object_name" >&2
         exit 1

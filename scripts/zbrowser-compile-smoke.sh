@@ -19,6 +19,7 @@ scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrow
 scripts/zbuild-host.sh examples/zlang/manifest_cwd_project/kernel.zbuild build/zbrowser-smoke/manifest_cwd_project
 scripts/zbuild-host.sh examples/zlang/default_output_project/kernel.zbuild build/zbrowser-smoke/default_output_project
 scripts/zbuild-host.sh examples/zlang/output_name_project/kernel.zbuild build/zbrowser-smoke/output_name_project
+scripts/zbuild-host.sh examples/zlang/glob_literal_project/kernel.zbuild build/zbrowser-smoke/glob_literal_project
 
 invalid_log="build/zbrowser-smoke/invalid_test_return.log"
 if scripts/zbuild-host.sh examples/zlang/invalid_test_return.zbuild build/zbrowser-smoke/invalid_test_return >"$invalid_log" 2>&1; then
@@ -110,6 +111,7 @@ check_output "examples/zlang/selfhost_project/build/kernel.bin"
 check_output "examples/zlang/manifest_cwd_project/build/manifest_cwd.bin"
 check_output "examples/zlang/default_output_project/build/kernel.bin"
 check_output "examples/zlang/output_name_project/build/custom_named_output.bin"
+check_output "examples/zlang/glob_literal_project/build/glob_literal.bin"
 check_output "build/zbrowser-smoke/jpg_decoder/jpg_decoder.zo"
 check_buildlog "build/zbrowser-smoke/zbrowser_module/zbrowser_module.buildlog" "status module"
 check_buildlog "build/zbrowser-smoke/zbrowser_netsurf/zbrowser_netsurf.buildlog" "status module"
@@ -122,7 +124,9 @@ check_buildlog "examples/zlang/selfhost_project/build/kernel.buildlog" "status o
 check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
 check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "status ok"
+check_buildlog "examples/zlang/glob_literal_project/build/kernel.buildlog" "status ok"
 check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
+check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
 
 while IFS= read -r manifest; do
   case "$manifest" in
