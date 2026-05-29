@@ -26,6 +26,7 @@ kernel/include/freestanding/sys/types.h
 kernel/include/freestanding/sys/utsname.h
 third_party/netsurf/src/libnsutils/include/nsutils/assert.h
 third_party/netsurf/src/libnsutils/include/nsutils/base64.h
+third_party/netsurf/src/libnsutils/include/nsutils/endian.h
 third_party/netsurf/src/libnsutils/include/nsutils/errors.h
 third_party/netsurf/src/libnsutils/include/nsutils/time.h
 third_party/netsurf/src/libnsutils/include/nsutils/unistd.h
@@ -52,6 +53,8 @@ third_party/netsurf/src/libnsutils/src/base64.c
 third_party/netsurf/src/libnsutils/src/time.c
 third_party/netsurf/src/libnsutils/src/unistd.c
 kernel/include/zlib.h
+third_party/netsurf/src/netsurf/desktop/bitmap.h
+third_party/netsurf/src/netsurf/desktop/bitmap.c
 third_party/netsurf/src/netsurf/desktop/system_colour.h
 third_party/netsurf/src/netsurf/desktop/gui_internal.h
 third_party/netsurf/src/netsurf/desktop/gui_table.h
@@ -71,6 +74,7 @@ third_party/netsurf/src/netsurf/content/hlcache.h
 third_party/netsurf/src/netsurf/content/llcache.h
 third_party/netsurf/src/netsurf/content/textsearch.h
 third_party/netsurf/src/netsurf/include/netsurf/browser_window.h
+third_party/netsurf/src/netsurf/include/netsurf/bitmap.h
 third_party/netsurf/src/netsurf/include/netsurf/console.h
 third_party/netsurf/src/netsurf/include/netsurf/content.h
 third_party/netsurf/src/netsurf/include/netsurf/content_type.h

@@ -34,7 +34,7 @@ It is intentionally small:
 - libdom public headers plus hubbub binding install headers and the
   matching libhubbub error header needed by staged browser-side DOM helpers
 - libcss public include surface needed by staged browser-side colour headers
-- netsurf desktop plot_style/search/searchweb/system_colour plus the generic
+- netsurf desktop bitmap/plot_style/search/searchweb/system_colour plus the generic
   browser/content/css-facing headers those sources consume
 - netsurf utils bloom/corestrings/libdom/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsoption/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
 
