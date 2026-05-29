@@ -1,5 +1,5 @@
 ZBUILD_HOST_MAX_INCLUDE_DIRS=4
-ZBUILD_HOST_MAX_OBJECTS=32
+ZBUILD_HOST_MAX_OBJECTS=256
 
 zbuild_host_fail_bad_directive() {
   local directive="$1"

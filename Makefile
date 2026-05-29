@@ -63,7 +63,6 @@ PROJECT_CFLAGS := -Iboot/shared -Ibuild
 KERNEL_INC := -Ikernel/include
 BEARSSL_INC := -Ithird_party/bearssl/inc -Ithird_party/bearssl/src
 STB_INC := -Ithird_party/stb
-EXPAT_INC := -Ibuild/third_party/expat -Ithird_party/expat/expat/lib
 NETSURF_INC := \
 	-Ibuild/third_party/netsurf/libdom/include \
 	-Ithird_party/netsurf/src/libsvgtiny/include \
@@ -86,7 +85,7 @@ NETSURF_LIBDOM_CFLAGS = $(NETSURF_COMMON_CFLAGS) -D_BSD_SOURCE -D_DEFAULT_SOURCE
 NETSURF_LIBSVGTINY_CFLAGS = $(KERNEL_CFLAGS) $(NETSURF_STACK_CFLAGS) -DNDEBUG -DWITHOUT_ICONV_FILTER -Wno-unused-parameter -Wno-unused-function -D_BSD_SOURCE -D_DEFAULT_SOURCE -D_GNU_SOURCE -Ibuild/third_party/netsurf/libsvgtiny/src -Ithird_party/netsurf/src/libsvgtiny/src
 NASMFLAGS := -Iboot/shared/ -Ikernel/include/
 CFLAGS := $(PROJECT_CFLAGS) -I$(EFI_INC) -I$(EFI_INC)/$(EFI_ARCH) -fpic -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar -mno-red-zone -Wall -Wextra -DEFI_FUNCTION_WRAPPER -DBOOT_RES_WIDTH=$(BOOT_RES_WIDTH) -DBOOT_RES_HEIGHT=$(BOOT_RES_HEIGHT)
-KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) $(STB_INC) $(EXPAT_INC) $(NETSURF_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
+KERNEL_CFLAGS := $(PROJECT_CFLAGS) $(KERNEL_INC) $(BEARSSL_INC) $(STB_INC) -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_RDRAND=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0 -ffreestanding -fno-stack-protector -fno-stack-check -mno-red-zone -Wall -Wextra -std=c11
 HOST_CFLAGS := -Iboot/shared $(KERNEL_INC) -Ikernel -std=c11 -Wall -Wextra -Wno-unused-function
 KERNEL_CFLAGS_TAG := $(shell printf '%s' '$(CC) $(KERNEL_CFLAGS)' | $(SHA1SUM) | cut -c1-12)
 NETSURF_PARSERUTILS_CFLAGS_TAG := $(shell printf '%s' '$(NETSURF_PARSERUTILS_CFLAGS)' | $(SHA1SUM) | cut -c1-12)
@@ -117,7 +116,6 @@ KERNEL_C_SOURCES := \
 	kernel/core/dma.c \
 	kernel/core/kmem.c \
 	kernel/core/js_runtime.c \
-	kernel/core/webcompat.c \
 	kernel/core/registry.c \
 	kernel/core/libc.c \
 	kernel/core/power.c \
@@ -138,12 +136,6 @@ KERNEL_C_SOURCES := \
 	kernel/ui/shell.c \
 	kernel/ui/editor.c \
 	kernel/ui/browser.c \
-	kernel/ui/weblayout.c \
-	kernel/ui/netsurf_port.c \
-	kernel/ui/netsurf_frontend.c \
-	kernel/ui/netsurf_core_bridge.c \
-	kernel/ui/netsurf_js_duktape.c \
-	kernel/ui/netsurf_browser.c \
 	kernel/ui/desktop.c \
 	kernel/z/assembler.c \
 	kernel/z/zscript.c \
@@ -387,7 +379,7 @@ NETSURF_NSUTILS_C_OBJECTS := $(patsubst third_party/netsurf/src/libnsutils/src/%
 NETSURF_CORE_PROBE_C_OBJECTS := $(patsubst third_party/netsurf/src/netsurf/%.c,build/third_party/netsurf/netsurf-core-probe/%.o,$(NETSURF_CORE_PROBE_C_SOURCES))
 NETSURF_CORE_C_OBJECTS := $(patsubst third_party/netsurf/src/netsurf/%.c,build/third_party/netsurf/netsurf-core/%.o,$(NETSURF_CORE_KERNEL_C_SOURCES))
 KERNEL_ASM_OBJECTS := $(patsubst kernel/%.asm,build/kernel/%.o,$(KERNEL_ASM_SOURCES))
-KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) $(KERNEL_Z_OBJECTS) $(BEARSSL_C_OBJECTS) $(EXPAT_C_OBJECTS) $(NETSURF_C_OBJECTS) $(NETSURF_LIBSVGTINY_C_OBJECTS) $(NETSURF_NSUTILS_C_OBJECTS) $(NETSURF_CORE_C_OBJECTS)
+KERNEL_OBJECTS := $(KERNEL_ASM_OBJECTS) $(KERNEL_C_OBJECTS) $(KERNEL_Z_OBJECTS) $(BEARSSL_C_OBJECTS)
 
 all: build/$(BOOTLOADER) build/$(KERNEL_BIN) build/$(KERNEL_ELF) image build/$(ESP_IMG) build/$(BOOTDISK_IMG) build/$(BOOTDISK_GPT_IMG) build/$(DATA_IMG) build/$(ISO_IMG)
 
@@ -486,16 +478,7 @@ pxe: refresh-ramdisk
 
 NETSURF_FRONTEND_CFLAGS := -Ithird_party/netsurf/src/netsurf -Ithird_party/netsurf/src/netsurf/include -Ithird_party/netsurf/src/netsurf/content/handlers -Ithird_party/netsurf/src/libnsutils/include -DNDEBUG -DWITHOUT_ICONV_FILTER -Wno-unused-parameter -Wno-unused-function -D_BSD_SOURCE -D_DEFAULT_SOURCE -D_GNU_SOURCE -D_ALIGNED=
 
-build/kernel/ui/weblayout.o build/kernel/ui/netsurf_port.o: KERNEL_CFLAGS += $(KERNEL_NO_SSE_CFLAGS)
 build/kernel/core/libc.o: KERNEL_CFLAGS += $(KERNEL_STACK_CFLAGS)
-build/kernel/ui/netsurf_frontend.o: KERNEL_CFLAGS += $(NETSURF_STACK_CFLAGS) $(NETSURF_FRONTEND_CFLAGS)
-build/kernel/ui/netsurf_frontend.o: $(NETSURF_CORE_CFLAGS_STAMP) $(KERNEL_FONT_TTF_H)
-build/kernel/ui/netsurf_core_bridge.o: KERNEL_CFLAGS += $(NETSURF_STACK_CFLAGS) $(NETSURF_FRONTEND_CFLAGS)
-build/kernel/ui/netsurf_core_bridge.o: $(NETSURF_CORE_CFLAGS_STAMP) $(NETSURF_RESOURCE_CSS_H)
-build/kernel/ui/netsurf_js_duktape.o: KERNEL_CFLAGS += $(NETSURF_STACK_CFLAGS) $(NETSURF_FRONTEND_CFLAGS) -Ithird_party/netsurf/src/netsurf/content/handlers/javascript/duktape
-build/kernel/ui/netsurf_js_duktape.o: $(NETSURF_CORE_CFLAGS_STAMP)
-build/kernel/ui/netsurf_browser.o: KERNEL_CFLAGS += $(NETSURF_STACK_CFLAGS) $(NETSURF_FRONTEND_CFLAGS)
-build/kernel/ui/netsurf_browser.o: $(NETSURF_CORE_CFLAGS_STAMP)
 
 build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED_H) $(KERNEL_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
@@ -622,6 +605,10 @@ build/tools/zcc_host: tools/zcc_host.c kernel/z/zscript.c kernel/include/zscript
 build/tools/zmod_link_host: tools/zmod_link_host.c kernel/z/zscript.c kernel/z/assembler.c kernel/z/zobject.c kernel/include/zscript.h kernel/include/assembler.h kernel/include/zobject.h | build
 	$(MKDIR_P) build/tools
 	$(HOST_CC) $(HOST_CFLAGS) tools/zmod_link_host.c kernel/z/zscript.c kernel/z/assembler.c kernel/z/zobject.c -o $@
+
+build/tools/zelf_to_zobject: tools/zelf_to_zobject.c | build
+	$(MKDIR_P) build/tools
+	$(HOST_CC) $(HOST_CFLAGS) tools/zelf_to_zobject.c -o $@
 
 zcc-smoke: build/tools/zcc_host | build
 	$(MKDIR_P) build/zcc-smoke

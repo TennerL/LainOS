@@ -4,13 +4,8 @@
 #include "kernel.h"
 #include "kmem.h"
 #include "libc.h"
-#include "netsurf_browser.h"
-#include "netsurf_frontend.h"
-#include "netsurf_port.h"
 #include "registry.h"
 #include "shell.h"
-#include "webcompat.h"
-#include "weblayout.h"
 
 static int kernel_export_streq(const char *a, const char *b) {
     while (*a && *b && *a == *b) {
@@ -125,42 +120,6 @@ static const kernel_export_t kernel_exports[] = {
     KERNEL_EXPORT("image_decode_scaled_to_packed", image_decode_scaled_to_packed),
     KERNEL_EXPORT("image_decode_to_screen_tiled", image_decode_to_screen_tiled),
     KERNEL_EXPORT("image_supported_formats", image_supported_formats),
-    KERNEL_EXPORT("web_style_prepare_document", web_style_prepare_document),
-    KERNEL_EXPORT("web_style_for_tag", web_style_for_tag),
-    KERNEL_EXPORT("web_style_for_cached_rules", web_style_for_cached_rules),
-    KERNEL_EXPORT("webcompat_lwc_smoke", webcompat_lwc_smoke),
-    KERNEL_EXPORT("webcompat_lwc_last_status", webcompat_lwc_last_status),
-    KERNEL_EXPORT("webcompat_pu_smoke", webcompat_pu_smoke),
-    KERNEL_EXPORT("webcompat_pu_status", webcompat_pu_status),
-    KERNEL_EXPORT("webcompat_css_smoke", webcompat_css_smoke),
-    KERNEL_EXPORT("webcompat_css_status", webcompat_css_status),
-    KERNEL_EXPORT("netsurf_port_dom_smoke", netsurf_port_dom_smoke),
-    KERNEL_EXPORT("netsurf_port_dom_status", netsurf_port_dom_status),
-    KERNEL_EXPORT("netsurf_port_parse_html_smoke", netsurf_port_parse_html_smoke),
-    KERNEL_EXPORT("netsurf_port_render_smoke", netsurf_port_render_smoke),
-    KERNEL_EXPORT("netsurf_port_rewrite_html", netsurf_port_rewrite_html),
-    KERNEL_EXPORT("netsurf_port_rewrite_render_html", netsurf_port_rewrite_render_html),
-    KERNEL_EXPORT("netsurf_port_style_hint_for_tag", netsurf_port_style_hint_for_tag),
-    KERNEL_EXPORT("netsurf_port_status", netsurf_port_status),
-    KERNEL_EXPORT("netsurf_kernel_layout_table", netsurf_kernel_layout_table),
-    KERNEL_EXPORT("netsurf_kernel_plotter_table", netsurf_kernel_plotter_table),
-    KERNEL_EXPORT("netsurf_kernel_redraw_context", netsurf_kernel_redraw_context),
-    KERNEL_EXPORT("netsurf_kernel_plot_stats_reset", netsurf_kernel_plot_stats_reset),
-    KERNEL_EXPORT("netsurf_kernel_plot_stats_snapshot", netsurf_kernel_plot_stats_snapshot),
-    KERNEL_EXPORT("netsurf_kernel_frontend_smoke", netsurf_kernel_frontend_smoke),
-    KERNEL_EXPORT("netsurf_kernel_frontend_status", netsurf_kernel_frontend_status),
-    KERNEL_EXPORT("netsurf_browser_render_html", netsurf_browser_render_html),
-    KERNEL_EXPORT("netsurf_browser_render_html_view", netsurf_browser_render_html_view),
-    KERNEL_EXPORT("netsurf_browser_prepare_html_view", netsurf_browser_prepare_html_view),
-    KERNEL_EXPORT("netsurf_browser_mouse_html_view", netsurf_browser_mouse_html_view),
-    KERNEL_EXPORT("netsurf_browser_scroll_html_view", netsurf_browser_scroll_html_view),
-    KERNEL_EXPORT("netsurf_browser_key_event", netsurf_browser_key_event),
-    KERNEL_EXPORT("netsurf_browser_consume_navigation", netsurf_browser_consume_navigation),
-    KERNEL_EXPORT("netsurf_browser_consume_history_navigation", netsurf_browser_consume_history_navigation),
-    KERNEL_EXPORT("netsurf_browser_content_height", netsurf_browser_content_height),
-    KERNEL_EXPORT("netsurf_browser_invalidate_cache", netsurf_browser_invalidate_cache),
-    KERNEL_EXPORT("netsurf_browser_poll", netsurf_browser_poll),
-    KERNEL_EXPORT("netsurf_browser_status", netsurf_browser_status),
     KERNEL_EXPORT("jpg_probe", jpg_probe),
     KERNEL_EXPORT("jpg_decode_rgb24", jpg_decode_rgb24),
     KERNEL_EXPORT("jpg_decode_to_screen", jpg_decode_to_screen),
@@ -290,18 +249,5 @@ int kernel_export_value(const char *name, uint64_t *out) {
         *out = (uint64_t)(uintptr_t)image_decode_to_screen_tiled;
         return 0;
     }
-    if (kernel_export_streq(name, "web_style_for_tag")) {
-        *out = (uint64_t)(uintptr_t)web_style_for_tag;
-        return 0;
-    }
-    if (kernel_export_streq(name, "web_style_prepare_document")) {
-        *out = (uint64_t)(uintptr_t)web_style_prepare_document;
-        return 0;
-    }
-    if (kernel_export_streq(name, "web_style_for_cached_rules")) {
-        *out = (uint64_t)(uintptr_t)web_style_for_cached_rules;
-        return 0;
-    }
-
     return -1;
 }

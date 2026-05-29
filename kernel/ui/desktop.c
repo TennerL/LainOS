@@ -1973,10 +1973,6 @@ static int desktop_open_module_app_by_name(const char *name, int load_from_mods)
             text_copy_limited(module_path,
                               sizeof(module_path),
                               "/mods/zbrowser_html.zo /mods/zbrowser_module.zo");
-        } else if (text_equals(name, "zbrowser_netsurf.zo")) {
-            text_copy_limited(module_path,
-                              sizeof(module_path),
-                              "/mods/zbrowser_netsurf.zo");
         } else {
             desktop_mods_path_for_name(name, module_path, sizeof(module_path));
         }

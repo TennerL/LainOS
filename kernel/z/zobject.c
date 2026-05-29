@@ -22,7 +22,7 @@
 #define ZOBJECT_LINK_ASM_SIZE (4u * 1024u * 1024u)
 #define ZOBJECT_MAX_SYMBOLS 512u
 #define ZOBJECT_MAX_RELOCATIONS 16384u
-#define ZOBJECT_MAX_OBJECTS 32u
+#define ZOBJECT_MAX_OBJECTS 256u
 #define ZOBJECT_MAX_SECTIONS 3u
 
 #define ZOBJECT_SYMBOL_EXPORT 1u
@@ -1280,21 +1280,37 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                     uint32_t mapped_target = 0;
                     int64_t new_disp;
 
-                    if (original_target < 0 ||
-                        zo_map_section_offset(object_sections[i],
-                                              section_offsets[i],
-                                              infos[i].section_count,
-                                              (uint64_t)original_target,
-                                              &mapped_target) != 0) {
-                        return -1;
+                    if (name != 0 && name[0] != '\0') {
+                        if (zo_resolve_link_symbol(local_exports,
+                                                   local_export_count,
+                                                   external_symbols,
+                                                   external_symbol_count,
+                                                   name,
+                                                   &value) != 0) {
+                            return -1;
+                        }
+                        new_disp = (int64_t)value + (int64_t)old_disp -
+                                   (int64_t)(base_address + patch_offset);
+                    } else {
+                        if (original_target < 0 ||
+                            zo_map_section_offset(object_sections[i],
+                                                  section_offsets[i],
+                                                  infos[i].section_count,
+                                                  (uint64_t)original_target,
+                                                  &mapped_target) != 0) {
+                            return -1;
+                        }
+                        new_disp = (int64_t)mapped_target - (int64_t)(patch_offset + 4u);
                     }
-
-                    new_disp = (int64_t)mapped_target - (int64_t)(patch_offset + 4u);
                     if (new_disp < -2147483648ll || new_disp > 2147483647ll) {
                         return -1;
                     }
                     zo_write_u32(out + patch_offset, (uint32_t)new_disp);
                 } else {
+                    int64_t addend = 0;
+                    if (name != 0 && name[0] != '\0') {
+                        addend = (int64_t)zo_read_u64(out + patch_offset);
+                    }
                     if (zo_resolve_link_symbol(local_exports,
                                                local_export_count,
                                                external_symbols,
@@ -1303,7 +1319,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                                                &value) != 0) {
                         return -1;
                     }
-                    zo_write_u64(out + patch_offset, value);
+                    zo_write_u64(out + patch_offset, (uint64_t)((int64_t)value + addend));
                 }
             }
         }

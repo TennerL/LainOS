@@ -1,0 +1,27 @@
+extern int zbrowser_engine_init_c(uint8_t *host);
+extern uint8_t *zbrowser_engine_status_c(void);
+extern int zbrowser_engine_prepare_c(const uint8_t *url, const uint8_t *html, uint32_t size);
+extern int zbrowser_engine_draw_c(const uint8_t *html, uint32_t size, uint32_t scroll_line, uint32_t viewport_width, uint32_t viewport_height);
+
+global uint8_t zbrowser_c_engine_link_url[16];
+global uint8_t zbrowser_c_engine_link_html[16];
+global uint8_t *zbrowser_c_engine_link_status_ptr;
+global int32_t zbrowser_c_engine_link_status_code;
+
+export int zbrowser_c_engine_link_smoke(void) {
+    zbrowser_c_engine_link_url[0] = 97;
+    zbrowser_c_engine_link_url[1] = 0;
+    zbrowser_c_engine_link_html[0] = 60;
+    zbrowser_c_engine_link_html[1] = 0;
+    zbrowser_c_engine_link_status_code = zbrowser_engine_init_c(zbrowser_c_engine_link_html);
+    zbrowser_c_engine_link_status_ptr = zbrowser_engine_status_c();
+    zbrowser_c_engine_link_status_code = zbrowser_engine_prepare_c(zbrowser_c_engine_link_url,
+                                                                   zbrowser_c_engine_link_html,
+                                                                   13);
+    zbrowser_c_engine_link_status_code = zbrowser_engine_draw_c(zbrowser_c_engine_link_html,
+                                                               13,
+                                                               0,
+                                                               640,
+                                                               480);
+    return zbrowser_c_engine_link_status_code;
+}

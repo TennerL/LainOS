@@ -23,7 +23,6 @@
 #include "zobject.h"
 #include "zscript.h"
 #include "kernel_exports.h"
-#include "weblayout.h"
 
 #define HOST_RUN_EXEC_API_MAGIC 0x4C41494E45584543ull
 #define HOST_MAX_INCLUDE_DEPTH 16u
@@ -31,8 +30,8 @@
 #define HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
 #define HOST_MAX_ASM_SIZE (8u * 1024u * 1024u)
 #define HOST_MAX_OBJECT_SIZE (4u * 1024u * 1024u)
-#define HOST_MAX_LINK_SIZE (4u * 1024u * 1024u)
-#define HOST_MAX_OBJECTS 32u
+#define HOST_MAX_LINK_SIZE (16u * 1024u * 1024u)
+#define HOST_MAX_OBJECTS 256u
 #define HOST_MAX_ONCE_PATHS 128u
 #define HOST_MAX_PATH 768u
 #define HOST_RUNTIME_ENTRY_FILE 1
@@ -64,7 +63,6 @@ static char host_runtime_manifest_dir[HOST_MAX_PATH];
 static unsigned char *host_runtime_file_buffer = 0;
 static uint32_t host_runtime_file_buffer_size = 0;
 static uint32_t host_runtime_task_next_id = 1u;
-static uint32_t host_runtime_dom_status = 0u;
 
 #define HOST_RUNTIME_TASK_SLOTS 16u
 typedef struct {
@@ -263,42 +261,6 @@ static const char *const host_kernel_exports[] = {
     "jpg_entropy_error_detail",
     "set_margin",
     "statusbar_enable",
-    "web_style_prepare_document",
-    "web_style_for_tag",
-    "web_style_for_cached_rules",
-    "webcompat_lwc_smoke",
-    "webcompat_lwc_last_status",
-    "webcompat_pu_smoke",
-    "webcompat_pu_status",
-    "webcompat_css_smoke",
-    "webcompat_css_status",
-    "netsurf_port_dom_smoke",
-    "netsurf_port_dom_status",
-    "netsurf_port_parse_html_smoke",
-    "netsurf_port_render_smoke",
-    "netsurf_port_rewrite_html",
-    "netsurf_port_rewrite_render_html",
-    "netsurf_port_style_hint_for_tag",
-    "netsurf_port_status",
-    "netsurf_kernel_layout_table",
-    "netsurf_kernel_plotter_table",
-    "netsurf_kernel_redraw_context",
-    "netsurf_kernel_plot_stats_reset",
-    "netsurf_kernel_plot_stats_snapshot",
-    "netsurf_kernel_frontend_smoke",
-    "netsurf_kernel_frontend_status",
-    "netsurf_browser_render_html",
-    "netsurf_browser_render_html_view",
-    "netsurf_browser_prepare_html_view",
-    "netsurf_browser_mouse_html_view",
-    "netsurf_browser_scroll_html_view",
-    "netsurf_browser_key_event",
-    "netsurf_browser_consume_navigation",
-    "netsurf_browser_consume_history_navigation",
-    "netsurf_browser_content_height",
-    "netsurf_browser_invalidate_cache",
-    "netsurf_browser_poll",
-    "netsurf_browser_status",
 };
 
 static int host_streq(const char *a, const char *b) {
@@ -1113,71 +1075,6 @@ static void host_runtime_kernel_task_wait(uint32_t id) {
     (void)id;
 }
 
-static int host_runtime_copy_rewritten_html(const uint8_t *html,
-                                            uint32_t len,
-                                            uint8_t *out,
-                                            uint32_t out_capacity) {
-    if (!html || !out || out_capacity == 0u || len >= out_capacity) {
-        host_runtime_dom_status = 1u;
-        return -1;
-    }
-
-    if (len != 0u) {
-        memmove(out, html, len);
-    }
-    out[len] = '\0';
-    host_runtime_dom_status = 0u;
-    return (int)len;
-}
-
-static int host_runtime_web_style_prepare_document(const uint8_t *html,
-                                                   uint32_t viewport_width,
-                                                   uint32_t viewport_height) {
-    (void)viewport_width;
-    (void)viewport_height;
-    return html ? 0 : -1;
-}
-
-static int host_runtime_web_style_for_tag(const uint8_t *html,
-                                          uint32_t tag_pos,
-                                          uint32_t viewport_width,
-                                          uint32_t viewport_height,
-                                          web_style_t *out_style) {
-    (void)viewport_width;
-    (void)viewport_height;
-
-    if (!html || !out_style) {
-        return -1;
-    }
-    if (html[tag_pos] == '\0') {
-        return -1;
-    }
-
-    memset(out_style, 0, sizeof(*out_style));
-    out_style->display = 1u;
-    out_style->font_size = 16u;
-    out_style->line_height = 16u;
-    return 0;
-}
-
-static uint32_t host_runtime_netsurf_port_dom_status(void) {
-    return host_runtime_dom_status;
-}
-
-static int host_runtime_netsurf_port_rewrite_html(const uint8_t *html,
-                                                  uint32_t len,
-                                                  uint8_t *out,
-                                                  uint32_t out_capacity) {
-    return host_runtime_copy_rewritten_html(html, len, out, out_capacity);
-}
-
-static int host_runtime_netsurf_port_rewrite_render_html(const uint8_t *html,
-                                                         uint32_t len,
-                                                         uint8_t *out,
-                                                         uint32_t out_capacity) {
-    return host_runtime_copy_rewritten_html(html, len, out, out_capacity);
-}
-
 static int host_runtime_export_value(const char *name, uint64_t *out) {
     if (host_streq(name, "puts")) {
         *out = (uint64_t)(uintptr_t)host_runtime_puts;
@@ -1289,26 +1186,6 @@ static int host_runtime_export_value(const char *name, uint64_t *out) {
     }
     if (host_streq(name, "set_margin")) {
         *out = (uint64_t)(uintptr_t)host_runtime_set_margin;
-        return 0;
-    }
-    if (host_streq(name, "web_style_prepare_document")) {
-        *out = (uint64_t)(uintptr_t)host_runtime_web_style_prepare_document;
-        return 0;
-    }
-    if (host_streq(name, "web_style_for_tag")) {
-        *out = (uint64_t)(uintptr_t)host_runtime_web_style_for_tag;
-        return 0;
-    }
-    if (host_streq(name, "netsurf_port_dom_status")) {
-        *out = (uint64_t)(uintptr_t)host_runtime_netsurf_port_dom_status;
-        return 0;
-    }
-    if (host_streq(name, "netsurf_port_rewrite_html")) {
-        *out = (uint64_t)(uintptr_t)host_runtime_netsurf_port_rewrite_html;
-        return 0;
-    }
-    if (host_streq(name, "netsurf_port_rewrite_render_html")) {
-        *out = (uint64_t)(uintptr_t)host_runtime_netsurf_port_rewrite_render_html;
         return 0;
     }
     if (host_streq(name, "mouse_enabled")) {
@@ -1811,6 +1688,14 @@ static void make_zobject_prefix(const char *name, char *out, uint32_t out_capaci
     out[5] = '\0';
 }
 
+static int path_has_suffix(const char *path, const char *suffix) {
+    size_t path_len = strlen(path);
+    size_t suffix_len = strlen(suffix);
+
+    return path_len >= suffix_len &&
+           strcmp(path + path_len - suffix_len, suffix) == 0;
+}
+
 static int compile_object(const char *source_path,
                           const char *const *include_dirs,
                           uint32_t include_dir_count,
@@ -1827,6 +1712,24 @@ static int compile_object(const char *source_path,
     char label_prefix[8];
     host_source_context_t source_ctx;
     int status = -1;
+
+    if (path_has_suffix(source_path, ".zo")) {
+        char *raw_object = 0;
+        uint32_t raw_size = 0;
+
+        if (read_file_raw(source_path, &raw_object, &raw_size) != 0 ||
+            raw_size > object_capacity) {
+            fprintf(stderr, "%s: failed to load prebuilt object\n", source_path);
+            free(raw_object);
+            goto out;
+        }
+        memcpy(object, raw_object, raw_size);
+        *object_size = raw_size;
+        fprintf(stderr, "%s -> %s bytes=%u prebuilt\n", source_path, object_name, *object_size);
+        free(raw_object);
+        status = 0;
+        goto out;
+    }
 
     if (!source || !asm_output) {
         goto out;

@@ -19,6 +19,7 @@ struct tm {
 
 struct tm *gmtime(const time_t *timep);
 struct tm *localtime(const time_t *timep);
+time_t time(time_t *timer);
 size_t strftime(char *buffer, size_t size, const char *format, const struct tm *timeptr);
 char *strptime(const char *buffer, const char *format, struct tm *timeptr);
 time_t mktime(struct tm *timeptr);
