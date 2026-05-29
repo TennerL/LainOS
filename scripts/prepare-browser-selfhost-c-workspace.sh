@@ -31,7 +31,7 @@ browser_c is the first staged in-OS C selfhost slice for browser work.
 
 It is intentionally small:
 - libnsutils base64/time/unistd
-- netsurf utils bloom/hashmap/hashtable/punycode/file/filepath/talloc/time/useragent/utils
+- netsurf utils bloom/hashmap/hashtable/punycode/file/filepath/messages/talloc/time/useragent/utils
 
 The goal is to remove the guest-side source staging blocker before the in-OS
 C compiler lands. The tree preserves upstream-relative paths so future compile

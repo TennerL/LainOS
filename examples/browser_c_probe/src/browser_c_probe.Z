@@ -2,7 +2,7 @@
 
 uint8_t compile_units_path[32] = "../browser_c/COMPILE_UNITS.txt";
 uint8_t status_path[24] = "browser_c_probe.status";
-uint8_t expected_units[3584] = "base64.o|third_party/netsurf/src/libnsutils/src/base64.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_time.o|third_party/netsurf/src/libnsutils/src/time.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_unistd.o|third_party/netsurf/src/libnsutils/src/unistd.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nbloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashmap.o|third_party/netsurf/src/netsurf/utils/hashmap.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsurf/src/netsurf:kernel/include:kernel/include/freestanding\npunycode.o|third_party/netsurf/src/netsurf/utils/punycode.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nfile.o|third_party/netsurf/src/netsurf/utils/file.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nfilepath.o|third_party/netsurf/src/netsurf/utils/filepath.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\ntalloc.o|third_party/netsurf/src/netsurf/utils/talloc.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\ntime.o|third_party/netsurf/src/netsurf/utils/time.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nuseragent.o|third_party/netsurf/src/netsurf/utils/useragent.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nutils.o|third_party/netsurf/src/netsurf/utils/utils.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\n";
+uint8_t expected_units[4096] = "base64.o|third_party/netsurf/src/libnsutils/src/base64.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_time.o|third_party/netsurf/src/libnsutils/src/time.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_unistd.o|third_party/netsurf/src/libnsutils/src/unistd.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nbloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashmap.o|third_party/netsurf/src/netsurf/utils/hashmap.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsurf/src/netsurf:kernel/include:kernel/include/freestanding\npunycode.o|third_party/netsurf/src/netsurf/utils/punycode.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nfile.o|third_party/netsurf/src/netsurf/utils/file.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nfilepath.o|third_party/netsurf/src/netsurf/utils/filepath.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nmessages.o|third_party/netsurf/src/netsurf/utils/messages.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include:kernel/include/freestanding\ntalloc.o|third_party/netsurf/src/netsurf/utils/talloc.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\ntime.o|third_party/netsurf/src/netsurf/utils/time.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nuseragent.o|third_party/netsurf/src/netsurf/utils/useragent.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nutils.o|third_party/netsurf/src/netsurf/utils/utils.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\n";
 uint8_t base64_source[96] = "../browser_c/third_party/netsurf/src/libnsutils/src/base64.c";
 uint8_t nsutils_time_source[96] = "../browser_c/third_party/netsurf/src/libnsutils/src/time.c";
 uint8_t nsutils_unistd_source[96] = "../browser_c/third_party/netsurf/src/libnsutils/src/unistd.c";
@@ -12,6 +12,7 @@ uint8_t hashtable_source[96] = "../browser_c/third_party/netsurf/src/netsurf/uti
 uint8_t punycode_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/punycode.c";
 uint8_t file_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/file.c";
 uint8_t filepath_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/filepath.c";
+uint8_t messages_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/messages.c";
 uint8_t talloc_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/talloc.c";
 uint8_t time_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/time.c";
 uint8_t useragent_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/useragent.c";
@@ -22,11 +23,11 @@ uint8_t netsurf_include_root[96] = "../browser_c/third_party/netsurf/src/netsurf
 uint8_t socket_header[56] = "../browser_c/kernel/include/freestanding/sys/socket.h";
 uint8_t ssl_certs_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h";
 uint8_t zlib_header[40] = "../browser_c/kernel/include/zlib.h";
-uint8_t compile_units[2560];
+uint8_t compile_units[3072];
 
 int read_size;
 
-read_size = os_read_file(compile_units_path, compile_units, 2047);
+read_size = os_read_file(compile_units_path, compile_units, 3071);
 if (read_size <= 0) {
     print("browser_c probe: read failed\n");
     return 11;
@@ -46,6 +47,7 @@ if (os_file_size(base64_source) <= 0 ||
     os_file_size(punycode_source) <= 0 ||
     os_file_size(file_source) <= 0 ||
     os_file_size(filepath_source) <= 0 ||
+    os_file_size(messages_source) <= 0 ||
     os_file_size(talloc_source) <= 0 ||
     os_file_size(time_source) <= 0 ||
     os_file_size(useragent_source) <= 0 ||
@@ -67,5 +69,5 @@ if (os_write_file(status_path, "browser_c probe ok\n") != 0) {
     return 15;
 }
 
-print("browser_c probe: ok units=13\n");
+print("browser_c probe: ok units=14\n");
 return 0;
