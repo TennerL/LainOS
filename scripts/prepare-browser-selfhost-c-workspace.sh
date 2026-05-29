@@ -34,7 +34,7 @@ It is intentionally small:
 - libdom public headers plus hubbub binding install headers and the
   matching libhubbub error header needed by staged browser-side DOM helpers
 - libcss public include surface needed by staged browser-side colour headers
-- netsurf utils bloom/corestrings/libdom/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
+- netsurf utils bloom/corestrings/libdom/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsoption/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
 
 The goal is to remove the guest-side source staging blocker before the in-OS
 C compiler lands. The tree preserves upstream-relative paths so future compile
@@ -42,6 +42,8 @@ commands can reuse the same include roots as the host build without depending
 on host system headers.
 
 COMPILE_UNITS.txt is the machine-readable first-pass browser-C build plan.
+Each line is object|source|include-roots with an optional fourth field for
+semicolon-delimited extra compiler flags when a real upstream unit needs them.
 It is validated on the host by scripts/zbrowser-c-host-compile-smoke.sh with
 -nostdinc plus repo-staged freestanding headers, and is intended to become the
 first in-OS browser-C compile queue.
@@ -95,8 +97,9 @@ commands from browser_c/ and write the objects under browser_c/build/:
 EOF
 
   unit_index=1
-  while IFS='|' read -r object_name rel_source include_roots; do
+  while IFS='|' read -r object_name rel_source include_roots extra_flags; do
     include_flags=
+    flag_text=
     [[ -n "$object_name" ]] || continue
 
     IFS=':' read -r -a include_array <<< "$include_roots"
@@ -105,8 +108,17 @@ EOF
       include_flags="${include_flags} -I${include_root}"
     done
 
-    printf '%u. cc -c -ffreestanding%s %s -o build/%s\n' \
-      "$unit_index" "$include_flags" "$rel_source" "$object_name"
+    if [[ -n "$extra_flags" ]]; then
+      IFS=';' read -r -a extra_flag_array <<< "$extra_flags"
+      for extra_flag in "${extra_flag_array[@]}"; do
+        [[ -n "$extra_flag" ]] || continue
+        extra_flag="${extra_flag//\\\"/\"}"
+        flag_text="${flag_text} ${extra_flag}"
+      done
+    fi
+
+    printf '%u. cc -c -ffreestanding%s%s %s -o build/%s\n' \
+      "$unit_index" "$include_flags" "$flag_text" "$rel_source" "$object_name"
     unit_index=$((unit_index + 1))
   done <"$units_manifest_path"
 

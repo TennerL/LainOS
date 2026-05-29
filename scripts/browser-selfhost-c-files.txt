@@ -78,6 +78,7 @@ third_party/netsurf/src/netsurf/utils/log.c
 third_party/netsurf/src/netsurf/utils/messages.c
 third_party/netsurf/src/netsurf/utils/nscolour.c
 third_party/netsurf/src/netsurf/utils/nscolour.h
+third_party/netsurf/src/netsurf/utils/nsoption.c
 third_party/netsurf/src/netsurf/utils/nsoption.h
 third_party/netsurf/src/netsurf/utils/punycode.c
 third_party/netsurf/src/netsurf/utils/punycode.h

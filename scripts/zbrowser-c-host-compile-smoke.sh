@@ -25,7 +25,7 @@ rm -rf "$output_root"
 mkdir -p "$output_root"
 
 compiled_count=0
-while IFS='|' read -r object_name rel_source include_roots; do
+while IFS='|' read -r object_name rel_source include_roots extra_flags; do
   compile_cmd=(cc -c -ffreestanding -nostdinc)
   source_path="$workspace_root/$rel_source"
 
@@ -41,6 +41,15 @@ while IFS='|' read -r object_name rel_source include_roots; do
     [[ -n "$include_root" ]] || continue
     compile_cmd+=(-I"$workspace_root/$include_root")
   done
+
+  if [[ -n "$extra_flags" ]]; then
+    IFS=';' read -r -a extra_flag_array <<< "$extra_flags"
+    for extra_flag in "${extra_flag_array[@]}"; do
+      [[ -n "$extra_flag" ]] || continue
+      extra_flag="${extra_flag//\\\"/\"}"
+      compile_cmd+=("$extra_flag")
+    done
+  fi
 
   compile_cmd+=("$source_path" -o "$output_root/$object_name")
   "${compile_cmd[@]}"

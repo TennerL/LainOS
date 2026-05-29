@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define SCNx32 "x"
+#define PRIX32 "X"
 #define PRIx32 "x"
 #define PRIxPTR "lx"
 #define PRId64 "lld"

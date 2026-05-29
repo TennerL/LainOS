@@ -17,6 +17,7 @@ int fclose(FILE *stream);
 int feof(FILE *stream);
 int fprintf(FILE *stream, const char *format, ...);
 int fflush(FILE *stream);
+char *fgets(char *buffer, int size, FILE *stream);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 int fputc(int ch, FILE *stream);
 int fputs(const char *text, FILE *stream);
