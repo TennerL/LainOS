@@ -31,9 +31,10 @@ browser_c is the first staged in-OS C selfhost slice for browser work.
 
 It is intentionally small:
 - libnsutils base64/time/unistd
-- libdom public headers needed by staged browser-side core strings
+- libdom public headers plus hubbub binding install headers and the
+  matching libhubbub error header needed by staged browser-side DOM helpers
 - libcss public include surface needed by staged browser-side colour headers
-- netsurf utils bloom/corestrings/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
+- netsurf utils bloom/corestrings/libdom/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
 
 The goal is to remove the guest-side source staging blocker before the in-OS
 C compiler lands. The tree preserves upstream-relative paths so future compile
@@ -80,6 +81,12 @@ while IFS= read -r rel_path; do
     exit 1
   fi
 done <"$manifest_path"
+
+mkdir -p "$workspace_root/third_party/netsurf/src/libdom/include/dom/bindings/hubbub"
+cp "$workspace_root/third_party/netsurf/src/libdom/bindings/hubbub/parser.h" \
+  "$workspace_root/third_party/netsurf/src/libdom/include/dom/bindings/hubbub/parser.h"
+cp "$workspace_root/third_party/netsurf/src/libdom/bindings/hubbub/errors.h" \
+  "$workspace_root/third_party/netsurf/src/libdom/include/dom/bindings/hubbub/errors.h"
 
 {
   cat <<'EOF'
