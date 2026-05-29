@@ -28,10 +28,10 @@ if ! rg -q '^browser_c probe ok$' "$status_path"; then
   cat "$status_path" >&2
   exit 1
 fi
-if ! rg -q '^browser_c probe: ok units=17$' "$run_log"; then
+if ! rg -q '^browser_c probe: ok units=18$' "$run_log"; then
   printf 'zbrowser-c-queue-probe-smoke: missing success line in %s\n' "$run_log" >&2
   cat "$run_log" >&2
   exit 1
 fi
 
-printf 'zbrowser-c-queue-probe-smoke: ok units=17\n'
+printf 'zbrowser-c-queue-probe-smoke: ok units=18\n'

@@ -11,6 +11,7 @@ kernel/include/freestanding/stdio.h
 kernel/include/freestanding/fcntl.h
 kernel/include/freestanding/dirent.h
 kernel/include/freestanding/errno.h
+kernel/include/freestanding/iconv.h
 kernel/include/freestanding/strings.h
 kernel/include/freestanding/time.h
 kernel/include/freestanding/unistd.h
@@ -28,6 +29,8 @@ third_party/netsurf/src/libnsutils/include/nsutils/base64.h
 third_party/netsurf/src/libnsutils/include/nsutils/errors.h
 third_party/netsurf/src/libnsutils/include/nsutils/time.h
 third_party/netsurf/src/libnsutils/include/nsutils/unistd.h
+third_party/netsurf/src/libparserutils/include/parserutils/errors.h
+third_party/netsurf/src/libparserutils/include/parserutils/charset/utf8.h
 third_party/netsurf/src/libwapcaplet/include/libwapcaplet/libwapcaplet.h
 third_party/netsurf/src/libnsutils/src/base64.c
 third_party/netsurf/src/libnsutils/src/time.c
@@ -38,6 +41,7 @@ third_party/netsurf/src/netsurf/desktop/gui_table.h
 third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h
 third_party/netsurf/src/netsurf/include/netsurf/types.h
 third_party/netsurf/src/netsurf/include/netsurf/inttypes.h
+third_party/netsurf/src/netsurf/include/netsurf/utf8.h
 third_party/netsurf/src/netsurf/utils/bloom.c
 third_party/netsurf/src/netsurf/utils/bloom.h
 third_party/netsurf/src/netsurf/utils/corestringlist.h
@@ -73,6 +77,7 @@ third_party/netsurf/src/netsurf/utils/url.c
 third_party/netsurf/src/netsurf/utils/url.h
 third_party/netsurf/src/netsurf/utils/useragent.c
 third_party/netsurf/src/netsurf/utils/useragent.h
+third_party/netsurf/src/netsurf/utils/utf8.c
 third_party/netsurf/src/netsurf/utils/utf8.h
 third_party/netsurf/src/netsurf/utils/utils.c
 third_party/netsurf/src/netsurf/utils/dirent.h
