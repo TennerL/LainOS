@@ -4,6 +4,8 @@ nsutils_unistd.o|third_party/netsurf/src/libnsutils/src/unistd.c|third_party/net
 bloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 corestrings.o|third_party/netsurf/src/netsurf/utils/corestrings.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libdom/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
 libdom.o|third_party/netsurf/src/netsurf/utils/libdom.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libdom/include:third_party/netsurf/src/libhubbub/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+plot_style.o|third_party/netsurf/src/netsurf/desktop/plot_style.c|third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+system_colour.o|third_party/netsurf/src/netsurf/desktop/system_colour.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libcss/include:third_party/netsurf/src/libwapcaplet/include:kernel/include:kernel/include/freestanding
 hashmap.o|third_party/netsurf/src/netsurf/utils/hashmap.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 hashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsurf/src/netsurf:kernel/include:kernel/include/freestanding
 punycode.o|third_party/netsurf/src/netsurf/utils/punycode.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
