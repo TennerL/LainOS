@@ -1,0 +1,5 @@
+src src
+include include
+output browser_c_plan.bin
+install-name browser_c_plan.bin
+browser_c_plan.Z browser_c_plan.zo

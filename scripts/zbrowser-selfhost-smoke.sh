@@ -115,6 +115,9 @@ cd ../browser_c_probe
 ztest kernel
 zinstall kernel
 exec browser_c_probe.bin
+ztest queue
+zinstall queue
+exec browser_c_plan.bin
 cd ../mods
 cp R:/examples/zlang/selfhost_project/kernel.zbuild ../selfhost_project/kernel.zbuild
 cp R:/examples/zlang/selfhost_project/include/kernel_api.Z ../selfhost_project/include/kernel_api.Z
@@ -230,10 +233,15 @@ check_file "browser_c/third_party/netsurf/src/netsurf/desktop/version.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/include/netsurf/css.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/utils.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h"
-check_file "browser_c_probe/browser_c_probe.bin"
 check_file "browser_c_probe/browser_c_probe.status"
-check_file "browser_c_probe/build/kernel.buildlog"
-check_file "browser_c_probe/build/kernel.testlog"
+check_file "browser_c_probe/browser_c_probe.bin"
+check_file "browser_c_probe/kernel.buildlog"
+check_file "browser_c_probe/kernel.testlog"
+check_file "browser_c_probe/browser_c_plan.bin"
+check_file "browser_c_probe/browser_c_plan.status"
+check_file "browser_c_probe/browser_c_plan.first"
+check_file "browser_c_probe/queue.buildlog"
+check_file "browser_c_probe/queue.testlog"
 
 check_buildlog() {
   local fs_path="$1"
@@ -272,6 +280,8 @@ check_log_contains() {
 }
 
 check_log_contains "mods/browser_selfhost.status" 'browser selfhost install ok' "browser selfhost status"
+check_log_contains "browser_c_probe/browser_c_plan.first" '^base64\.o\|third_party/netsurf/src/libnsutils/src/base64\.c\|' "browser C first unit"
+check_log_contains "browser_c_probe/browser_c_plan.first" 'kernel/include/freestanding' "browser C first include roots"
 check_log_contains "selfhost_project/build/kernel.buildlog" '^status ok$' "selfhost build log"
 check_log_contains "selfhost_project/build/kernel.buildlog" '^objects 1$' "selfhost build log"
 check_log_contains "selfhost_project/build/kernel.testlog" '^result 42$' "selfhost test log"
@@ -280,6 +290,12 @@ check_log_contains "selfhost_project/build/from_z_renamed.txt" 'created from sel
 
 if ! grep -q 'browser selfhost: ok' "$serial_log"; then
   printf 'zbrowser self-host smoke: expected browser selfhost driver success output\n' >&2
+  tail -n 120 "$serial_log" >&2 || true
+  exit 1
+fi
+
+if ! grep -q 'browser_c plan: ok units=42' "$serial_log"; then
+  printf 'zbrowser self-host smoke: expected browser C plan unit count output\n' >&2
   tail -n 120 "$serial_log" >&2 || true
   exit 1
 fi

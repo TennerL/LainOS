@@ -29,8 +29,10 @@ check_seeded_path "browser_c/NEXT_C.txt"
 check_seeded_path "browser_c/FILES.txt"
 check_seeded_path "browser_c/COMPILE_UNITS.txt"
 check_seeded_path "browser_c_probe/kernel.zbuild"
+check_seeded_path "browser_c_probe/queue.zbuild"
 check_seeded_path "browser_c_probe/include/browser_c_probe_api.Z"
 check_seeded_path "browser_c_probe/src/browser_c_probe.Z"
+check_seeded_path "browser_c_probe/src/browser_c_plan.Z"
 
 seeded_count=0
 while IFS= read -r rel_path; do

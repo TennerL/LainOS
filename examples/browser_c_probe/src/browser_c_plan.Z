@@ -1,0 +1,77 @@
+#include "browser_c_probe_api.Z"
+
+uint8_t compile_units_path[32] = "../browser_c/COMPILE_UNITS.txt";
+uint8_t status_path[24] = "browser_c_plan.status";
+uint8_t first_unit_path[23] = "browser_c_plan.first";
+uint8_t compile_units[12288];
+uint8_t first_unit[256];
+
+int read_size;
+int unit_count;
+int i;
+int line_has_text;
+int line_has_pipe;
+int first_len;
+
+read_size = os_read_file(compile_units_path, compile_units, 12287);
+if (read_size <= 0) {
+    print("browser_c plan: read failed\n");
+    return 11;
+}
+compile_units[read_size] = 0;
+
+i = 0;
+unit_count = 0;
+line_has_text = 0;
+line_has_pipe = 0;
+while (compile_units[i] != 0) {
+    if (compile_units[i] == 10 || compile_units[i] == 13) {
+        if (line_has_text != 0 && line_has_pipe != 0) {
+            unit_count = unit_count + 1;
+        }
+        line_has_text = 0;
+        line_has_pipe = 0;
+        if (compile_units[i] == 13 && compile_units[i + 1] == 10) {
+            i = i + 1;
+        }
+    } else {
+        line_has_text = 1;
+        if (compile_units[i] == 124) {
+            line_has_pipe = 1;
+        }
+    }
+    i = i + 1;
+}
+if (line_has_text != 0 && line_has_pipe != 0) {
+    unit_count = unit_count + 1;
+}
+
+i = 0;
+while (compile_units[i] == 10 || compile_units[i] == 13) {
+    i = i + 1;
+}
+first_len = 0;
+while (compile_units[i] != 0 && compile_units[i] != 10 && compile_units[i] != 13 && first_len + 1 < 256) {
+    first_unit[first_len] = compile_units[i];
+    first_len = first_len + 1;
+    i = i + 1;
+}
+first_unit[first_len] = 0;
+
+if (compile_units[0] == 0 || unit_count <= 0 || first_len <= 0) {
+    print("browser_c plan: compile queue mismatch\n");
+    return 12;
+}
+if (os_write_file(status_path, "browser_c plan ok\n") != 0) {
+    print("browser_c plan: status write failed\n");
+    return 13;
+}
+if (os_write_file(first_unit_path, first_unit) != 0) {
+    print("browser_c plan: first unit write failed\n");
+    return 14;
+}
+
+print("browser_c plan: ok units=");
+print(unit_count);
+print("\n");
+return 0;
