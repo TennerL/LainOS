@@ -7,6 +7,7 @@ hashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsur
 punycode.o|third_party/netsurf/src/netsurf/utils/punycode.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 file.o|third_party/netsurf/src/netsurf/utils/file.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
 filepath.o|third_party/netsurf/src/netsurf/utils/filepath.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
+log.o|third_party/netsurf/src/netsurf/utils/log.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding
 messages.o|third_party/netsurf/src/netsurf/utils/messages.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include:kernel/include/freestanding
 talloc.o|third_party/netsurf/src/netsurf/utils/talloc.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 time.o|third_party/netsurf/src/netsurf/utils/time.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
