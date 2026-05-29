@@ -55,10 +55,19 @@ kernel/include/zlib.h
 third_party/netsurf/src/netsurf/desktop/system_colour.h
 third_party/netsurf/src/netsurf/desktop/gui_internal.h
 third_party/netsurf/src/netsurf/desktop/gui_table.h
+third_party/netsurf/src/netsurf/desktop/frame_types.h
+third_party/netsurf/src/netsurf/desktop/browser_private.h
 third_party/netsurf/src/netsurf/desktop/plot_style.c
+third_party/netsurf/src/netsurf/desktop/search.h
+third_party/netsurf/src/netsurf/desktop/search.c
 third_party/netsurf/src/netsurf/desktop/system_colour.c
+third_party/netsurf/src/netsurf/content/fetch.h
+third_party/netsurf/src/netsurf/content/textsearch.h
+third_party/netsurf/src/netsurf/include/netsurf/browser_window.h
+third_party/netsurf/src/netsurf/include/netsurf/console.h
 third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h
 third_party/netsurf/src/netsurf/include/netsurf/css.h
+third_party/netsurf/src/netsurf/include/netsurf/mouse.h
 third_party/netsurf/src/netsurf/include/netsurf/types.h
 third_party/netsurf/src/netsurf/include/netsurf/inttypes.h
 third_party/netsurf/src/netsurf/include/netsurf/plot_style.h
@@ -104,6 +113,7 @@ third_party/netsurf/src/netsurf/utils/http/parameter.h
 third_party/netsurf/src/netsurf/utils/http/parameter_internal.h
 third_party/netsurf/src/netsurf/utils/http/primitives.c
 third_party/netsurf/src/netsurf/utils/http/primitives.h
+third_party/netsurf/src/netsurf/utils/http/response-codes.h
 third_party/netsurf/src/netsurf/utils/http/strict-transport-security.c
 third_party/netsurf/src/netsurf/utils/http/strict-transport-security.h
 third_party/netsurf/src/netsurf/utils/http/www-authenticate.c
