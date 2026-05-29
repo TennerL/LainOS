@@ -77,6 +77,7 @@ third_party/netsurf/src/netsurf/utils/punycode.h
 third_party/netsurf/src/netsurf/utils/filepath.c
 third_party/netsurf/src/netsurf/utils/filepath.h
 third_party/netsurf/src/netsurf/utils/http.h
+third_party/netsurf/src/netsurf/utils/http/cache-control.c
 third_party/netsurf/src/netsurf/utils/http/cache-control.h
 third_party/netsurf/src/netsurf/utils/http/challenge.c
 third_party/netsurf/src/netsurf/utils/http/challenge.h
@@ -92,6 +93,7 @@ third_party/netsurf/src/netsurf/utils/http/parameter.h
 third_party/netsurf/src/netsurf/utils/http/parameter_internal.h
 third_party/netsurf/src/netsurf/utils/http/primitives.c
 third_party/netsurf/src/netsurf/utils/http/primitives.h
+third_party/netsurf/src/netsurf/utils/http/strict-transport-security.c
 third_party/netsurf/src/netsurf/utils/http/strict-transport-security.h
 third_party/netsurf/src/netsurf/utils/http/www-authenticate.c
 third_party/netsurf/src/netsurf/utils/http/www-authenticate.h
