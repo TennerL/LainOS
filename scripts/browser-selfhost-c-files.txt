@@ -106,6 +106,9 @@ third_party/netsurf/src/netsurf/utils/messages.h
 third_party/netsurf/src/netsurf/utils/ssl_certs.c
 third_party/netsurf/src/netsurf/utils/sys_time.h
 third_party/netsurf/src/netsurf/utils/nsurl.h
+third_party/netsurf/src/netsurf/utils/nsurl/private.h
+third_party/netsurf/src/netsurf/utils/nsurl/nsurl.c
+third_party/netsurf/src/netsurf/utils/nsurl/parse.c
 third_party/netsurf/src/netsurf/utils/string.h
 third_party/netsurf/src/netsurf/utils/talloc.c
 third_party/netsurf/src/netsurf/utils/talloc.h

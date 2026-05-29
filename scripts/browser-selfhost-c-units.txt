@@ -27,3 +27,5 @@ url.o|third_party/netsurf/src/netsurf/utils/url.c|third_party/netsurf/src/netsur
 useragent.o|third_party/netsurf/src/netsurf/utils/useragent.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 utf8.o|third_party/netsurf/src/netsurf/utils/utf8.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libparserutils/include:kernel/include/freestanding
 utils.o|third_party/netsurf/src/netsurf/utils/utils.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding
+nsurl_core.o|third_party/netsurf/src/netsurf/utils/nsurl/nsurl.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:third_party/netsurf/src/libparserutils/include:kernel/include/freestanding
+nsurl_parse.o|third_party/netsurf/src/netsurf/utils/nsurl/parse.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:third_party/netsurf/src/libparserutils/include:kernel/include/freestanding
