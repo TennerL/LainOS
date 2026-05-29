@@ -76,6 +76,9 @@ third_party/netsurf/src/netsurf/utils/punycode.c
 third_party/netsurf/src/netsurf/utils/punycode.h
 third_party/netsurf/src/netsurf/utils/filepath.c
 third_party/netsurf/src/netsurf/utils/filepath.h
+third_party/netsurf/src/netsurf/utils/http/generics.c
+third_party/netsurf/src/netsurf/utils/http/generics.h
+third_party/netsurf/src/netsurf/utils/http/primitives.h
 third_party/netsurf/src/netsurf/utils/inet.h
 third_party/netsurf/src/netsurf/utils/idna.c
 third_party/netsurf/src/netsurf/utils/idna.h
