@@ -8,6 +8,12 @@ punycode.o|third_party/netsurf/src/netsurf/utils/punycode.c|third_party/netsurf/
 file.o|third_party/netsurf/src/netsurf/utils/file.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
 filepath.o|third_party/netsurf/src/netsurf/utils/filepath.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 http_generics.o|third_party/netsurf/src/netsurf/utils/http/generics.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+http_primitives.o|third_party/netsurf/src/netsurf/utils/http/primitives.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+http_parameter.o|third_party/netsurf/src/netsurf/utils/http/parameter.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+http_content_disposition.o|third_party/netsurf/src/netsurf/utils/http/content-disposition.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+http_content_type.o|third_party/netsurf/src/netsurf/utils/http/content-type.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+http_challenge.o|third_party/netsurf/src/netsurf/utils/http/challenge.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
+http_www_authenticate.o|third_party/netsurf/src/netsurf/utils/http/www-authenticate.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
 idna.o|third_party/netsurf/src/netsurf/utils/idna.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding
 log.o|third_party/netsurf/src/netsurf/utils/log.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding
 messages.o|third_party/netsurf/src/netsurf/utils/messages.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include:kernel/include/freestanding

@@ -2,59 +2,38 @@
 
 uint8_t compile_units_path[32] = "../browser_c/COMPILE_UNITS.txt";
 uint8_t status_path[24] = "browser_c_probe.status";
-uint8_t expected_units[4096] = "base64.o|third_party/netsurf/src/libnsutils/src/base64.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_time.o|third_party/netsurf/src/libnsutils/src/time.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_unistd.o|third_party/netsurf/src/libnsutils/src/unistd.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nbloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashmap.o|third_party/netsurf/src/netsurf/utils/hashmap.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsurf/src/netsurf:kernel/include:kernel/include/freestanding\npunycode.o|third_party/netsurf/src/netsurf/utils/punycode.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nfile.o|third_party/netsurf/src/netsurf/utils/file.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nfilepath.o|third_party/netsurf/src/netsurf/utils/filepath.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhttp_generics.o|third_party/netsurf/src/netsurf/utils/http/generics.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nidna.o|third_party/netsurf/src/netsurf/utils/idna.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\nlog.o|third_party/netsurf/src/netsurf/utils/log.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\nmessages.o|third_party/netsurf/src/netsurf/utils/messages.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include:kernel/include/freestanding\nnscolour.o|third_party/netsurf/src/netsurf/utils/nscolour.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libcss/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nssl_certs.o|third_party/netsurf/src/netsurf/utils/ssl_certs.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libnsutils/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\ntalloc.o|third_party/netsurf/src/netsurf/utils/talloc.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\ntime.o|third_party/netsurf/src/netsurf/utils/time.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nurl.o|third_party/netsurf/src/netsurf/utils/url.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nuseragent.o|third_party/netsurf/src/netsurf/utils/useragent.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nutf8.o|third_party/netsurf/src/netsurf/utils/utf8.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libparserutils/include:kernel/include/freestanding\nutils.o|third_party/netsurf/src/netsurf/utils/utils.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\n";
+uint8_t expected_units[8192] = "base64.o|third_party/netsurf/src/libnsutils/src/base64.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_time.o|third_party/netsurf/src/libnsutils/src/time.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nnsutils_unistd.o|third_party/netsurf/src/libnsutils/src/unistd.c|third_party/netsurf/src/libnsutils/include:kernel/include/freestanding\nbloom.o|third_party/netsurf/src/netsurf/utils/bloom.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashmap.o|third_party/netsurf/src/netsurf/utils/hashmap.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsurf/src/netsurf:kernel/include:kernel/include/freestanding\npunycode.o|third_party/netsurf/src/netsurf/utils/punycode.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nfile.o|third_party/netsurf/src/netsurf/utils/file.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nfilepath.o|third_party/netsurf/src/netsurf/utils/filepath.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nhttp_generics.o|third_party/netsurf/src/netsurf/utils/http/generics.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nhttp_primitives.o|third_party/netsurf/src/netsurf/utils/http/primitives.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nhttp_parameter.o|third_party/netsurf/src/netsurf/utils/http/parameter.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nhttp_content_disposition.o|third_party/netsurf/src/netsurf/utils/http/content-disposition.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nhttp_content_type.o|third_party/netsurf/src/netsurf/utils/http/content-type.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nhttp_challenge.o|third_party/netsurf/src/netsurf/utils/http/challenge.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nhttp_www_authenticate.o|third_party/netsurf/src/netsurf/utils/http/www-authenticate.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nidna.o|third_party/netsurf/src/netsurf/utils/idna.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\nlog.o|third_party/netsurf/src/netsurf/utils/log.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\nmessages.o|third_party/netsurf/src/netsurf/utils/messages.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include:kernel/include/freestanding\nnscolour.o|third_party/netsurf/src/netsurf/utils/nscolour.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libcss/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\nssl_certs.o|third_party/netsurf/src/netsurf/utils/ssl_certs.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libnsutils/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding\ntalloc.o|third_party/netsurf/src/netsurf/utils/talloc.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\ntime.o|third_party/netsurf/src/netsurf/utils/time.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nurl.o|third_party/netsurf/src/netsurf/utils/url.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nuseragent.o|third_party/netsurf/src/netsurf/utils/useragent.c|third_party/netsurf/src/netsurf:kernel/include/freestanding\nutf8.o|third_party/netsurf/src/netsurf/utils/utf8.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libparserutils/include:kernel/include/freestanding\nutils.o|third_party/netsurf/src/netsurf/utils/utils.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding\n";
 uint8_t base64_source[96] = "../browser_c/third_party/netsurf/src/libnsutils/src/base64.c";
-uint8_t nsutils_time_source[96] = "../browser_c/third_party/netsurf/src/libnsutils/src/time.c";
-uint8_t nsutils_unistd_source[96] = "../browser_c/third_party/netsurf/src/libnsutils/src/unistd.c";
-uint8_t bloom_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/bloom.c";
-uint8_t hashmap_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/hashmap.c";
 uint8_t hashtable_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/hashtable.c";
-uint8_t punycode_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/punycode.c";
 uint8_t file_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/file.c";
-uint8_t filepath_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/filepath.c";
 uint8_t http_generics_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/generics.c";
+uint8_t http_primitives_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/primitives.c";
+uint8_t http_www_authenticate_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/www-authenticate.c";
 uint8_t idna_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/idna.c";
-uint8_t log_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/log.c";
-uint8_t messages_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/messages.c";
 uint8_t nscolour_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/nscolour.c";
-uint8_t ssl_certs_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/ssl_certs.c";
-uint8_t talloc_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/talloc.c";
-uint8_t time_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/time.c";
-uint8_t url_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/url.c";
-uint8_t useragent_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/useragent.c";
 uint8_t utf8_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/utf8.c";
 uint8_t utils_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/utils.c";
 uint8_t base64_include[96] = "../browser_c/third_party/netsurf/src/libnsutils/include";
 uint8_t bloom_root[96] = "../browser_c/third_party/netsurf/src/netsurf";
-uint8_t freestanding_iconv_header[56] = "../browser_c/kernel/include/freestanding/iconv.h";
 uint8_t netsurf_include_root[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf";
 uint8_t netsurf_utf8_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/utf8.h";
-uint8_t desktop_options_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/options.h";
-uint8_t desktop_system_colour_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/system_colour.h";
-uint8_t http_generics_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/generics.h";
+uint8_t http_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http.h";
+uint8_t http_content_type_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/content-type.h";
+uint8_t http_parameter_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/parameter.h";
 uint8_t http_primitives_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/primitives.h";
-uint8_t idna_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/idna.h";
+uint8_t http_strict_transport_security_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/strict-transport-security.h";
+uint8_t http_www_authenticate_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/www-authenticate.h";
 uint8_t idna_props_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/idna_props.h";
-uint8_t inttypes_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/inttypes.h";
 uint8_t libcss_include[96] = "../browser_c/third_party/netsurf/src/libcss/include";
 uint8_t libcss_header[96] = "../browser_c/third_party/netsurf/src/libcss/include/libcss/libcss.h";
-uint8_t nscolour_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/nscolour.h";
-uint8_t nsoption_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/nsoption.h";
 uint8_t parserutils_include[96] = "../browser_c/third_party/netsurf/src/libparserutils/include";
-uint8_t parserutils_errors_header[96] = "../browser_c/third_party/netsurf/src/libparserutils/include/parserutils/errors.h";
 uint8_t parserutils_utf8_header[96] = "../browser_c/third_party/netsurf/src/libparserutils/include/parserutils/charset/utf8.h";
-uint8_t sys_time_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/sys_time.h";
-uint8_t socket_header[56] = "../browser_c/kernel/include/freestanding/sys/socket.h";
-uint8_t plot_style_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/plot_style.h";
-uint8_t ssl_certs_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h";
-uint8_t types_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/types.h";
-uint8_t utf8_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/utf8.h";
 uint8_t zlib_header[40] = "../browser_c/kernel/include/zlib.h";
-uint8_t compile_units[4096];
+uint8_t compile_units[8192];
 
 int read_size;
 
-read_size = os_read_file(compile_units_path, compile_units, 4095);
+read_size = os_read_file(compile_units_path, compile_units, 8191);
 if (read_size <= 0) {
     print("browser_c probe: read failed\n");
     return 11;
@@ -66,46 +45,38 @@ if (os_strcmp(compile_units, expected_units) != 0) {
     return 12;
 }
 if (os_file_size(base64_source) <= 0 ||
-    os_file_size(nsutils_time_source) <= 0 ||
-    os_file_size(nsutils_unistd_source) <= 0 ||
-    os_file_size(bloom_source) <= 0 ||
-    os_file_size(hashmap_source) <= 0 ||
     os_file_size(hashtable_source) <= 0 ||
-    os_file_size(punycode_source) <= 0 ||
     os_file_size(file_source) <= 0 ||
-    os_file_size(filepath_source) <= 0 ||
     os_file_size(http_generics_source) <= 0 ||
+    os_file_size(http_primitives_source) <= 0) {
+    print("browser_c probe: missing staged source\n");
+    return 13;
+}
+if (os_file_size(http_www_authenticate_source) <= 0 ||
     os_file_size(idna_source) <= 0 ||
-    os_file_size(log_source) <= 0 ||
-    os_file_size(messages_source) <= 0 ||
     os_file_size(nscolour_source) <= 0 ||
-    os_file_size(ssl_certs_source) <= 0 ||
-    os_file_size(talloc_source) <= 0 ||
-    os_file_size(time_source) <= 0 ||
-    os_file_size(url_source) <= 0 ||
-    os_file_size(useragent_source) <= 0 ||
     os_file_size(utf8_source) <= 0 ||
-    os_file_size(utils_source) <= 0 ||
-    os_file_size(desktop_options_header) <= 0 ||
-    os_file_size(desktop_system_colour_header) <= 0 ||
-    os_file_size(freestanding_iconv_header) <= 0 ||
-    os_file_size(http_generics_header) <= 0 ||
+    os_file_size(utils_source) <= 0) {
+    print("browser_c probe: missing staged source\n");
+    return 13;
+}
+if (os_file_size(http_header) <= 0 ||
     os_file_size(http_primitives_header) <= 0 ||
-    os_file_size(idna_header) <= 0 ||
+    os_file_size(http_parameter_header) <= 0 ||
+    os_file_size(http_content_type_header) <= 0) {
+    print("browser_c probe: missing staged source\n");
+    return 13;
+}
+if (os_file_size(http_www_authenticate_header) <= 0 ||
+    os_file_size(http_strict_transport_security_header) <= 0 ||
     os_file_size(idna_props_header) <= 0 ||
-    os_file_size(inttypes_header) <= 0 ||
-    os_file_size(libcss_header) <= 0 ||
+    os_file_size(libcss_header) <= 0) {
+    print("browser_c probe: missing staged source\n");
+    return 13;
+}
+if (os_file_size(netsurf_utf8_header) <= 0 ||
     os_file_size(netsurf_utf8_header) <= 0 ||
-    os_file_size(nscolour_header) <= 0 ||
-    os_file_size(nsoption_header) <= 0 ||
-    os_file_size(parserutils_errors_header) <= 0 ||
     os_file_size(parserutils_utf8_header) <= 0 ||
-    os_file_size(plot_style_header) <= 0 ||
-    os_file_size(sys_time_header) <= 0 ||
-    os_file_size(socket_header) <= 0 ||
-    os_file_size(ssl_certs_header) <= 0 ||
-    os_file_size(types_header) <= 0 ||
-    os_file_size(utf8_header) <= 0 ||
     os_file_size(zlib_header) <= 0) {
     print("browser_c probe: missing staged source\n");
     return 13;
@@ -123,5 +94,5 @@ if (os_write_file(status_path, "browser_c probe ok\n") != 0) {
     return 15;
 }
 
-print("browser_c probe: ok units=21\n");
+print("browser_c probe: ok units=27\n");
 return 0;
