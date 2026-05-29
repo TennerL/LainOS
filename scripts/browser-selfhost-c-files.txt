@@ -60,6 +60,7 @@ third_party/netsurf/src/netsurf/desktop/gui_internal.h
 third_party/netsurf/src/netsurf/desktop/gui_table.h
 third_party/netsurf/src/netsurf/desktop/frame_types.h
 third_party/netsurf/src/netsurf/desktop/browser_private.h
+third_party/netsurf/src/netsurf/desktop/mouse.c
 third_party/netsurf/src/netsurf/desktop/plot_style.c
 third_party/netsurf/src/netsurf/desktop/search.h
 third_party/netsurf/src/netsurf/desktop/search.c

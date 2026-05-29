@@ -162,5 +162,5 @@ if (os_write_file(status_path, "browser_c probe ok\n") != 0) {
     return 15;
 }
 
-print("browser_c probe: ok units=40\n");
+print("browser_c probe: ok units=41\n");
 return 0;
