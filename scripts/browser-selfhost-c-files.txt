@@ -69,6 +69,7 @@ third_party/netsurf/src/netsurf/desktop/searchweb.c
 third_party/netsurf/src/netsurf/desktop/scrollbar.h
 third_party/netsurf/src/netsurf/desktop/scrollbar.c
 third_party/netsurf/src/netsurf/desktop/system_colour.c
+third_party/netsurf/src/netsurf/desktop/version.c
 third_party/netsurf/src/netsurf/content/content.h
 third_party/netsurf/src/netsurf/content/fetch.h
 third_party/netsurf/src/netsurf/content/hlcache.h
@@ -164,3 +165,4 @@ third_party/netsurf/src/netsurf/utils/errors.h
 third_party/netsurf/src/netsurf/utils/utsname.h
 third_party/netsurf/src/netsurf/utils/utils.h
 third_party/netsurf/src/netsurf/desktop/version.h
+third_party/netsurf/src/netsurf/test/testament.h

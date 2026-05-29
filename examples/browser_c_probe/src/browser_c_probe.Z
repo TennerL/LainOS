@@ -9,6 +9,7 @@ uint8_t plot_style_source[96] = "../browser_c/third_party/netsurf/src/netsurf/de
 uint8_t search_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/search.c";
 uint8_t scrollbar_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/scrollbar.c";
 uint8_t system_colour_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/system_colour.c";
+uint8_t version_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/version.c";
 uint8_t hashtable_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/hashtable.c";
 uint8_t file_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/file.c";
 uint8_t http_cache_control_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/cache-control.c";
@@ -52,9 +53,11 @@ uint8_t browser_private_header[96] = "../browser_c/third_party/netsurf/src/netsu
 uint8_t frame_types_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/frame_types.h";
 uint8_t search_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/search.h";
 uint8_t scrollbar_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/scrollbar.h";
+uint8_t version_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/version.h";
 uint8_t fetch_header[96] = "../browser_c/third_party/netsurf/src/netsurf/content/fetch.h";
 uint8_t textsearch_header[96] = "../browser_c/third_party/netsurf/src/netsurf/content/textsearch.h";
 uint8_t response_codes_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/response-codes.h";
+uint8_t testament_header[96] = "../browser_c/third_party/netsurf/src/netsurf/test/testament.h";
 uint8_t nsurl_private_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/private.h";
 uint8_t parserutils_include[96] = "../browser_c/third_party/netsurf/src/libparserutils/include";
 uint8_t parserutils_utf8_header[96] = "../browser_c/third_party/netsurf/src/libparserutils/include/parserutils/charset/utf8.h";
@@ -93,6 +96,7 @@ if (os_file_size(http_www_authenticate_source) <= 0 ||
     os_file_size(idna_source) <= 0 ||
     os_file_size(nsurl_core_source) <= 0 ||
     os_file_size(nsurl_parse_source) <= 0 ||
+    os_file_size(version_source) <= 0 ||
     os_file_size(nscolour_source) <= 0 ||
     os_file_size(nsoption_source) <= 0 ||
     os_file_size(utf8_source) <= 0 ||
@@ -136,6 +140,7 @@ if (os_file_size(netsurf_utf8_header) <= 0 ||
 if (os_file_size(frame_types_header) <= 0 ||
     os_file_size(search_header) <= 0 ||
     os_file_size(scrollbar_header) <= 0 ||
+    os_file_size(version_header) <= 0 ||
     os_file_size(fetch_header) <= 0) {
     print("browser_c probe: missing staged source\n");
     return 13;
@@ -144,6 +149,10 @@ if (os_file_size(textsearch_header) <= 0 ||
     os_file_size(response_codes_header) <= 0 ||
     os_file_size(parserutils_utf8_header) <= 0 ||
     os_file_size(zlib_header) <= 0) {
+    print("browser_c probe: missing staged source\n");
+    return 13;
+}
+if (os_file_size(testament_header) < 0) {
     print("browser_c probe: missing staged source\n");
     return 13;
 }
@@ -162,5 +171,5 @@ if (os_write_file(status_path, "browser_c probe ok\n") != 0) {
     return 15;
 }
 
-print("browser_c probe: ok units=41\n");
+print("browser_c probe: ok units=42\n");
 return 0;

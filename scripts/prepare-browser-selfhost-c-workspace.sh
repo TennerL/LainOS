@@ -35,7 +35,9 @@ It is intentionally small:
   matching libhubbub error header needed by staged browser-side DOM helpers
 - libcss public include surface needed by staged browser-side colour headers
 - netsurf desktop bitmap/mouse/plot_style/search/searchweb/scrollbar/system_colour
-  plus the generic browser/content/css-facing headers those sources consume
+  /version plus the generic browser/content/css-facing headers those sources
+  consume, including the checked-in testament placeholder that desktop/version.c
+  includes
 - netsurf utils bloom/corestrings/libdom/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsoption/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
 
 The goal is to remove the guest-side source staging blocker before the in-OS
