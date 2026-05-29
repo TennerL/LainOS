@@ -7,6 +7,7 @@ uint8_t corestrings_source[96] = "../browser_c/third_party/netsurf/src/netsurf/u
 uint8_t libdom_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/libdom.c";
 uint8_t plot_style_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/plot_style.c";
 uint8_t search_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/search.c";
+uint8_t scrollbar_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/scrollbar.c";
 uint8_t system_colour_source[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/system_colour.c";
 uint8_t hashtable_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/hashtable.c";
 uint8_t file_source[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/file.c";
@@ -45,10 +46,12 @@ uint8_t libcss_header[96] = "../browser_c/third_party/netsurf/src/libcss/include
 uint8_t browser_window_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/browser_window.h";
 uint8_t console_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/console.h";
 uint8_t mouse_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/mouse.h";
+uint8_t plotters_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/plotters.h";
 uint8_t netsurf_css_header[96] = "../browser_c/third_party/netsurf/src/netsurf/include/netsurf/css.h";
 uint8_t browser_private_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/browser_private.h";
 uint8_t frame_types_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/frame_types.h";
 uint8_t search_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/search.h";
+uint8_t scrollbar_header[96] = "../browser_c/third_party/netsurf/src/netsurf/desktop/scrollbar.h";
 uint8_t fetch_header[96] = "../browser_c/third_party/netsurf/src/netsurf/content/fetch.h";
 uint8_t textsearch_header[96] = "../browser_c/third_party/netsurf/src/netsurf/content/textsearch.h";
 uint8_t response_codes_header[96] = "../browser_c/third_party/netsurf/src/netsurf/utils/http/response-codes.h";
@@ -75,6 +78,7 @@ if (os_file_size(base64_source) <= 0 ||
     os_file_size(libdom_source) <= 0 ||
     os_file_size(plot_style_source) <= 0 ||
     os_file_size(search_source) <= 0 ||
+    os_file_size(scrollbar_source) <= 0 ||
     os_file_size(system_colour_source) <= 0 ||
     os_file_size(hashtable_source) <= 0 ||
     os_file_size(file_source) <= 0 ||
@@ -112,6 +116,7 @@ if (os_file_size(http_content_type_header) <= 0 ||
 }
 if (os_file_size(console_header) <= 0 ||
     os_file_size(mouse_header) <= 0 ||
+    os_file_size(plotters_header) <= 0 ||
     os_file_size(netsurf_css_header) <= 0 ||
     os_file_size(idna_props_header) <= 0 ||
     os_file_size(nsurl_private_header) <= 0 ||
@@ -130,6 +135,7 @@ if (os_file_size(netsurf_utf8_header) <= 0 ||
 }
 if (os_file_size(frame_types_header) <= 0 ||
     os_file_size(search_header) <= 0 ||
+    os_file_size(scrollbar_header) <= 0 ||
     os_file_size(fetch_header) <= 0) {
     print("browser_c probe: missing staged source\n");
     return 13;
@@ -156,5 +162,5 @@ if (os_write_file(status_path, "browser_c probe ok\n") != 0) {
     return 15;
 }
 
-print("browser_c probe: ok units=38\n");
+print("browser_c probe: ok units=39\n");
 return 0;

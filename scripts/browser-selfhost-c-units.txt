@@ -7,6 +7,7 @@ libdom.o|third_party/netsurf/src/netsurf/utils/libdom.c|third_party/netsurf/src/
 plot_style.o|third_party/netsurf/src/netsurf/desktop/plot_style.c|third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
 search.o|third_party/netsurf/src/netsurf/desktop/search.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
 searchweb.o|third_party/netsurf/src/netsurf/desktop/searchweb.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libnsutils/include:third_party/netsurf/src/libwapcaplet/include:kernel/include:kernel/include/freestanding
+scrollbar.o|third_party/netsurf/src/netsurf/desktop/scrollbar.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libcss/include:third_party/netsurf/src/libwapcaplet/include:kernel/include:kernel/include/freestanding
 system_colour.o|third_party/netsurf/src/netsurf/desktop/system_colour.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libcss/include:third_party/netsurf/src/libwapcaplet/include:kernel/include:kernel/include/freestanding
 hashmap.o|third_party/netsurf/src/netsurf/utils/hashmap.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 hashtable.o|third_party/netsurf/src/netsurf/utils/hashtable.c|third_party/netsurf/src/netsurf:kernel/include:kernel/include/freestanding
