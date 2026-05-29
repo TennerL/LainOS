@@ -10,6 +10,7 @@ filepath.o|third_party/netsurf/src/netsurf/utils/filepath.c|third_party/netsurf/
 idna.o|third_party/netsurf/src/netsurf/utils/idna.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding
 log.o|third_party/netsurf/src/netsurf/utils/log.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding
 messages.o|third_party/netsurf/src/netsurf/utils/messages.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include:kernel/include/freestanding
+ssl_certs.o|third_party/netsurf/src/netsurf/utils/ssl_certs.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:third_party/netsurf/src/libnsutils/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding
 talloc.o|third_party/netsurf/src/netsurf/utils/talloc.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 time.o|third_party/netsurf/src/netsurf/utils/time.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 url.o|third_party/netsurf/src/netsurf/utils/url.c|third_party/netsurf/src/netsurf:kernel/include/freestanding

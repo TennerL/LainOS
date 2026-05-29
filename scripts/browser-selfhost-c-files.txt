@@ -66,6 +66,7 @@ third_party/netsurf/src/netsurf/utils/idna.h
 third_party/netsurf/src/netsurf/utils/idna_props.h
 third_party/netsurf/src/netsurf/utils/log.h
 third_party/netsurf/src/netsurf/utils/messages.h
+third_party/netsurf/src/netsurf/utils/ssl_certs.c
 third_party/netsurf/src/netsurf/utils/sys_time.h
 third_party/netsurf/src/netsurf/utils/nsurl.h
 third_party/netsurf/src/netsurf/utils/string.h
