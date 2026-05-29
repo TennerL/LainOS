@@ -11,5 +11,6 @@ log.o|third_party/netsurf/src/netsurf/utils/log.c|third_party/netsurf/src/netsur
 messages.o|third_party/netsurf/src/netsurf/utils/messages.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include:kernel/include/freestanding
 talloc.o|third_party/netsurf/src/netsurf/utils/talloc.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 time.o|third_party/netsurf/src/netsurf/utils/time.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
+url.o|third_party/netsurf/src/netsurf/utils/url.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 useragent.o|third_party/netsurf/src/netsurf/utils/useragent.c|third_party/netsurf/src/netsurf:kernel/include/freestanding
 utils.o|third_party/netsurf/src/netsurf/utils/utils.c|third_party/netsurf/src/netsurf:third_party/netsurf/src/netsurf/include:kernel/include/freestanding

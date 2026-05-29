@@ -1,3 +1,4 @@
+kernel/include/freestanding/ctype.h
 kernel/include/freestanding/stddef.h
 kernel/include/freestanding/stdint.h
 kernel/include/freestanding/inttypes.h
@@ -64,6 +65,7 @@ third_party/netsurf/src/netsurf/utils/talloc.c
 third_party/netsurf/src/netsurf/utils/talloc.h
 third_party/netsurf/src/netsurf/utils/time.c
 third_party/netsurf/src/netsurf/utils/time.h
+third_party/netsurf/src/netsurf/utils/url.c
 third_party/netsurf/src/netsurf/utils/url.h
 third_party/netsurf/src/netsurf/utils/useragent.c
 third_party/netsurf/src/netsurf/utils/useragent.h
