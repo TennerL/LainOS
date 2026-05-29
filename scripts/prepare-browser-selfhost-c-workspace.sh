@@ -31,8 +31,9 @@ browser_c is the first staged in-OS C selfhost slice for browser work.
 
 It is intentionally small:
 - libnsutils base64/time/unistd
+- libdom public headers needed by staged browser-side core strings
 - libcss public include surface needed by staged browser-side colour headers
-- netsurf utils bloom/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
+- netsurf utils bloom/corestrings/hashmap/hashtable/http/{cache-control,challenge,content-disposition,content-type,generics,parameter,primitives,strict-transport-security,www-authenticate}/punycode/file/filepath/idna/log/messages/nscolour/nsurl/{nsurl,parse}/ssl_certs/talloc/time/url/useragent/utf8/utils
 
 The goal is to remove the guest-side source staging blocker before the in-OS
 C compiler lands. The tree preserves upstream-relative paths so future compile
@@ -62,13 +63,22 @@ while IFS= read -r rel_path; do
 
   [[ -n "$rel_path" ]] || continue
 
-  if [[ ! -f "$src_path" ]]; then
+  if [[ -f "$src_path" ]]; then
+    mkdir -p "$(dirname "$dst_path")"
+    cp "$src_path" "$dst_path"
+    continue
+  fi
+
+  if [[ -d "$src_path" ]]; then
+    mkdir -p "$(dirname "$dst_path")"
+    cp -R "$src_path" "$dst_path"
+    continue
+  fi
+
+  if [[ ! -e "$src_path" ]]; then
     printf 'prepare-browser-selfhost-c-workspace: missing source %s\n' "$rel_path" >&2
     exit 1
   fi
-
-  mkdir -p "$(dirname "$dst_path")"
-  cp "$src_path" "$dst_path"
 done <"$manifest_path"
 
 {

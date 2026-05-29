@@ -31,6 +31,7 @@ third_party/netsurf/src/libnsutils/include/nsutils/time.h
 third_party/netsurf/src/libnsutils/include/nsutils/unistd.h
 third_party/netsurf/src/libparserutils/include/parserutils/errors.h
 third_party/netsurf/src/libparserutils/include/parserutils/charset/utf8.h
+third_party/netsurf/src/libdom/include/dom
 third_party/netsurf/src/libwapcaplet/include/libwapcaplet/libwapcaplet.h
 third_party/netsurf/src/libcss/include/libcss/computed.h
 third_party/netsurf/src/libcss/include/libcss/errors.h
@@ -60,6 +61,7 @@ third_party/netsurf/src/netsurf/utils/bloom.c
 third_party/netsurf/src/netsurf/utils/bloom.h
 third_party/netsurf/src/netsurf/utils/corestringlist.h
 third_party/netsurf/src/netsurf/utils/corestrings.h
+third_party/netsurf/src/netsurf/utils/corestrings.c
 third_party/netsurf/src/netsurf/desktop/options.h
 third_party/netsurf/src/netsurf/utils/file.c
 third_party/netsurf/src/netsurf/utils/file.h
