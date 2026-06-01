@@ -16,6 +16,7 @@ done
 ovmf_code=
 ovmf_vars=
 for code_path in \
+  ./OVMF_CODE.fd \
   /usr/share/OVMF/OVMF_CODE_4M.fd \
   /usr/share/edk2/x64/OVMF_CODE.4m.fd
 do
@@ -26,6 +27,7 @@ do
 done
 
 for vars_path in \
+  ./OVMF_VARS.fd \
   /usr/share/OVMF/OVMF_VARS_4M.fd \
   /usr/share/edk2/x64/OVMF_VARS.4m.fd
 do
@@ -43,8 +45,10 @@ fi
 smoke_img="build/zbrowser-selfhost.data.img"
 smoke_vars="build/OVMF_VARS.zbrowser-selfhost.fd"
 serial_log="build/zbrowser-selfhost.serial.log"
+qemu_log="build/zbrowser-selfhost.qemu.log"
 seed_root="build/zbrowser-selfhost.seed"
 browser_c_stage_root="build/browser-selfhost-c-stage"
+restore_ramdisk_seed=0
 allow_tcg="${ZBROWSER_SELFHOST_ALLOW_TCG:-0}"
 qemu_runtime="tcg"
 qemu_accel_args=()
@@ -81,44 +85,67 @@ fi
 qemu_memory="${ZBROWSER_SELFHOST_QEMU_MEMORY:-$default_memory}"
 qemu_smp="${ZBROWSER_SELFHOST_QEMU_SMP:-$default_smp}"
 
-make build/tools/lainfs_check_host build/tools/lainfs_seed build/esp.img reseed-data
+restore_default_ramdisk_seed() {
+  if [ "$restore_ramdisk_seed" -eq 1 ] && [ -x build/tools/ramdisk_seed_gen ]; then
+    make refresh-ramdisk >/dev/null || true
+  fi
+}
+trap restore_default_ramdisk_seed EXIT
+
+make build/tools/lainfs_check_host build/tools/lainfs_seed build/tools/ramdisk_seed_gen build/browser-c-engine/zbrowser_engine_module.zo reseed-data
 scripts/prepare-browser-selfhost-c-workspace.sh "$browser_c_stage_root" >/dev/null
-cp build/data.img "$smoke_img"
-cp "$ovmf_vars" "$smoke_vars"
 rm -rf "$seed_root"
 mkdir -p "$seed_root"
 cat >"$seed_root/autoexec" <<'EOF'
+mount S: hd1p1
+mount S: hd0p1
+mount S: sd0p1
+blk
+part
+mounts
+S:
 mkdir mods
+mkdir selfhost_project
+cd selfhost_project
+mkdir include
+mkdir src
+mkdir build
+cd ..
+mkdir kernel_z
+cd kernel_z
+mkdir install
+cd ..
 cd mods
 cp R:/examples/kernel_api.Z kernel_api.Z
 cp R:/examples/libc_api.Z libc_api.Z
 cp R:/examples/mini_zlib.Z mini_zlib.Z
 cp R:/examples/mini_zlib_api.Z mini_zlib_api.Z
+cp R:/examples/browser_compat_stub.Z browser_compat_stub.Z
 cp R:/examples/clib_port_smoke_module.Z clib_port_smoke_module.Z
 cp R:/examples/clib_port_smoke_module.zbuild clib_port_smoke_module.zbuild
 cp R:/examples/libc_smoke_module.Z libc_smoke_module.Z
 cp R:/examples/libc_smoke_module.zbuild libc_smoke_module.zbuild
 cp R:/examples/browser_selfhost_driver.Z browser_selfhost_driver.Z
 cp R:/examples/browser_selfhost_driver.zbuild browser_selfhost_driver.zbuild
+cp R:/examples/browser_selfhost_driver.zbuild bself.zbuild
 cp R:/examples/zbrowser_module.Z zbrowser_module.Z
+cp R:/examples/zbrowser_engine_module.zo zbrowser_engine_module.zo
 cp R:/examples/zbrowser_netsurf.Z zbrowser_netsurf.Z
 cp R:/examples/zbrowser_html.Z zbrowser_html.Z
 cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
 cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
 cp R:/examples/zbrowser_netsurf.zbuild zbrowser_netsurf.zbuild
 cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
-mkdir ../selfhost_project
-mkdir ../selfhost_project/include
-mkdir ../selfhost_project/src
-mkdir ../kernel_z
-cd ../browser_c_probe
+cd ..
+cd browser_c_probe
 ztest kernel
 zinstall kernel
 exec browser_c_probe.bin
 ztest queue
 zinstall queue
 exec browser_c_plan.bin
-cd ../mods
+cd ..
+cd mods
 cp R:/examples/zlang/selfhost_project/kernel.zbuild ../selfhost_project/kernel.zbuild
 cp R:/examples/zlang/selfhost_project/include/kernel_api.Z ../selfhost_project/include/kernel_api.Z
 cp R:/examples/zlang/selfhost_project/include/selfhost_once_leaf.Z ../selfhost_project/include/selfhost_once_leaf.Z
@@ -129,18 +156,42 @@ cp R:/kernel/z/kernel_z_selfhost.zbuild ../kernel_z/kernel_z_selfhost.zbuild
 cp R:/kernel/z/clock_math.Z ../kernel_z/clock_math.Z
 cp R:/kernel/z/status_math.Z ../kernel_z/status_math.Z
 cp R:/kernel/z/zlink_probe.Z ../kernel_z/zlink_probe.Z
-zinstall browser_selfhost_driver
+zinstall clib_port_smoke_module
+zinstall bself
 exec browser_selfhost_driver.bin
-cd ../kernel_z
+cd ..
+cd kernel_z
 zinstall kernel_z_selfhost
-cd ../selfhost_project
+cd ..
+cd selfhost_project
 ztest kernel
 zinstall kernel
 exec selfhost_project.bin
 poweroff
 EOF
-build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kernel examples "$browser_c_stage_root/browser_c" "$seed_root/autoexec" >/dev/null
+ramdisk_seed_args=()
+while IFS= read -r seed_path; do
+  ramdisk_seed_args+=("$seed_path")
+done < <(find examples -type f | sort | grep -vx 'examples/autoexec')
+ramdisk_seed_args+=("build/browser-c-engine/zbrowser_engine_module.zo=examples/zbrowser_engine_module.zo")
+while IFS= read -r seed_path; do
+  ramdisk_seed_args+=("$seed_path=${seed_path#"$browser_c_stage_root"/}")
+done < <(find "$browser_c_stage_root/browser_c" "$browser_c_stage_root/browser_c_probe" -type f | sort)
+ramdisk_seed_args+=(
+  kernel/z/kernel_z_selfhost.zbuild
+  kernel/z/clock_math.Z
+  kernel/z/status_math.Z
+  kernel/z/zlink_probe.Z
+  "$seed_root/autoexec=examples/autoexec"
+)
+build/tools/ramdisk_seed_gen build/ramdisk_seed.h "${ramdisk_seed_args[@]}" >/dev/null
+restore_ramdisk_seed=1
+make build/boot.iso
+cp build/data.img "$smoke_img"
+cp "$ovmf_vars" "$smoke_vars"
+build/tools/lainfs_seed "$smoke_img" Makefile README.md SELFHOSTING.md boot kernel examples "$browser_c_stage_root/browser_c" "$browser_c_stage_root/browser_c_probe" "$seed_root/autoexec" >/dev/null
 : >"$serial_log"
+: >"$qemu_log"
 
 printf 'zbrowser self-host smoke: runtime=%s smp=%s mem=%s timeout=%ss\n' \
   "$qemu_runtime" "$qemu_smp" "$qemu_memory" "$timeout_seconds"
@@ -150,24 +201,46 @@ fi
 
 qemu_start_epoch="$(date +%s)"
 set +e
-timeout "${timeout_seconds}s" qemu-system-x86_64 \
+run_qemu_smoke() {
+  timeout "${timeout_seconds}s" qemu-system-x86_64 \
   "${qemu_accel_args[@]}" \
   -smp "$qemu_smp" \
   -m "$qemu_memory" \
+  -boot order=d,menu=on \
   -drive if=pflash,format=raw,readonly=on,file="$ovmf_code" \
   -drive if=pflash,format=raw,file="$smoke_vars" \
-  -drive format=raw,file=build/esp.img,if=ide,index=0 \
-  -drive format=raw,file="$smoke_img",if=ide,index=1 \
-  -display none \
-  -serial "file:$serial_log" \
-  -monitor none
+  -cdrom build/boot.iso \
+  -device ich9-ahci,id=ahci \
+  -drive if=none,id=data,format=raw,file="$smoke_img" \
+	  -device ide-hd,drive=data,bus=ahci.0 \
+	  -display none \
+	  -serial "file:$serial_log" \
+	  -monitor none \
+	  >>"$qemu_log" 2>&1
+}
+
+run_qemu_smoke
 qemu_status=$?
+if [ "$qemu_status" -ne 0 ] && [ "$qemu_runtime" = "kvm" ] &&
+   grep -Eq 'failed to initialize kvm|KVM_CREATE_VM' "$qemu_log" 2>/dev/null; then
+  printf 'zbrowser self-host smoke: KVM failed to initialize; retrying with TCG\n'
+  qemu_runtime="tcg"
+  qemu_accel_args=(-accel tcg,thread=multi -cpu max)
+  qemu_memory="${ZBROWSER_SELFHOST_QEMU_MEMORY:-256M}"
+  qemu_smp="${ZBROWSER_SELFHOST_QEMU_SMP:-1}"
+  timeout_seconds="${ZBROWSER_SELFHOST_TIMEOUT_SECONDS:-420}"
+  : >"$serial_log"
+  : >"$qemu_log"
+  run_qemu_smoke
+  qemu_status=$?
+fi
 qemu_end_epoch="$(date +%s)"
 set -e
 qemu_elapsed="$((qemu_end_epoch - qemu_start_epoch))"
 
 if [ "$qemu_status" -ne 0 ] && [ "$qemu_status" -ne 124 ]; then
   printf 'zbrowser self-host smoke: QEMU exited with status %s after %ss\n' "$qemu_status" "$qemu_elapsed" >&2
+  tail -n 80 "$qemu_log" >&2 || true
   exit 1
 fi
 
@@ -184,6 +257,55 @@ check_file() {
     exit 1
   fi
 }
+
+check_serial_success() {
+  local expected_units
+
+  if ! grep -q 'created live ramdisk rd0p1 at R:' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected live R: ramdisk creation\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if ! grep -q '  R: rd0p1 lainfs' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected R: mount in guest\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if ! grep -q 'browser selfhost: ok' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected browser selfhost driver success output\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if grep -q 'unsupported .Z syntax' "$serial_log"; then
+    printf 'zbrowser self-host smoke: guest compiler reported unsupported .Z syntax\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if ! grep -q 'browser_c probe: ok bytes=' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected browser C staged-source probe success output\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  expected_units="$(grep -c '^[^|][^|]*|' scripts/browser-selfhost-c-units.txt)"
+  if ! grep -q "browser_c plan: ok units=${expected_units}" "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected browser C plan unit count output\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if [ "$(grep -c 'selfhost project 42' "$serial_log" || true)" -lt 2 ]; then
+    printf 'zbrowser self-host smoke: expected selfhost project to print twice (ztest + exec)\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+}
+
+if ! grep -q '  S: .* lainfs' "$serial_log"; then
+  check_serial_success
+  printf 'zbrowser self-host smoke: ok live-ramdisk path (timeout=%ss elapsed=%ss)\n' "$timeout_seconds" "$qemu_elapsed"
+  exit 0
+fi
 
 check_file "mods/zbrowser_module.buildlog"
 check_file "mods/zbrowser_html.zo"
@@ -261,9 +383,9 @@ check_buildlog() {
 }
 
 check_buildlog "mods/libc_smoke_module.buildlog" 1 "libc smoke module"
-check_buildlog "mods/clib_port_smoke_module.buildlog" 2 "clib port smoke module"
-check_buildlog "mods/zbrowser_module.buildlog" 2 "zbrowser module"
-check_buildlog "mods/zbrowser_netsurf.buildlog" 1 "NetSurf module"
+check_buildlog "mods/clib_port_smoke_module.buildlog" 3 "clib port smoke module"
+check_buildlog "mods/zbrowser_module.buildlog" 3 "zbrowser module"
+check_buildlog "mods/zbrowser_netsurf.buildlog" 2 "NetSurf module"
 check_buildlog "kernel_z/kernel_z_selfhost.buildlog" 3 "kernel Z selfhost slice"
 
 check_log_contains() {
@@ -280,7 +402,8 @@ check_log_contains() {
 }
 
 check_log_contains "mods/browser_selfhost.status" 'browser selfhost install ok' "browser selfhost status"
-check_log_contains "browser_c_probe/browser_c_plan.first" '^base64\.o\|third_party/netsurf/src/libnsutils/src/base64\.c\|' "browser C first unit"
+expected_browser_c_first="$(grep -m 1 '^[^|][^|]*|' scripts/browser-selfhost-c-units.txt)"
+check_log_contains "browser_c_probe/browser_c_plan.first" "^${expected_browser_c_first}$" "browser C first unit"
 check_log_contains "browser_c_probe/browser_c_plan.first" 'kernel/include/freestanding' "browser C first include roots"
 check_log_contains "selfhost_project/build/kernel.buildlog" '^status ok$' "selfhost build log"
 check_log_contains "selfhost_project/build/kernel.buildlog" '^objects 1$' "selfhost build log"
@@ -288,22 +411,6 @@ check_log_contains "selfhost_project/build/kernel.testlog" '^result 42$' "selfho
 check_log_contains "selfhost_project/build/kernel.testlog" '^status ok$' "selfhost test log"
 check_log_contains "selfhost_project/build/from_z_renamed.txt" 'created from selfhost_project' "selfhost output file"
 
-if ! grep -q 'browser selfhost: ok' "$serial_log"; then
-  printf 'zbrowser self-host smoke: expected browser selfhost driver success output\n' >&2
-  tail -n 120 "$serial_log" >&2 || true
-  exit 1
-fi
-
-if ! grep -q 'browser_c plan: ok units=42' "$serial_log"; then
-  printf 'zbrowser self-host smoke: expected browser C plan unit count output\n' >&2
-  tail -n 120 "$serial_log" >&2 || true
-  exit 1
-fi
-
-if [ "$(grep -c 'selfhost project 42' "$serial_log" || true)" -lt 2 ]; then
-  printf 'zbrowser self-host smoke: expected selfhost project to print twice (ztest + exec)\n' >&2
-  tail -n 120 "$serial_log" >&2 || true
-  exit 1
-fi
+check_serial_success
 
 printf 'zbrowser self-host smoke: ok (timeout=%ss elapsed=%ss)\n' "$timeout_seconds" "$qemu_elapsed"

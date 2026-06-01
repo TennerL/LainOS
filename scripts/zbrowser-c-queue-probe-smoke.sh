@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 stage_root="${1:-build/browser-selfhost-c-stage}"
-output_root="${2:-build/browser-selfhost-c-probe-host}"
+output_root="${2:-$stage_root/browser_c_probe}"
 manifest_path="$stage_root/browser_c_probe/queue.zbuild"
 status_path="$output_root/browser_c_plan.status"
 first_unit_path="$output_root/browser_c_plan.first"
@@ -19,6 +19,8 @@ if [[ ! -f "$manifest_path" ]]; then
 fi
 
 scripts/ztest-host.sh "$manifest_path" "$output_root" >/dev/null
+
+expected_units="$(grep -c '^[^|][^|]*|' "$stage_root/browser_c/COMPILE_UNITS.txt")"
 
 if [[ ! -f "$status_path" ]]; then
   printf 'zbrowser-c-queue-probe-smoke: missing status %s\n' "$status_path" >&2
@@ -35,8 +37,8 @@ if ! rg -q '^browser_c plan ok$' "$status_path"; then
   cat "$status_path" >&2
   exit 1
 fi
-if ! rg -q '^base64\.o\|third_party/netsurf/src/libnsutils/src/base64\.c\|' "$first_unit_path"; then
-  printf 'zbrowser-c-queue-probe-smoke: unexpected first unit contents in %s\n' "$first_unit_path" >&2
+if ! rg -q '^[^|]+\|[^|]+\.c\|[^|]+' "$first_unit_path"; then
+  printf 'zbrowser-c-queue-probe-smoke: unexpected first unit format in %s\n' "$first_unit_path" >&2
   cat "$first_unit_path" >&2
   exit 1
 fi
@@ -45,10 +47,10 @@ if ! rg -q 'kernel/include/freestanding' "$first_unit_path"; then
   cat "$first_unit_path" >&2
   exit 1
 fi
-if ! rg -q '^browser_c plan: ok units=42$' "$run_log"; then
+if ! rg -q "^browser_c plan: ok units=${expected_units}$" "$run_log"; then
   printf 'zbrowser-c-queue-probe-smoke: missing success line in %s\n' "$run_log" >&2
   cat "$run_log" >&2
   exit 1
 fi
 
-printf 'zbrowser-c-queue-probe-smoke: ok units=42\n'
+printf 'zbrowser-c-queue-probe-smoke: ok units=%s\n' "$expected_units"

@@ -1,4 +1,4 @@
 include .
 module
-zbrowser_netsurf_engine.Z zbrowser_netsurf_engine.zo
+zbrowser_engine_module.zo zbrowser_netsurf_engine.zo
 zbrowser_netsurf.Z zbrowser_netsurf.zo

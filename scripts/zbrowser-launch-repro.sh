@@ -86,7 +86,7 @@ if [ -d examples/styles ]; then
   cp -R examples/styles "$seed_root/mods/styles"
 fi
 printf '%s\n' "$launch_page" >"$seed_root/mods/browser.url"
-: >"$seed_root/mods/zbrowser.autostart"
+printf 'legacy\n' >"$seed_root/mods/zbrowser.autostart"
 cat >"$seed_root/autoexec" <<'EOF'
 mkdir mods
 cd mods

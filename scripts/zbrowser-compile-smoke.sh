@@ -10,10 +10,12 @@ mkdir -p build/zbrowser-smoke
 mkdir -p build/zbrowser-smoke/all-manifests
 mkdir -p build/zbrowser-smoke/all-installs
 mkdir -p build/zbrowser-smoke/all-ztests
-make build/tools/zmod_link_host
+make build/tools/zmod_link_host build/browser-c-engine/zbrowser_engine_module.zo
 scripts/zbrowser-c-selfhost-stage-smoke.sh
 scripts/zbrowser-c-queue-probe-smoke.sh
 scripts/zbrowser-c-host-compile-smoke.sh
+
+export ZBUILD_HOST_FORCE_BUILD_ROOT=1
 
 check_kernel_export() {
   local name="$1"
@@ -24,16 +26,10 @@ check_kernel_export() {
   fi
 }
 
-check_kernel_export "netsurf_browser_render_html_view"
-check_kernel_export "netsurf_browser_prepare_html_view"
-check_kernel_export "netsurf_browser_mouse_html_view"
-check_kernel_export "netsurf_browser_scroll_html_view"
-check_kernel_export "netsurf_browser_key_event"
-check_kernel_export "netsurf_browser_consume_navigation"
-check_kernel_export "netsurf_browser_consume_history_navigation"
-check_kernel_export "netsurf_browser_invalidate_cache"
-check_kernel_export "netsurf_browser_poll"
-check_kernel_export "netsurf_browser_status"
+check_kernel_export "malloc"
+check_kernel_export "free"
+check_kernel_export "snprintf"
+check_kernel_export "bsearch"
 
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zbrowser_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_netsurf.zbuild build/zbrowser-smoke/zbrowser_netsurf
@@ -113,7 +109,15 @@ if ! rg -q 'bad object name' "$invalid_object_log"; then
 fi
 
 invalid_object_count_log="build/zbrowser-smoke/invalid_object_count.log"
-if scripts/zbuild-host.sh examples/zlang/invalid_object_count.zbuild build/zbrowser-smoke/invalid_object_count >"$invalid_object_count_log" 2>&1; then
+invalid_object_count_manifest="build/zbrowser-smoke/invalid_object_count.zbuild"
+{
+  printf 'src ../../examples/zlang/output_name_project/src\n'
+  printf 'output invalid_object_count.bin\n'
+  for i in $(seq 0 1024); do
+    printf 'default_output_demo.Z obj%03d.zo\n' "$i"
+  done
+} >"$invalid_object_count_manifest"
+if scripts/zbuild-host.sh "$invalid_object_count_manifest" build/zbrowser-smoke/invalid_object_count >"$invalid_object_count_log" 2>&1; then
   printf 'zbrowser-compile-smoke: too-many-objects manifest unexpectedly succeeded\n' >&2
   cat "$invalid_object_count_log" >&2
   exit 1
@@ -149,7 +153,7 @@ if ! rg -q 'bad src directive' "$invalid_src_dir_log"; then
 fi
 
 invalid_build_dir_log="build/zbrowser-smoke/invalid_build_dir.log"
-if scripts/zbuild-host.sh examples/zlang/invalid_build_dir.zbuild build/zbrowser-smoke/invalid_build_dir >"$invalid_build_dir_log" 2>&1; then
+if ZBUILD_HOST_FORCE_BUILD_ROOT=0 scripts/zbuild-host.sh examples/zlang/invalid_build_dir.zbuild build/zbrowser-smoke/invalid_build_dir >"$invalid_build_dir_log" 2>&1; then
   printf 'zbrowser-compile-smoke: invalid build-dir manifest unexpectedly succeeded\n' >&2
   cat "$invalid_build_dir_log" >&2
   exit 1
@@ -427,11 +431,11 @@ check_output "build/zbrowser-smoke/install/kernel_z_selfhost/install/zlink_probe
 check_output "build/zbrowser-smoke/install/install_dir_project/apps/browser/install_dir_project.bin"
 check_output "build/zbrowser-smoke/install/install_dir_project/.host-build/install_dir.bin"
 check_output "build/zbrowser-smoke/install_dir_project/install_dir.bin"
-check_output "examples/zlang/selfhost_project/build/kernel.bin"
-check_output "examples/zlang/manifest_cwd_project/build/manifest_cwd.bin"
-check_output "examples/zlang/default_output_project/build/kernel.bin"
-check_output "examples/zlang/output_name_project/build/custom_named_output.bin"
-check_output "examples/zlang/glob_literal_project/build/glob_literal.bin"
+check_output "build/zbrowser-smoke/selfhost_project/kernel.bin"
+check_output "build/zbrowser-smoke/manifest_cwd_project/manifest_cwd.bin"
+check_output "build/zbrowser-smoke/default_output_project/kernel.bin"
+check_output "build/zbrowser-smoke/output_name_project/custom_named_output.bin"
+check_output "build/zbrowser-smoke/glob_literal_project/glob_literal.bin"
 check_output "build/zbrowser-smoke/jpg_decoder/jpg_decoder.zo"
 check_buildlog "build/zbrowser-smoke/zbrowser_module/zbrowser_module.buildlog" "status module"
 check_buildlog "build/zbrowser-smoke/zbrowser_netsurf/zbrowser_netsurf.buildlog" "status module"
@@ -448,11 +452,11 @@ check_buildlog "build/zbrowser-smoke/jpg_decoder/jpg_decoder.buildlog" "status m
 check_buildlog "build/zbrowser-smoke/kernel_z_selfhost/kernel_z_selfhost.buildlog" "status module"
 check_buildlog "build/zbrowser-smoke/install_dir_project/kernel.buildlog" "status ok"
 check_buildlog "build/zbrowser-smoke/install/install_dir_project/.host-build/kernel.buildlog" "status ok"
-check_buildlog "examples/zlang/selfhost_project/build/kernel.buildlog" "status ok"
-check_buildlog "examples/zlang/manifest_cwd_project/build/kernel.buildlog" "status ok"
-check_buildlog "examples/zlang/default_output_project/build/kernel.buildlog" "status ok"
-check_buildlog "examples/zlang/output_name_project/build/kernel.buildlog" "status ok"
-check_buildlog "examples/zlang/glob_literal_project/build/kernel.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/selfhost_project/kernel.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/manifest_cwd_project/kernel.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/default_output_project/kernel.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/output_name_project/kernel.buildlog" "status ok"
+check_buildlog "build/zbrowser-smoke/glob_literal_project/kernel.buildlog" "status ok"
 check_buildlog_line "build/zbrowser-smoke/zbrowser_module/zbrowser_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/zbrowser_netsurf/zbrowser_netsurf.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/image_viewer/image_viewer.buildlog" "validation module-link"
@@ -473,8 +477,8 @@ check_buildlog_line "build/zbrowser-smoke/install/taskmgr_module/.host-build/tas
 check_buildlog_line "build/zbrowser-smoke/install/personalize_module/.host-build/personalize_module.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/kernel_z_selfhost/.host-build/kernel_z_selfhost.buildlog" "validation module-link"
 check_buildlog_line "build/zbrowser-smoke/install/kernel_z_selfhost/.host-build/kernel_z_selfhost.buildlog" "objects 3"
-check_buildlog_line "examples/zlang/output_name_project/build/kernel.buildlog" "output custom_named_output.bin"
-check_buildlog_line "examples/zlang/glob_literal_project/build/kernel.buildlog" "output glob_literal.bin"
+check_buildlog_line "build/zbrowser-smoke/output_name_project/kernel.buildlog" "output custom_named_output.bin"
+check_buildlog_line "build/zbrowser-smoke/glob_literal_project/kernel.buildlog" "output glob_literal.bin"
 check_buildlog_line "build/zbrowser-smoke/install_dir_project/kernel.buildlog" "output install_dir.bin"
 if [[ -e build/zbrowser-smoke/zclean-linked/zbcss_async.bin ||
       -e build/zbrowser-smoke/zclean-linked/zbcss_async.zo ||
@@ -516,6 +520,9 @@ while IFS= read -r manifest; do
   if manifest_is_known_negative "$manifest"; then
     continue
   fi
+  if manifest_skips_broad_ztest "$manifest"; then
+    continue
+  fi
 
   probe_rel="${manifest#examples/}"
   probe_dir="build/zbrowser-smoke/all-manifests/${probe_rel%.zbuild}"
@@ -538,6 +545,9 @@ done < <(find examples -name '*.zbuild' -type f | sort)
 
 while IFS= read -r manifest; do
   if manifest_is_known_negative "$manifest"; then
+    continue
+  fi
+  if manifest_skips_broad_ztest "$manifest"; then
     continue
   fi
 

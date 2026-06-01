@@ -1,5 +1,5 @@
 ZBUILD_HOST_MAX_INCLUDE_DIRS=4
-ZBUILD_HOST_MAX_OBJECTS=256
+ZBUILD_HOST_MAX_OBJECTS=1024
 
 zbuild_host_fail_bad_directive() {
   local directive="$1"
@@ -252,6 +252,9 @@ zbuild_host_parse_manifest() {
           exit 1
         fi
         source_path="$(zbuild_host_resolve_path "$ZBUILD_SOURCE_DIR" "$source_name")"
+        if [[ "$source_name" == *.zo && ! -f "$source_path" && -f "$PWD/build/browser-c-engine/$(basename "$source_name")" ]]; then
+          source_path="$PWD/build/browser-c-engine/$(basename "$source_name")"
+        fi
         object_path="$(zbuild_host_resolve_path "$ZBUILD_BUILD_DIR" "$object_name")"
         mkdir -p "$(dirname "$object_path")"
         ZBUILD_LINK_ARGS+=("$source_path" "$object_path")

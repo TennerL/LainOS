@@ -7,6 +7,7 @@
 #include "kernel.h"
 #include "kmem.h"
 #include "libc.h"
+#include "shell.h"
 
 #define LIBC_ENOMEM 12
 #define LIBC_EINVAL 22
@@ -216,6 +217,69 @@ int abs(int value) {
 }
 
 void abort(void) {
+    uint64_t caller = (uint64_t)(uintptr_t)__builtin_return_address(0);
+    void **frame = (void **)__builtin_frame_address(0);
+    const char *module_name = 0;
+    const char *export_name = 0;
+    uint64_t module_base = 0;
+    uint64_t export_value = 0;
+    uint32_t module_size = 0;
+
+    console_puts("abort caller=0x");
+    console_put_hex64(caller);
+    if (shell_module_resolve_address(caller,
+                                     &module_name,
+                                     &module_base,
+                                     &module_size,
+                                     &export_name,
+                                     &export_value) == 0) {
+        console_puts(" module=");
+        console_puts(module_name != 0 ? module_name : "?");
+        console_puts(" base=0x");
+        console_put_hex64(module_base);
+        console_puts(" offset=0x");
+        console_put_hex64(caller - module_base);
+        console_puts(" size=");
+        console_put_dec64(module_size);
+        if (export_name != 0) {
+            console_puts(" nearest-export=");
+            console_puts(export_name);
+            console_puts("+0x");
+            console_put_hex64(caller - export_value);
+        }
+    }
+    console_puts("\n");
+    for (uint32_t depth = 0; frame != 0 && depth < 8u; ++depth) {
+        uint64_t ret = (uint64_t)(uintptr_t)frame[1];
+        void **next = (void **)frame[0];
+
+        console_puts("abort bt[");
+        console_put_dec64(depth);
+        console_puts("]=0x");
+        console_put_hex64(ret);
+        if (shell_module_resolve_address(ret,
+                                         &module_name,
+                                         &module_base,
+                                         &module_size,
+                                         &export_name,
+                                         &export_value) == 0) {
+            console_puts(" module=");
+            console_puts(module_name != 0 ? module_name : "?");
+            console_puts(" offset=0x");
+            console_put_hex64(ret - module_base);
+            if (export_name != 0) {
+                console_puts(" nearest=");
+                console_puts(export_name);
+                console_puts("+0x");
+                console_put_hex64(ret - export_value);
+            }
+        }
+        console_puts("\n");
+        if (next <= frame) {
+            break;
+        }
+        frame = next;
+    }
     console_panic("abort");
     for (;;) {
     }

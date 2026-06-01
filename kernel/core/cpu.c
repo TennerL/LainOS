@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "kernel.h"
+#include "shell.h"
 
 #define CPU_MAX_CORES 32u
 #define CPU_AP_STACK_SIZE (64u * 1024u)
@@ -212,6 +213,21 @@ static smp_work_slot_t smp_work_slots[CPU_SMP_WORK_SLOTS];
 static kernel_task_slot_t kernel_task_slots[CPU_TASK_SLOTS];
 
 typedef struct {
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t r11;
+    uint64_t r10;
+    uint64_t r9;
+    uint64_t r8;
+    uint64_t rdi;
+    uint64_t rsi;
+    uint64_t rbp;
+    uint64_t rdx;
+    uint64_t rcx;
+    uint64_t rbx;
+    uint64_t rax;
     uint64_t vector;
     uint64_t error_code;
     uint64_t rip;
@@ -250,6 +266,42 @@ static uint64_t cpu_read_cr2(void) {
 
     __asm__ __volatile__("mov %%cr2, %0" : "=r"(value));
     return value;
+}
+
+static void cpu_print_code_bytes(uint64_t address) {
+    const volatile uint8_t *code = (const volatile uint8_t *)(uintptr_t)address;
+    static const char hex[] = "0123456789ABCDEF";
+    char text[3];
+
+    text[2] = '\0';
+
+    console_puts("\ncode=");
+    for (uint32_t i = 0; i < 8u; ++i) {
+        uint8_t byte = code[i];
+        if (i != 0) {
+            console_puts(" ");
+        }
+        text[0] = hex[(byte >> 4u) & 0x0fu];
+        text[1] = hex[byte & 0x0fu];
+        console_puts(text);
+    }
+}
+
+static void cpu_print_stack_words(const char *label, uint64_t address) {
+    const volatile uint64_t *words = (const volatile uint64_t *)(uintptr_t)address;
+
+    if (address == 0u) {
+        return;
+    }
+    console_puts("\n");
+    console_puts(label);
+    console_puts("=0x");
+    console_put_hex64(address);
+    for (uint32_t i = 0; i < 6u; ++i) {
+        console_puts(i == 0 ? " [" : " ");
+        console_put_hex64(words[i]);
+    }
+    console_puts("]");
 }
 
 static const char *cpu_exception_name(uint64_t vector) {
@@ -296,7 +348,7 @@ static const char *cpu_exception_name(uint64_t vector) {
 
 void cpu_exception_handler(void *frame_ptr) {
     cpu_exception_frame_t *frame = (cpu_exception_frame_t *)frame_ptr;
-    uint64_t saved_rsp = frame != 0 ? (uint64_t)(uintptr_t)frame + sizeof(*frame) : 0u;
+    uint64_t saved_rsp = frame != 0 ? (uint64_t)(uintptr_t)&frame->vector : 0u;
 
     fill_screen_color(0x8b0000u);
     console_set_cursor(0, 0);
@@ -315,8 +367,58 @@ void cpu_exception_handler(void *frame_ptr) {
         console_put_hex64(frame->cs);
         console_puts(" rflags=0x");
         console_put_hex64(frame->rflags);
+        cpu_print_code_bytes(frame->rip);
+        {
+            const char *module_name = 0;
+            const char *export_name = 0;
+            uint64_t module_base = 0;
+            uint64_t export_value = 0;
+            uint32_t module_size = 0;
+
+            if (shell_module_resolve_address(frame->rip,
+                                             &module_name,
+                                             &module_base,
+                                             &module_size,
+                                             &export_name,
+                                             &export_value) == 0) {
+                console_puts("\nmodule=");
+                console_puts(module_name != 0 ? module_name : "?");
+                console_puts(" base=0x");
+                console_put_hex64(module_base);
+                console_puts(" offset=0x");
+                console_put_hex64(frame->rip - module_base);
+                console_puts(" size=");
+                console_put_dec64(module_size);
+                if (export_name != 0) {
+                    console_puts("\nnearest-export=");
+                    console_puts(export_name);
+                    console_puts("+0x");
+                    console_put_hex64(frame->rip - export_value);
+                }
+            }
+        }
         console_puts("\nrsp=0x");
         console_put_hex64(saved_rsp);
+        console_puts(" rbp=0x");
+        console_put_hex64(frame->rbp);
+        console_puts("\nrax=0x");
+        console_put_hex64(frame->rax);
+        console_puts(" rbx=0x");
+        console_put_hex64(frame->rbx);
+        console_puts(" rcx=0x");
+        console_put_hex64(frame->rcx);
+        console_puts(" rdx=0x");
+        console_put_hex64(frame->rdx);
+        console_puts("\nrdi=0x");
+        console_put_hex64(frame->rdi);
+        console_puts(" rsi=0x");
+        console_put_hex64(frame->rsi);
+        console_puts(" r8=0x");
+        console_put_hex64(frame->r8);
+        console_puts(" r9=0x");
+        console_put_hex64(frame->r9);
+        cpu_print_stack_words("stack-rsp", saved_rsp);
+        cpu_print_stack_words("stack-rbp", frame->rbp);
         if (frame->vector == 14u) {
             console_puts("\ncr2=0x");
             console_put_hex64(cpu_read_cr2());

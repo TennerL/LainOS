@@ -6,6 +6,7 @@
 void abort(void) __attribute__((noreturn));
 int atexit(void (*function)(void));
 int atoi(const char *nptr);
+int abs(int value);
 void *malloc(size_t size);
 void *calloc(size_t count, size_t size);
 void *realloc(void *ptr, size_t size);
@@ -25,5 +26,6 @@ long strtol(const char *nptr, char **endptr, int base);
 unsigned long strtoul(const char *nptr, char **endptr, int base);
 long long strtoll(const char *nptr, char **endptr, int base);
 unsigned long long strtoull(const char *nptr, char **endptr, int base);
+float strtof(const char *nptr, char **endptr);
 
 #endif

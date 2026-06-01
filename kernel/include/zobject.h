@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define ZOBJECT_SYMBOL_NAME_SIZE 128u
-#define ZOBJECT_MAX_RESOLVED_SYMBOLS 4096u
+#define ZOBJECT_MAX_RESOLVED_SYMBOLS 16384u
 
 typedef struct {
     char name[ZOBJECT_SYMBOL_NAME_SIZE];
@@ -48,6 +48,21 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                               zobject_resolved_symbol_t *export_symbols,
                               uint32_t export_symbol_capacity,
                               uint32_t *export_symbol_count);
+
+int zobject_link_flat_many_ex_entry_from(const unsigned char *const *objects,
+                                         const uint32_t *object_sizes,
+                                         uint32_t object_count,
+                                         unsigned char *out,
+                                         uint32_t out_capacity,
+                                         uint64_t base_address,
+                                         uint32_t *out_size,
+                                         uint32_t *error_line,
+                                         const zobject_resolved_symbol_t *external_symbols,
+                                         uint32_t external_symbol_count,
+                                         zobject_resolved_symbol_t *export_symbols,
+                                         uint32_t export_symbol_capacity,
+                                         uint32_t *export_symbol_count,
+                                         uint32_t entry_start_index);
 const char *zobject_last_error_reason(void);
 const char *zobject_last_error_symbol(void);
 

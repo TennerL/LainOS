@@ -32,7 +32,7 @@ elf_object="$output_root/$object_name"
 zo_object="$output_root/${object_name%.o}.zo"
 manifest_path="$output_root/zbrowser_c_engine_link_smoke.zbuild"
 
-compile_cmd=(cc -c -ffreestanding -nostdinc -fno-pic -fno-PIE -mcmodel=large -fno-asynchronous-unwind-tables -fno-unwind-tables)
+compile_cmd=(cc -c -ffreestanding -nostdinc -fno-pic -fno-PIE -mcmodel=large -mno-red-zone -mstackrealign -mincoming-stack-boundary=3 -fno-asynchronous-unwind-tables -fno-unwind-tables)
 IFS=':' read -r -a include_array <<<"$include_roots"
 for include_root in "${include_array[@]}"; do
   [[ -n "$include_root" ]] || continue
@@ -42,6 +42,9 @@ if [[ -n "${extra_flags:-}" ]]; then
   IFS=';' read -r -a extra_flag_array <<<"$extra_flags"
   for extra_flag in "${extra_flag_array[@]}"; do
     [[ -n "$extra_flag" ]] || continue
+    if [[ "$extra_flag" == "-DZBROWSER_ENGINE_ENABLE_DOM" ]]; then
+      continue
+    fi
     compile_cmd+=("${extra_flag//\\\"/\"}")
   done
 fi

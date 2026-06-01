@@ -30,8 +30,8 @@
 #define HOST_MAX_SOURCE_SIZE (4u * 1024u * 1024u)
 #define HOST_MAX_ASM_SIZE (8u * 1024u * 1024u)
 #define HOST_MAX_OBJECT_SIZE (4u * 1024u * 1024u)
-#define HOST_MAX_LINK_SIZE (16u * 1024u * 1024u)
-#define HOST_MAX_OBJECTS 256u
+#define HOST_MAX_LINK_SIZE (256u * 1024u * 1024u)
+#define HOST_MAX_OBJECTS 1024u
 #define HOST_MAX_ONCE_PATHS 128u
 #define HOST_MAX_PATH 768u
 #define HOST_RUNTIME_ENTRY_FILE 1
@@ -114,6 +114,7 @@ static const char *const host_kernel_exports[] = {
     "realloc",
     "free",
     "abort",
+    "abs",
     "time",
     "errno_location",
     "__errno_location",
@@ -147,6 +148,33 @@ static const char *const host_kernel_exports[] = {
     "strtoul",
     "snprintf",
     "vsnprintf",
+    "sprintf",
+    "floor",
+    "trunc",
+    "fmod",
+    "sqrt",
+    "sin",
+    "cos",
+    "tan",
+    "atan",
+    "atan2",
+    "asin",
+    "acos",
+    "exp",
+    "log",
+    "log2",
+    "log10",
+    "pow",
+    "cbrt",
+    "fabs",
+    "difftime",
+    "gmtime_r",
+    "localtime_r",
+    "mktime",
+    "strptime",
+    "strftime",
+    "setjmp",
+    "longjmp",
     "tolower",
     "toupper",
     "bsearch",
@@ -189,6 +217,7 @@ static const char *const host_kernel_exports[] = {
     "gfx_clear",
     "draw_text_at_pixel",
     "draw_text_scaled_at_pixel",
+    "draw_text_sized_at_pixel",
     "put_char_at",
     "put_dec_at",
     "put_char_at_screen",

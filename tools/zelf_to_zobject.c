@@ -20,7 +20,7 @@
 #define ZOBJECT_SECTION_DATA 2u
 #define ZOBJECT_SECTION_BSS 3u
 #define ZELF_MAX_SECTIONS 256u
-#define ZELF_MAX_SYMBOLS 512u
+#define ZELF_MAX_SYMBOLS 4096u
 #define ZELF_MAX_RELOCS 16384u
 #define ZELF_MAX_OBJECT_SIZE (16u * 1024u * 1024u)
 
@@ -422,19 +422,24 @@ int main(int argc, char **argv) {
             maps[i].mem_size = (uint32_t)shdrs[i].sh_size;
             maps[i].out_file_offset = data_size;
             data_size += maps[i].mem_size;
-        } else if (shdrs[i].sh_type == SHT_NOBITS) {
-            bss_size = align_up(bss_size, shdrs[i].sh_addralign);
-            maps[i].kind = ZOBJECT_SECTION_BSS;
-            maps[i].load_offset = text_size + data_size + bss_size;
-            maps[i].mem_size = (uint32_t)shdrs[i].sh_size;
-            bss_size += maps[i].mem_size;
-        } else if (shdrs[i].sh_type == SHT_NOTE) {
+        } else if (shdrs[i].sh_type == SHT_NOBITS || shdrs[i].sh_type == SHT_NOTE) {
             continue;
         } else {
             fprintf(stderr, "%s: unsupported alloc section type %u\n", argv[1], shdrs[i].sh_type);
             free(elf);
             return 1;
         }
+    }
+    for (uint32_t i = 0; i < eh.e_shnum; ++i) {
+        if ((shdrs[i].sh_flags & SHF_ALLOC) == 0 ||
+            shdrs[i].sh_type != SHT_NOBITS) {
+            continue;
+        }
+        bss_size = align_up(bss_size, shdrs[i].sh_addralign);
+        maps[i].kind = ZOBJECT_SECTION_BSS;
+        maps[i].load_offset = text_size + data_size + bss_size;
+        maps[i].mem_size = (uint32_t)shdrs[i].sh_size;
+        bss_size += maps[i].mem_size;
     }
 
     for (uint32_t i = 1; i < sym_count; ++i) {

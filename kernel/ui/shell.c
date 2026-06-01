@@ -22,21 +22,22 @@
 #define SCRIPT_BUFFER_SIZE 65536u
 #define SCRIPT_LINE_SIZE 128u
 #define SCRIPT_MAX_DEPTH 4
-#define EXEC_BUFFER_SIZE (2u * 1024u * 1024u)
+#define EXEC_BUFFER_SIZE (32u * 1024u * 1024u)
 #define EXEC_API_MAGIC 0x4C41494E45584543ull
 #define ASM_SOURCE_SIZE (3u * 1024u * 1024u)
 #define Z_INCLUDE_BUFFER_SIZE (512u * 1024u)
-#define ZMODULE_IMAGE_SIZE (1024u * 1024u)
+#define ZMODULE_IMAGE_SIZE (16u * 1024u * 1024u)
 #define SHELL_PATH_SIZE 128u
 #define SHELL_MAX_SESSIONS 2u
 #define Z_INCLUDE_MAX_DEPTH 4u
 #define Z_INCLUDE_MAX_DIRS 4u
 #define Z_INCLUDE_ONCE_MAX 32u
-#define ZLINK_MAX_OBJECTS 32u
+#define ZLINK_MAX_OBJECTS 1024u
 #define ZMODULE_MAX_MODULES 8u
 #define ZMODULE_MAX_EXPORTS ZOBJECT_MAX_RESOLVED_SYMBOLS
 #define ZMODULE_NAME_SIZE 32u
 #define ZMODULE_TICK_HZ 20u
+#define ZMODULE_CALL_STACK_SIZE (4u * 1024u * 1024u)
 #define SHELL_REGISTRY_FILE "registry.cfg"
 #define SHELL_BOOTMODE_FILE "bootmode.cfg"
 #define SHELL_BG_JOBS 8u
@@ -54,6 +55,7 @@ static char *shell_source_buffer;
 static char *shell_wget_buffer;
 static char zbuild_report[512];
 static char ztest_report[256];
+static char zmodule_manifest_object_names[ZLINK_MAX_OBJECTS][32];
 static int shell_work_buffers_ready;
 static unsigned int shell_bg_next_id = 1u;
 static int shell_boot_safe_mode;
@@ -88,7 +90,10 @@ typedef struct {
     uint32_t active_calls;
     int unload_called;
     char name[ZMODULE_NAME_SIZE];
+    unsigned char *image_alloc;
     unsigned char *image;
+    unsigned char *call_stack;
+    uint32_t call_stack_size;
     uint32_t image_size;
     uint32_t object_count;
     uint32_t export_count;
@@ -99,6 +104,20 @@ static zmodule_slot_t zmodule_slots[ZMODULE_MAX_MODULES];
 static zobject_resolved_symbol_t zmodule_resident_symbol_work[ZOBJECT_MAX_RESOLVED_SYMBOLS];
 static zobject_resolved_symbol_t zmodule_export_symbol_work[ZMODULE_MAX_EXPORTS];
 static unsigned long long zmodule_last_tick;
+
+#define ZMODULE_IMAGE_ALIGNMENT 16u
+
+static unsigned char *zmodule_align_image_allocation(unsigned char *ptr) {
+    uintptr_t value;
+
+    if (ptr == 0) {
+        return 0;
+    }
+    value = (uintptr_t)ptr;
+    value = (value + (uintptr_t)(ZMODULE_IMAGE_ALIGNMENT - 1u)) &
+            ~(uintptr_t)(ZMODULE_IMAGE_ALIGNMENT - 1u);
+    return (unsigned char *)value;
+}
 
 typedef void (*command_handler_t)(const char *args, const boot_info_t *info);
 
@@ -118,6 +137,100 @@ typedef void (*zmodule_unload_t)(void);
 typedef void (*zmodule_void_hook_t)(void);
 typedef void (*zmodule_key_hook_t)(uint32_t key_type, uint32_t ch);
 typedef void (*zmodule_mouse_hook_t)(uint32_t x, uint32_t y, uint32_t buttons, int32_t wheel);
+
+static void zmodule_call_program_on_stack(exec_program_t fn,
+                                          const exec_api_t *api,
+                                          void *stack_top) {
+    __asm__ __volatile__(
+        "mov %[fn], %%r10\n\t"
+        "mov %[stack_top], %%r11\n\t"
+        "mov %%rsp, %%rax\n\t"
+        "mov %%r11, %%rsp\n\t"
+        "and $-16, %%rsp\n\t"
+        "push %%rax\n\t"
+        "sub $8, %%rsp\n\t"
+        "mov %[api], %%rdi\n\t"
+        "call *%%r10\n\t"
+        "add $8, %%rsp\n\t"
+        "pop %%rsp\n\t"
+        :
+        : [fn] "r"(fn), [api] "r"(api), [stack_top] "r"(stack_top)
+        : "rax", "rdi", "r10", "r11", "memory", "cc");
+}
+
+static void zmodule_call_void_on_stack(zmodule_void_hook_t fn,
+                                       void *stack_top) {
+    __asm__ __volatile__(
+        "mov %[fn], %%r10\n\t"
+        "mov %[stack_top], %%r11\n\t"
+        "mov %%rsp, %%rax\n\t"
+        "mov %%r11, %%rsp\n\t"
+        "and $-16, %%rsp\n\t"
+        "push %%rax\n\t"
+        "sub $8, %%rsp\n\t"
+        "call *%%r10\n\t"
+        "add $8, %%rsp\n\t"
+        "pop %%rsp\n\t"
+        :
+        : [fn] "r"(fn), [stack_top] "r"(stack_top)
+        : "rax", "r10", "r11", "memory", "cc");
+}
+
+static void zmodule_call_key_on_stack(zmodule_key_hook_t fn,
+                                      uint32_t key_type,
+                                      uint32_t ch,
+                                      void *stack_top) {
+    __asm__ __volatile__(
+        "mov %[fn], %%r10\n\t"
+        "mov %[stack_top], %%r11\n\t"
+        "mov %%rsp, %%rax\n\t"
+        "mov %%r11, %%rsp\n\t"
+        "and $-16, %%rsp\n\t"
+        "push %%rax\n\t"
+        "sub $8, %%rsp\n\t"
+        "mov %[key_type], %%edi\n\t"
+        "mov %[ch], %%esi\n\t"
+        "call *%%r10\n\t"
+        "add $8, %%rsp\n\t"
+        "pop %%rsp\n\t"
+        :
+        : [fn] "r"(fn),
+          [key_type] "r"(key_type),
+          [ch] "r"(ch),
+          [stack_top] "r"(stack_top)
+        : "rax", "rdi", "rsi", "r10", "r11", "memory", "cc");
+}
+
+static void zmodule_call_mouse_on_stack(zmodule_mouse_hook_t fn,
+                                        uint32_t x,
+                                        uint32_t y,
+                                        uint32_t buttons,
+                                        int32_t wheel,
+                                        void *stack_top) {
+    __asm__ __volatile__(
+        "mov %[fn], %%r10\n\t"
+        "mov %[stack_top], %%r11\n\t"
+        "mov %%rsp, %%rax\n\t"
+        "mov %%r11, %%rsp\n\t"
+        "and $-16, %%rsp\n\t"
+        "push %%rax\n\t"
+        "sub $8, %%rsp\n\t"
+        "mov %[x], %%edi\n\t"
+        "mov %[y], %%esi\n\t"
+        "mov %[buttons], %%edx\n\t"
+        "mov %[wheel], %%ecx\n\t"
+        "call *%%r10\n\t"
+        "add $8, %%rsp\n\t"
+        "pop %%rsp\n\t"
+        :
+        : [fn] "r"(fn),
+          [x] "r"(x),
+          [y] "r"(y),
+          [buttons] "r"(buttons),
+          [wheel] "r"(wheel),
+          [stack_top] "r"(stack_top)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r10", "r11", "memory", "cc");
+}
 
 typedef struct {
     const char *name;
@@ -181,6 +294,22 @@ static int streq(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static int str_ends_with(const char *s, const char *suffix) {
+    uint32_t s_len = 0;
+    uint32_t suffix_len = 0;
+
+    while (s[s_len]) {
+        ++s_len;
+    }
+    while (suffix[suffix_len]) {
+        ++suffix_len;
+    }
+    if (suffix_len > s_len) {
+        return 0;
+    }
+    return streq(s + s_len - suffix_len, suffix);
+}
+
 static int active_drive(void);
 static int append_text_limited(char *out, uint32_t out_size, uint32_t *pos, const char *text);
 static int shell_run_command_foreground(char *line, const boot_info_t *info, int background);
@@ -188,6 +317,7 @@ static const char *kernel_task_state_text(unsigned int state);
 static const char *lainfs_check_reason_text(uint32_t reason);
 static void print_lainfs_entry_detail(char drive_letter, uint32_t entry_id);
 static void print_lainfs_mount_check(char drive_letter);
+static void reset_cwd(int drive);
 
 static void zero_memory(void *ptr, uint32_t size) {
     unsigned char *p = (unsigned char *)ptr;
@@ -838,8 +968,14 @@ static int path_drive_prefix(const char **path, int fallback_drive) {
         *path = s;
     }
 
-    if (drive < 0 || drive >= MAX_DRIVES || !drives[drive].present) {
+    if (drive < 0 || drive >= MAX_DRIVES ||
+        (!drives[drive].present && !storage_drive_is_mounted((char)('A' + drive)))) {
         return -1;
+    }
+    if (!drives[drive].present && storage_drive_is_mounted((char)('A' + drive))) {
+        drives[drive].present = 1;
+        copy_label(drives[drive].label, "MOUNT");
+        reset_cwd(drive);
     }
 
     return drive;
@@ -1653,11 +1789,25 @@ static void cmd_resolution(const char *args, const boot_info_t *info) {
     uint64_t width = 0;
     uint64_t height = 0;
     int drive = active_drive();
+    int config_drive = drive;
     int status;
 
     if (drive < 0) {
         console_puts("select a mounted drive first, for example S:\n");
         return;
+    }
+
+    {
+        const mount_t *active_mount = storage_get_mount_by_drive((char)('A' + drive));
+        if (active_mount &&
+            streq(active_mount->partition_name, "rd0p1")) {
+            const mount_t *system_mount = storage_get_mount_by_drive('S');
+            if (system_mount &&
+                !streq(system_mount->partition_name, "rd0p1") &&
+                storage_partition_is_writable(system_mount->partition_index)) {
+                config_drive = 'S' - 'A';
+            }
+        }
     }
 
     split_first_arg((char *)args, &width_text, &height_text);
@@ -1671,7 +1821,7 @@ static void cmd_resolution(const char *args, const boot_info_t *info) {
         console_put_dec64(graphics_format());
         console_puts("\n");
 
-        status = lainfs_load_file_in_dir((char)('A' + drive),
+        status = lainfs_load_file_in_dir((char)('A' + config_drive),
                                          LAINFS_ROOT_DIR,
                                          "bootres.cfg",
                                          config,
@@ -1708,7 +1858,7 @@ static void cmd_resolution(const char *args, const boot_info_t *info) {
         return;
     }
 
-    status = lainfs_save_file_in_dir((char)('A' + drive),
+    status = lainfs_save_file_in_dir((char)('A' + config_drive),
                                      LAINFS_ROOT_DIR,
                                      "bootres.cfg",
                                      config,
@@ -1717,11 +1867,16 @@ static void cmd_resolution(const char *args, const boot_info_t *info) {
         console_puts("resolution failed: could not save bootres.cfg\n");
         return;
     }
+    if (lainfs_flush((char)('A' + config_drive)) != 0) {
+        console_puts("resolution warning: saved request but flush failed\n");
+    }
 
     console_puts("next boot resolution set to ");
     console_put_dec64(width);
     console_puts("x");
     console_put_dec64(height);
+    console_puts(" on ");
+    print_drive_name(config_drive);
     console_puts("\nreboot to apply it\n");
 }
 
@@ -3180,6 +3335,7 @@ static int live_seed_parent_for_path(char drive_letter,
 static void seed_live_ramdisk(char drive_letter) {
     uint32_t copied = 0;
     uint32_t failed = 0;
+    const char *first_failed_path = 0;
 
     for (uint32_t i = 0; i < RAMDISK_SEED_ENTRY_COUNT; ++i) {
         const ramdisk_seed_entry_t *seed = &ramdisk_seed_entries[i];
@@ -3196,6 +3352,9 @@ static void seed_live_ramdisk(char drive_letter) {
                                     name,
                                     (const char *)seed->data,
                                     seed->size) != 0) {
+            if (!first_failed_path) {
+                first_failed_path = seed->path;
+            }
             ++failed;
             continue;
         }
@@ -3208,6 +3367,10 @@ static void seed_live_ramdisk(char drive_letter) {
     if (failed != 0) {
         console_puts(" failed=");
         console_put_dec64(failed);
+        if (first_failed_path) {
+            console_puts(" first=");
+            console_puts(first_failed_path);
+        }
     }
     console_puts("\n");
 }
@@ -3261,6 +3424,7 @@ static int create_seeded_live_ramdisk(char drive_letter, int make_active) {
     console_puts("\n");
     print_lainfs_mount_check(drive_letter);
     seed_live_ramdisk(drive_letter);
+    refresh_system_autoexec(drive_letter);
 
     if (!make_active && saved_drive >= 0 && saved_drive < MAX_DRIVES) {
         current_drive = saved_drive;
@@ -3294,7 +3458,7 @@ int shell_mount_first_lainfs(char drive_letter) {
         }
     }
 
-    if (create_seeded_live_ramdisk(drive_letter, 1) == 0) {
+    if (create_seeded_live_ramdisk('R', 1) == 0) {
         return 0;
     }
 
@@ -4148,6 +4312,168 @@ int shell_api_rename(const char *old_path, const char *new_path) {
                                 new_name);
 }
 
+static int shell_match_one_star(const char *name, const char *pattern) {
+    const char *star = 0;
+    const char *suffix;
+    uint32_t prefix_len = 0;
+    uint32_t suffix_len;
+    uint32_t name_len;
+
+    if (name == 0 || pattern == 0) {
+        return 0;
+    }
+    while (pattern[prefix_len] != '\0') {
+        if (pattern[prefix_len] == '*') {
+            star = pattern + prefix_len;
+            break;
+        }
+        if (name[prefix_len] == '\0' || name[prefix_len] != pattern[prefix_len]) {
+            return 0;
+        }
+        ++prefix_len;
+    }
+    if (star == 0) {
+        return streq(name, pattern);
+    }
+    name_len = 0;
+    while (name[name_len] != '\0') {
+        ++name_len;
+    }
+    suffix = star + 1;
+    suffix_len = 0;
+    while (suffix[suffix_len] != '\0') {
+        ++suffix_len;
+    }
+    if (name_len < prefix_len + suffix_len) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < suffix_len; ++i) {
+        if (name[name_len - suffix_len + i] != suffix[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int shell_split_glob_source(const char *src_path,
+                                   int fallback_drive,
+                                   int *out_drive,
+                                   uint32_t *out_dir,
+                                   char *pattern,
+                                   uint32_t pattern_size) {
+    const char *path = src_path;
+    const char *last_sep = 0;
+    const char *s;
+    int drive;
+    char dir_path[128];
+
+    if (src_path == 0 || out_drive == 0 || out_dir == 0 ||
+        pattern == 0 || pattern_size == 0) {
+        return -1;
+    }
+    drive = path_drive_prefix(&path, fallback_drive);
+    if (drive < 0) {
+        return -1;
+    }
+
+    s = path;
+    while (*s != '\0') {
+        if (path_is_separator(*s)) {
+            last_sep = s;
+        }
+        ++s;
+    }
+
+    if (last_sep == 0) {
+        copy_text_limited(pattern, pattern_size, path);
+        if (resolve_dir_path((char)('A' + drive), cwd_dirs[drive], ".", out_dir) != 0) {
+            return -1;
+        }
+    } else {
+        uint32_t dir_len = (uint32_t)(last_sep - path);
+        if (dir_len == 0) {
+            copy_text_limited(dir_path, sizeof(dir_path), "/");
+        } else if (copy_path_part_limited(dir_path, sizeof(dir_path), path, dir_len) != 0) {
+            return -1;
+        }
+        copy_text_limited(pattern, pattern_size, last_sep + 1);
+        if (resolve_dir_path((char)('A' + drive), cwd_dirs[drive], dir_path, out_dir) != 0) {
+            return -1;
+        }
+    }
+
+    *out_drive = drive;
+    return 0;
+}
+
+static int shell_api_copy_file_glob(const char *src_path, const char *dst_path) {
+    int active = active_drive();
+    int src_drive = -1;
+    int dst_drive = -1;
+    uint32_t src_dir = LAINFS_ROOT_DIR;
+    uint32_t dst_parent = LAINFS_ROOT_DIR;
+    uint32_t dst_dir = LAINFS_ROOT_DIR;
+    uint32_t child_count = 0;
+    uint32_t copied = 0;
+    char pattern[32];
+    char dst_name[32];
+    char child_name[32];
+
+    if (active < 0 ||
+        shell_split_glob_source(src_path, active, &src_drive, &src_dir,
+                                pattern, sizeof(pattern)) != 0 ||
+        resolve_file_path_with_drive(dst_path,
+                                     active,
+                                     &dst_drive,
+                                     &dst_parent,
+                                     dst_name,
+                                     sizeof(dst_name)) != 0) {
+        return -1;
+    }
+    if (lainfs_find_dir((char)('A' + dst_drive), dst_parent, dst_name, &dst_dir) != 0) {
+        if (!streq(dst_name, ".")) {
+            return -1;
+        }
+        dst_dir = dst_parent;
+    }
+    if (lainfs_child_count((char)('A' + src_drive), src_dir, &child_count) != 0) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < child_count; ++i) {
+        uint32_t type = 0;
+        uint32_t size = 0;
+
+        if (lainfs_child_info((char)('A' + src_drive),
+                              src_dir,
+                              i,
+                              child_name,
+                              sizeof(child_name),
+                              &type,
+                              &size) != 0 ||
+            type != LAINFS_ENTRY_TYPE_FILE ||
+            !shell_match_one_star(child_name, pattern)) {
+            continue;
+        }
+        if (lainfs_load_file_in_dir((char)('A' + src_drive),
+                                    src_dir,
+                                    child_name,
+                                    zinclude_buffers[0],
+                                    ASM_SOURCE_SIZE,
+                                    &size) != 0 ||
+            lainfs_save_file_in_dir((char)('A' + dst_drive),
+                                    dst_dir,
+                                    child_name,
+                                    zinclude_buffers[0],
+                                    size) != 0) {
+            return -1;
+        }
+        ++copied;
+    }
+
+    return copied == 0 ? -1 : 0;
+}
+
 int shell_api_copy_file(const char *src_path, const char *dst_path) {
     int drive = active_drive();
     int src_drive = -1;
@@ -4157,6 +4483,10 @@ int shell_api_copy_file(const char *src_path, const char *dst_path) {
     uint32_t size = 0;
     char src_name[32];
     char dst_name[32];
+
+    if (src_path != 0 && contains_text(src_path, "*")) {
+        return shell_api_copy_file_glob(src_path, dst_path);
+    }
 
     if (drive < 0 || src_path == 0 || dst_path == 0 ||
         resolve_file_path_with_drive(src_path,
@@ -4459,6 +4789,104 @@ int shell_api_ztest(const char *target) {
     return contains_text(zinclude_buffers[0], "\nstatus ok\n") ? 0 : -1;
 }
 
+static int zinstall_manifest_objects_present(int drive,
+                                             const char *target_name,
+                                             char *manifest,
+                                             uint32_t manifest_capacity,
+                                             uint32_t install_dir) {
+    char manifest_name[32];
+    uint32_t manifest_size = 0;
+    uint32_t found_count = 0;
+    int status;
+
+    if (make_suffixed_name(target_name, ".zbuild", manifest_name, sizeof(manifest_name)) != 0) {
+        return -1;
+    }
+
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     manifest_name,
+                                     manifest,
+                                     manifest_capacity,
+                                     &manifest_size);
+    if (status != 0 || manifest_size >= manifest_capacity) {
+        return -1;
+    }
+    manifest[manifest_size] = '\0';
+
+    for (uint32_t pos = 0; pos < manifest_size;) {
+        char *line_start = manifest + pos;
+        char *line_text;
+        char *source_name;
+        char *object_name;
+        char object_name_buffer[32];
+        uint32_t object_size = 0;
+
+        while (pos < manifest_size && manifest[pos] != '\n' && manifest[pos] != '\r') {
+            ++pos;
+        }
+        if (pos < manifest_size) {
+            manifest[pos++] = '\0';
+            if (pos < manifest_size && manifest[pos - 1u] == '\r' && manifest[pos] == '\n') {
+                manifest[pos++] = '\0';
+            }
+        }
+
+        line_text = skip_spaces(line_start);
+        if (*line_text == '\0' ||
+            *line_text == '#' ||
+            *line_text == ';' ||
+            (line_text[0] == '/' && line_text[1] == '/')) {
+            continue;
+        }
+
+        split_first_arg(line_text, &source_name, &object_name);
+        if (streq(source_name, "src") ||
+            streq(source_name, "source") ||
+            streq(source_name, "include") ||
+            streq(source_name, "build") ||
+            streq(source_name, "output") ||
+            streq(source_name, "module") ||
+            streq(source_name, "objects-only") ||
+            streq(source_name, "test-return") ||
+            streq(source_name, "install") ||
+            streq(source_name, "install-name")) {
+            continue;
+        }
+
+        if (*object_name == '\0') {
+            if (make_object_name_from_source(source_name,
+                                             object_name_buffer,
+                                             sizeof(object_name_buffer)) != 0) {
+                return -1;
+            }
+            object_name = object_name_buffer;
+        } else {
+            char *unused = 0;
+            char *first_object_name = object_name;
+            split_first_arg(object_name, &first_object_name, &unused);
+            if (*unused != '\0') {
+                return -1;
+            }
+            object_name = first_object_name;
+        }
+
+        status = lainfs_load_file_in_dir((char)('A' + drive),
+                                         install_dir,
+                                         object_name,
+                                         (char *)exec_buffer,
+                                         EXEC_BUFFER_SIZE,
+                                         &object_size);
+        if (status != 0 || object_size == 0) {
+            return -1;
+        }
+
+        ++found_count;
+    }
+
+    return found_count != 0 ? 0 : -1;
+}
+
 int shell_api_zinstall(const char *target) {
     char *manifest = shell_manifest_buffer;
     char command[64];
@@ -4471,6 +4899,9 @@ int shell_api_zinstall(const char *target) {
     int objects_only = 0;
     uint32_t object_count = 0;
     int drive = active_drive();
+    unsigned char *saved_exec_buffer = exec_buffer;
+    unsigned char *api_exec_buffer = 0;
+    int result = -1;
 
     if (drive < 0 || copy_command_arg(target, command, sizeof(command)) != 0 ||
         make_suffixed_name(command, ".buildlog", report_name, sizeof(report_name)) != 0 ||
@@ -4491,21 +4922,24 @@ int shell_api_zinstall(const char *target) {
         return -1;
     }
 
+    api_exec_buffer = (unsigned char *)kzalloc(EXEC_BUFFER_SIZE);
+    if (!api_exec_buffer) {
+        return -1;
+    }
+    exec_buffer = api_exec_buffer;
+
     console_suppress_current_cpu_push();
     cmd_zinstall(command, 0);
     console_suppress_current_cpu_pop();
     if (objects_only && object_count != 1) {
-        if (lainfs_load_file_in_dir((char)('A' + drive),
-                                    build_dir,
-                                    report_name,
-                                    zinclude_buffers[0],
-                                    ASM_SOURCE_SIZE,
-                                    &installed_size) != 0 ||
-            installed_size >= ASM_SOURCE_SIZE) {
-            return -1;
-        }
-        zinclude_buffers[0][installed_size] = '\0';
-        return contains_text(zinclude_buffers[0], "\nstatus module\n") ? 0 : -1;
+        (void)build_dir;
+        (void)report_name;
+        result = zinstall_manifest_objects_present(drive,
+                                                   command,
+                                                   manifest,
+                                                   ASM_SOURCE_SIZE,
+                                                   install_dir);
+        goto done;
     }
 
     (void)output_name;
@@ -4516,10 +4950,16 @@ int shell_api_zinstall(const char *target) {
                                 ASM_SOURCE_SIZE,
                                 &installed_size) != 0 ||
         installed_size == 0) {
-        return -1;
+        goto done;
     }
 
-    return 0;
+    result = 0;
+
+done:
+    exec_buffer = saved_exec_buffer;
+    zero_memory(api_exec_buffer, EXEC_BUFFER_SIZE);
+    kfree(api_exec_buffer);
+    return result;
 }
 
 int shell_api_zmod(const char *target) {
@@ -6694,6 +7134,46 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
             return;
         }
 
+        if (str_ends_with(source_name, ".zo")) {
+            status = lainfs_load_file_in_dir((char)('A' + drive),
+                                             source_dir,
+                                             source_name,
+                                             (char *)exec_buffer,
+                                             EXEC_BUFFER_SIZE,
+                                             &object_size);
+            if (status == -5 && storage_drive_is_mounted('R')) {
+                uint32_t examples_dir = 0;
+                if (lainfs_find_dir('R', LAINFS_ROOT_DIR, "examples", &examples_dir) == 0) {
+                    status = lainfs_load_file_in_dir('R',
+                                                     examples_dir,
+                                                     source_name,
+                                                     (char *)exec_buffer,
+                                                     EXEC_BUFFER_SIZE,
+                                                     &object_size);
+                }
+            }
+            if (status == -5) {
+                console_puts("zbuild failed: prebuilt object not found on line ");
+                console_put_dec64(line);
+                console_puts(": ");
+                console_puts(source_name);
+                console_puts("\n");
+                return;
+            }
+            if (status != 0 || object_size == 0) {
+                console_puts("zbuild failed: could not load prebuilt object on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            console_puts("zbuild: using prebuilt ");
+            console_puts(source_name);
+            console_puts(" bytes=");
+            console_put_dec64(object_size);
+            console_puts("\n");
+            goto zbuild_save_object;
+        }
+
         status = load_z_source_expanded((char)('A' + drive),
                                         source_dir,
                                         include_dirs,
@@ -6807,6 +7287,7 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
             return;
         }
 
+zbuild_save_object:
         console_puts("zbuild: saving ");
         console_puts(object_name);
         console_puts(" object-bytes=");
@@ -7781,6 +8262,19 @@ static int zmodule_begin_call(uint32_t slot_index) {
     return 1;
 }
 
+static void *zmodule_call_stack_top(uint32_t slot_index) {
+    zmodule_slot_t *slot;
+
+    if (slot_index >= ZMODULE_MAX_MODULES) {
+        return 0;
+    }
+    slot = &zmodule_slots[slot_index];
+    if (slot->call_stack == 0 || slot->call_stack_size < 4096u) {
+        return 0;
+    }
+    return slot->call_stack + slot->call_stack_size;
+}
+
 static void zmodule_finish_clear(uint32_t slot_index) {
     if (slot_index >= ZMODULE_MAX_MODULES || !zmodule_slots[slot_index].loaded) {
         return;
@@ -7790,8 +8284,12 @@ static void zmodule_finish_clear(uint32_t slot_index) {
         return;
     }
 
-    kfree(zmodule_slots[slot_index].image);
+    kfree(zmodule_slots[slot_index].image_alloc);
+    zmodule_slots[slot_index].image_alloc = 0;
     zmodule_slots[slot_index].image = 0;
+    kfree(zmodule_slots[slot_index].call_stack);
+    zmodule_slots[slot_index].call_stack = 0;
+    zmodule_slots[slot_index].call_stack_size = 0;
     zero_memory(zmodule_slots[slot_index].exports, sizeof(zmodule_slots[slot_index].exports));
     zmodule_slots[slot_index].loaded = 0;
     zmodule_slots[slot_index].unloading = 0;
@@ -7844,10 +8342,17 @@ void shell_modules_tick(void) {
 
         for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
             if (streq(zmodule_slots[i].exports[j].name, "zmodule_tick")) {
+                void *stack_top = zmodule_call_stack_top(i);
+
                 if (!zmodule_begin_call(i)) {
                     break;
                 }
-                ((zmodule_tick_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                if (stack_top != 0) {
+                    zmodule_call_void_on_stack((zmodule_void_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value,
+                                               stack_top);
+                } else {
+                    ((zmodule_tick_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                }
                 zmodule_end_call(i);
                 break;
             }
@@ -7931,10 +8436,17 @@ int shell_module_call(uint32_t index, const char *export_name) {
         if (seen == index) {
             for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
                 if (streq(zmodule_slots[i].exports[j].name, export_name)) {
+                    void *stack_top = zmodule_call_stack_top(i);
+
                     if (!zmodule_begin_call(i)) {
                         return -1;
                     }
-                    ((zmodule_void_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                    if (stack_top != 0) {
+                        zmodule_call_void_on_stack((zmodule_void_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value,
+                                                   stack_top);
+                    } else {
+                        ((zmodule_void_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)();
+                    }
                     zmodule_end_call(i);
                     return 0;
                 }
@@ -7957,10 +8469,19 @@ int shell_module_key(uint32_t index, uint32_t key_type, uint32_t ch) {
         if (seen == index) {
             for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
                 if (streq(zmodule_slots[i].exports[j].name, "zmodule_key")) {
+                    void *stack_top = zmodule_call_stack_top(i);
+
                     if (!zmodule_begin_call(i)) {
                         return -1;
                     }
-                    ((zmodule_key_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)(key_type, ch);
+                    if (stack_top != 0) {
+                        zmodule_call_key_on_stack((zmodule_key_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value,
+                                                  key_type,
+                                                  ch,
+                                                  stack_top);
+                    } else {
+                        ((zmodule_key_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)(key_type, ch);
+                    }
                     zmodule_end_call(i);
                     return 0;
                 }
@@ -7983,10 +8504,21 @@ int shell_module_mouse(uint32_t index, uint32_t x, uint32_t y, uint32_t buttons,
         if (seen == index) {
             for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
                 if (streq(zmodule_slots[i].exports[j].name, "zmodule_mouse")) {
+                    void *stack_top = zmodule_call_stack_top(i);
+
                     if (!zmodule_begin_call(i)) {
                         return -1;
                     }
-                    ((zmodule_mouse_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)(x, y, buttons, wheel);
+                    if (stack_top != 0) {
+                        zmodule_call_mouse_on_stack((zmodule_mouse_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value,
+                                                    x,
+                                                    y,
+                                                    buttons,
+                                                    wheel,
+                                                    stack_top);
+                    } else {
+                        ((zmodule_mouse_hook_t)(uintptr_t)zmodule_slots[i].exports[j].value)(x, y, buttons, wheel);
+                    }
                     zmodule_end_call(i);
                     return 0;
                 }
@@ -7994,6 +8526,57 @@ int shell_module_mouse(uint32_t index, uint32_t x, uint32_t y, uint32_t buttons,
             return -1;
         }
         ++seen;
+    }
+
+    return -1;
+}
+
+int shell_module_resolve_address(uint64_t address,
+                                 const char **name,
+                                 uint64_t *base,
+                                 uint32_t *size,
+                                 const char **nearest_export,
+                                 uint64_t *nearest_export_value) {
+    for (uint32_t i = 0; i < ZMODULE_MAX_MODULES; ++i) {
+        uint64_t module_base;
+        uint64_t module_end;
+        const char *best_name = 0;
+        uint64_t best_value = 0;
+
+        if (!zmodule_slots[i].loaded || zmodule_slots[i].image == 0) {
+            continue;
+        }
+
+        module_base = (uint64_t)(uintptr_t)zmodule_slots[i].image;
+        module_end = module_base + (uint64_t)zmodule_slots[i].image_size;
+        if (address < module_base || address >= module_end) {
+            continue;
+        }
+
+        for (uint32_t j = 0; j < zmodule_slots[i].export_count; ++j) {
+            uint64_t value = zmodule_slots[i].exports[j].value;
+            if (value <= address && value >= module_base && value > best_value) {
+                best_name = zmodule_slots[i].exports[j].name;
+                best_value = value;
+            }
+        }
+
+        if (name != 0) {
+            *name = zmodule_slots[i].name;
+        }
+        if (base != 0) {
+            *base = module_base;
+        }
+        if (size != 0) {
+            *size = zmodule_slots[i].image_size;
+        }
+        if (nearest_export != 0) {
+            *nearest_export = best_name;
+        }
+        if (nearest_export_value != 0) {
+            *nearest_export_value = best_value;
+        }
+        return 0;
     }
 
     return -1;
@@ -8081,9 +8664,16 @@ static void zmodule_call_unload_hook(uint32_t slot_index) {
 
     for (uint32_t i = 0; i < slot->export_count; ++i) {
         if (streq(slot->exports[i].name, "zmodule_unload")) {
+            void *stack_top = zmodule_call_stack_top(slot_index);
+
             slot->unload_called = 1;
             ++slot->active_calls;
-            ((zmodule_unload_t)(uintptr_t)slot->exports[i].value)();
+            if (stack_top != 0) {
+                zmodule_call_void_on_stack((zmodule_void_hook_t)(uintptr_t)slot->exports[i].value,
+                                           stack_top);
+            } else {
+                ((zmodule_unload_t)(uintptr_t)slot->exports[i].value)();
+            }
             zmodule_end_call(slot_index);
             return;
         }
@@ -8108,6 +8698,157 @@ static void zmodule_clear_slot(uint32_t slot_index) {
     }
 }
 
+static int zmodule_name_has_dot(const char *name) {
+    for (uint32_t i = 0; name[i] != '\0'; ++i) {
+        if (name[i] == '.') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int zmodule_collect_manifest_objects(int drive,
+                                            const char *target_name,
+                                            char **tokens,
+                                            uint32_t *token_count) {
+    char manifest_name[32];
+    char *manifest = shell_manifest_buffer;
+    uint32_t manifest_size = 0;
+    uint32_t count = 0;
+    int saw_module_directive = 0;
+    int status;
+
+    if (zmodule_name_has_dot(target_name) ||
+        make_suffixed_name(target_name, ".zbuild", manifest_name, sizeof(manifest_name)) != 0) {
+        return -1;
+    }
+
+    status = lainfs_load_file_in_dir((char)('A' + drive),
+                                     cwd_dirs[drive],
+                                     manifest_name,
+                                     manifest,
+                                     ASM_SOURCE_SIZE,
+                                     &manifest_size);
+    if (status != 0 || manifest_size >= ASM_SOURCE_SIZE) {
+        return -1;
+    }
+    manifest[manifest_size] = '\0';
+
+    for (uint32_t pos = 0, line = 1; pos < manifest_size;) {
+        char *line_start = manifest + pos;
+        char *line_text;
+        char *source_name;
+        char *object_name;
+        char *unused = 0;
+        char object_name_buffer[32];
+
+        while (pos < manifest_size && manifest[pos] != '\n' && manifest[pos] != '\r') {
+            ++pos;
+        }
+        if (pos < manifest_size) {
+            manifest[pos++] = '\0';
+            if (pos < manifest_size && manifest[pos - 1u] == '\r' && manifest[pos] == '\n') {
+                manifest[pos++] = '\0';
+            }
+        }
+
+        line_text = skip_spaces(line_start);
+        if (*line_text == '\0' ||
+            *line_text == '#' ||
+            *line_text == ';' ||
+            (line_text[0] == '/' && line_text[1] == '/')) {
+            ++line;
+            continue;
+        }
+
+        split_first_arg(line_text, &source_name, &object_name);
+        if (streq(source_name, "module") || streq(source_name, "objects-only")) {
+            saw_module_directive = 1;
+            ++line;
+            continue;
+        }
+        if (streq(source_name, "src") ||
+            streq(source_name, "source") ||
+            streq(source_name, "include") ||
+            streq(source_name, "build") ||
+            streq(source_name, "output") ||
+            streq(source_name, "test-return") ||
+            streq(source_name, "install") ||
+            streq(source_name, "install-name")) {
+            ++line;
+            continue;
+        }
+
+        if (count >= ZLINK_MAX_OBJECTS) {
+            console_puts("zmod failed: manifest object count exceeds max=");
+            console_put_dec64(ZLINK_MAX_OBJECTS);
+            console_puts("\n");
+            return -1;
+        }
+
+        if (*object_name == '\0') {
+            if (make_object_name_from_source(source_name,
+                                             object_name_buffer,
+                                             sizeof(object_name_buffer)) != 0) {
+                console_puts("zmod failed: bad source name in manifest line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return -1;
+            }
+            object_name = object_name_buffer;
+        } else {
+            char *first_object_name = object_name;
+            split_first_arg(object_name, &first_object_name, &unused);
+            if (*unused != '\0') {
+                console_puts("zmod failed: bad object name in manifest line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return -1;
+            }
+            object_name = first_object_name;
+        }
+
+        copy_text_limited(zmodule_manifest_object_names[count],
+                          sizeof(zmodule_manifest_object_names[count]),
+                          object_name);
+        tokens[count] = zmodule_manifest_object_names[count];
+        ++count;
+        ++line;
+    }
+
+    if (!saw_module_directive || count == 0) {
+        return -1;
+    }
+    *token_count = count;
+    return 0;
+}
+
+static int zmodule_name_is_simple(const char *name) {
+    if (name == 0 || name[0] == '\0') {
+        return 0;
+    }
+    for (uint32_t i = 0; name[i] != '\0'; ++i) {
+        if (name[i] == ':' || name[i] == '/' || name[i] == '\\') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int zmodule_load_from_ramdisk_examples(const char *name,
+                                              unsigned char *dst,
+                                              uint32_t capacity,
+                                              uint32_t *out_size) {
+    uint32_t examples_dir = 0;
+
+    if (!zmodule_name_is_simple(name) ||
+        !storage_drive_is_mounted('R') ||
+        lainfs_find_dir('R', LAINFS_ROOT_DIR, "examples", &examples_dir) != 0) {
+        return -5;
+    }
+    return lainfs_load_file_in_dir('R', examples_dir, name, (char *)dst, capacity, out_size);
+}
+
 static void cmd_zmod(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -8122,6 +8863,8 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
     char *mutable_args = (char *)args;
     char *tokens[ZLINK_MAX_OBJECTS];
     uint32_t token_count = 0;
+    char slot_name[32];
+    int manifest_package = 0;
     int slot_index = -1;
     int drive = active_drive();
     int status = 0;
@@ -8163,6 +8906,12 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
         console_puts("usage: zmod input.zo [more.zo ...]\n");
         return;
     }
+    copy_text_limited(slot_name, sizeof(slot_name), tokens[token_count - 1u]);
+    if (token_count == 1u &&
+        zmodule_collect_manifest_objects(drive, tokens[0], tokens, &token_count) == 0) {
+        copy_text_limited(slot_name, sizeof(slot_name), args);
+        manifest_package = 1;
+    }
 
     slot_index = zmodule_find_free_slot();
     if (slot_index < 0) {
@@ -8179,10 +8928,16 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
 
     zero_memory(asm_output, EXEC_BUFFER_SIZE);
     for (uint32_t i = 0; i < token_count; ++i) {
-        uint32_t remaining = EXEC_BUFFER_SIZE - object_offset;
+        uint32_t remaining;
         const char *load_name = tokens[i];
         char suffixed_name[32];
         int has_dot = 0;
+
+        if (object_offset >= EXEC_BUFFER_SIZE) {
+            console_puts("zmod failed: object set is too large\n");
+            return;
+        }
+        remaining = EXEC_BUFFER_SIZE - object_offset;
 
         for (uint32_t j = 0; tokens[i][j]; ++j) {
             if (tokens[i][j] == '.') {
@@ -8234,6 +8989,12 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
                                                  &object_sizes[object_count]);
             }
         }
+        if (status == -5) {
+            status = zmodule_load_from_ramdisk_examples(load_name,
+                                                        asm_output + object_offset,
+                                                        remaining,
+                                                        &object_sizes[object_count]);
+        }
         if (status == -3) {
             console_puts("drive is not formatted as lainfs\n");
             return;
@@ -8253,27 +9014,41 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
         ++object_count;
     }
 
-    kfree(zmodule_slots[slot_index].image);
-    zmodule_slots[slot_index].image = (unsigned char *)kmalloc(ZMODULE_IMAGE_SIZE);
+    kfree(zmodule_slots[slot_index].image_alloc);
+    zmodule_slots[slot_index].image_alloc =
+        (unsigned char *)kmalloc(ZMODULE_IMAGE_SIZE + ZMODULE_IMAGE_ALIGNMENT);
+    zmodule_slots[slot_index].image =
+        zmodule_align_image_allocation(zmodule_slots[slot_index].image_alloc);
     if (zmodule_slots[slot_index].image == 0) {
         console_puts("zmod failed: out of heap for resident module\n");
         return;
     }
+    kfree(zmodule_slots[slot_index].call_stack);
+    zmodule_slots[slot_index].call_stack = (unsigned char *)kmalloc(ZMODULE_CALL_STACK_SIZE);
+    if (zmodule_slots[slot_index].call_stack == 0) {
+        console_puts("zmod failed: out of heap for resident module stack\n");
+        kfree(zmodule_slots[slot_index].image_alloc);
+        zmodule_slots[slot_index].image_alloc = 0;
+        zmodule_slots[slot_index].image = 0;
+        return;
+    }
+    zmodule_slots[slot_index].call_stack_size = ZMODULE_CALL_STACK_SIZE;
 
     zero_memory(zmodule_slots[slot_index].image, ZMODULE_IMAGE_SIZE);
-    if (zobject_link_flat_many_ex(objects,
-                                  object_sizes,
-                                  object_count,
-                                  zmodule_slots[slot_index].image,
-                                  ZMODULE_IMAGE_SIZE,
-                                  (uint64_t)(uintptr_t)zmodule_slots[slot_index].image,
-                                  &output_size,
-                                  &error_line,
-                                  resident_symbols,
-                                  resident_symbol_count,
-                                  export_symbols,
-                                  ZMODULE_MAX_EXPORTS,
-                                  &export_symbol_count) != 0) {
+    if (zobject_link_flat_many_ex_entry_from(objects,
+                                             object_sizes,
+                                             object_count,
+                                             zmodule_slots[slot_index].image,
+                                             ZMODULE_IMAGE_SIZE,
+                                             (uint64_t)(uintptr_t)zmodule_slots[slot_index].image,
+                                             &output_size,
+                                             &error_line,
+                                             resident_symbols,
+                                             resident_symbol_count,
+                                             export_symbols,
+                                             ZMODULE_MAX_EXPORTS,
+                                             &export_symbol_count,
+                                             manifest_package ? object_count - 1u : 0u) != 0) {
         console_puts("zmod failed: unresolved or unsupported module");
         if (zobject_last_error_reason()[0] != '\0') {
             console_puts(": ");
@@ -8288,8 +9063,12 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
             console_put_dec64(error_line);
         }
         console_puts("\n");
-        kfree(zmodule_slots[slot_index].image);
+        kfree(zmodule_slots[slot_index].image_alloc);
+        zmodule_slots[slot_index].image_alloc = 0;
         zmodule_slots[slot_index].image = 0;
+        kfree(zmodule_slots[slot_index].call_stack);
+        zmodule_slots[slot_index].call_stack = 0;
+        zmodule_slots[slot_index].call_stack_size = 0;
         return;
     }
 
@@ -8302,14 +9081,14 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
     zmodule_slots[slot_index].export_count = export_symbol_count;
     copy_text_limited(zmodule_slots[slot_index].name,
                       sizeof(zmodule_slots[slot_index].name),
-                      tokens[token_count - 1u]);
+                      slot_name);
     for (uint32_t i = 0; i < export_symbol_count; ++i) {
         zmodule_slots[slot_index].exports[i] = export_symbols[i];
     }
 
     console_puts("loading ");
     console_put_dec64(object_count);
-    console_puts(" module object(s) in slot ");
+    console_puts(manifest_package ? " manifest module object(s) in slot " : " module object(s) in slot ");
     console_put_dec64((uint32_t)slot_index);
     console_puts(" at 0x");
     console_put_hex64((uint64_t)(uintptr_t)zmodule_slots[slot_index].image);
@@ -8319,7 +9098,9 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
     console_put_dec64(export_symbol_count);
     console_puts("\n");
 
-    ((exec_program_t)(uintptr_t)zmodule_slots[slot_index].image)(&api);
+    zmodule_call_program_on_stack((exec_program_t)(uintptr_t)zmodule_slots[slot_index].image,
+                                  &api,
+                                  zmodule_call_stack_top((uint32_t)slot_index));
 
     console_puts("\nmodule resident\n");
 }
@@ -8775,7 +9556,13 @@ void shell_run_autoexec(const char *name, const boot_info_t *info) {
 void shell_print_prompt(void) {
     shell_bg_poll();
 
-    if (current_drive >= 0 && drives[current_drive].present) {
+    if (current_drive >= 0 &&
+        (drives[current_drive].present || storage_drive_is_mounted((char)('A' + current_drive)))) {
+        if (!drives[current_drive].present) {
+            drives[current_drive].present = 1;
+            copy_label(drives[current_drive].label, "MOUNT");
+            reset_cwd(current_drive);
+        }
         print_drive_name(current_drive);
         console_puts(cwd_paths[current_drive]);
         console_puts("> ");
@@ -8805,6 +9592,11 @@ static int shell_run_command_foreground(char *line, const boot_info_t *info, int
     int requested_drive = parse_drive_spec(name);
     if (requested_drive >= 0 && requested_drive < MAX_DRIVES) {
         if (drives[requested_drive].present || storage_drive_is_mounted((char)('A' + requested_drive))) {
+            if (!drives[requested_drive].present) {
+                drives[requested_drive].present = 1;
+                copy_label(drives[requested_drive].label, "MOUNT");
+                reset_cwd(requested_drive);
+            }
             current_drive = requested_drive;
         } else {
             print_drive_name(requested_drive);

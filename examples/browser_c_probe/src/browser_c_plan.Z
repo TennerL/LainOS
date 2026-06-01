@@ -3,8 +3,8 @@
 uint8_t compile_units_path[32] = "../browser_c/COMPILE_UNITS.txt";
 uint8_t status_path[24] = "browser_c_plan.status";
 uint8_t first_unit_path[23] = "browser_c_plan.first";
-uint8_t compile_units[12288];
-uint8_t first_unit[256];
+uint8_t compile_units[40000];
+uint8_t first_unit[512];
 
 int read_size;
 int unit_count;
@@ -13,7 +13,7 @@ int line_has_text;
 int line_has_pipe;
 int first_len;
 
-read_size = os_read_file(compile_units_path, compile_units, 12287);
+read_size = os_read_file(compile_units_path, compile_units, 39999);
 if (read_size <= 0) {
     print("browser_c plan: read failed\n");
     return 11;
@@ -51,7 +51,7 @@ while (compile_units[i] == 10 || compile_units[i] == 13) {
     i = i + 1;
 }
 first_len = 0;
-while (compile_units[i] != 0 && compile_units[i] != 10 && compile_units[i] != 13 && first_len + 1 < 256) {
+while (compile_units[i] != 0 && compile_units[i] != 10 && compile_units[i] != 13 && first_len + 1 < 512) {
     first_unit[first_len] = compile_units[i];
     first_len = first_len + 1;
     i = i + 1;

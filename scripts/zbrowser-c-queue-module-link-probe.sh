@@ -25,6 +25,10 @@ fi
 if [[ "${ZBROWSER_C_QUEUE_REUSE:-0}" == 0 ]]; then
   scripts/prepare-browser-selfhost-c-workspace.sh "$stage_root" >/dev/null
 fi
+if [[ ! -d "$workspace_root/third_party/netsurf/src/libcss/src" ]]; then
+  mkdir -p "$workspace_root/third_party/netsurf/src/libcss"
+  cp -R third_party/netsurf/src/libcss/src "$workspace_root/third_party/netsurf/src/libcss/src"
+fi
 make build/tools/zelf_to_zobject build/tools/zmod_link_host >/dev/null
 
 if [[ "${ZBROWSER_C_QUEUE_REUSE:-0}" == 0 ]]; then
@@ -51,7 +55,7 @@ compile_one() {
     exit 1
   fi
 
-  compile_cmd=(cc -c -ffreestanding -nostdinc -fno-pic -fno-PIE -mcmodel=large -fno-asynchronous-unwind-tables -fno-unwind-tables)
+  compile_cmd=(cc -c -ffreestanding -nostdinc -fno-stack-protector -fno-pic -fno-PIE -mcmodel=large -mno-red-zone -mstackrealign -mincoming-stack-boundary=3 -fno-asynchronous-unwind-tables -fno-unwind-tables -D_ALIGNED= -DWITHOUT_ICONV_FILTER -include strings.h)
 
   IFS=':' read -r -a include_array <<<"$include_roots"
   for include_root in "${include_array[@]}"; do
@@ -102,12 +106,14 @@ discover_and_compile() {
     grep -v '/test/' |
     grep -v '/examples/' |
     grep -v '/perf/' |
+    grep -v '/css_property_parser_gen\.c$' |
     sort)
 }
 
 : >"$output_root/AUTO_UNITS.txt"
 discover_and_compile "third_party/netsurf/src/libdom/src" "third_party/netsurf/src/libdom/include:third_party/netsurf/src/libdom/src:third_party/netsurf/src/libwapcaplet/include:third_party/netsurf/src/libparserutils/include:kernel/include/freestanding"
 discover_and_compile "third_party/netsurf/src/libparserutils/src" "third_party/netsurf/src/libparserutils/include:third_party/netsurf/src/libparserutils/src:kernel/include/freestanding"
+discover_and_compile "third_party/netsurf/src/libcss/src" "third_party/netsurf/src/libcss/include:third_party/netsurf/src/libcss/src:third_party/netsurf/src/libparserutils/include:third_party/netsurf/src/libwapcaplet/include:kernel/include/freestanding"
 
 {
   printf 'include %s/examples\n' "$repo_root"

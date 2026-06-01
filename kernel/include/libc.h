@@ -35,6 +35,34 @@ unsigned long strtoul(const char *nptr, char **endptr, int base);
 
 int vsnprintf(char *str, size_t size, const char *fmt, va_list ap);
 int snprintf(char *str, size_t size, const char *fmt, ...);
+int sprintf(char *str, const char *fmt, ...);
+
+double floor(double x);
+double trunc(double x);
+double fmod(double x, double y);
+double sqrt(double x);
+double sin(double x);
+double cos(double x);
+double tan(double x);
+double atan(double x);
+double atan2(double y, double x);
+double asin(double x);
+double acos(double x);
+double exp(double x);
+double log(double x);
+double log2(double x);
+double log10(double x);
+double pow(double x, double y);
+double cbrt(double x);
+double fabs(double x);
+double difftime(time_t time1, time_t time0);
+struct tm *gmtime_r(const time_t *timer, struct tm *result);
+struct tm *localtime_r(const time_t *timer, struct tm *result);
+time_t mktime(struct tm *tm);
+char *strptime(const char *s, const char *format, struct tm *tm);
+size_t strftime(char *s, size_t max, const char *format, const struct tm *tm);
+int setjmp(unsigned long env[8]);
+void longjmp(unsigned long env[8], int value);
 
 void *bsearch(const void *key,
               const void *base,

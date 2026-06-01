@@ -1,6 +1,62 @@
 #include <stdint.h>
 #include "kernel.h"
 #include "graphics.h"
+#include "kmem.h"
+#include "libc.h"
+#include "dejavu_sans_ttf.h"
+
+static int console_tt_floor(float x) {
+    int i = (int)x;
+    return (x < (float)i) ? i - 1 : i;
+}
+
+static int console_tt_ceil(float x) {
+    int i = (int)x;
+    return (x > (float)i) ? i + 1 : i;
+}
+
+static float console_tt_fabs(float x) {
+    return x < 0.0f ? -x : x;
+}
+
+static float console_tt_sqrt(float x) {
+    float guess;
+
+    if (x <= 0.0f) {
+        return 0.0f;
+    }
+    guess = x > 1.0f ? x : 1.0f;
+    for (uint32_t i = 0; i < 12u; ++i) {
+        guess = 0.5f * (guess + x / guess);
+    }
+    return guess;
+}
+
+static float console_tt_pow(float x, float y) {
+    int n = (int)y;
+    float out = 1.0f;
+
+    if (y < 0.0f) {
+        return 1.0f;
+    }
+    for (int i = 0; i < n && i < 32; ++i) {
+        out *= x;
+    }
+    return out;
+}
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#define STBTT_ifloor(x) console_tt_floor((x))
+#define STBTT_iceil(x) console_tt_ceil((x))
+#define STBTT_sqrt(x) console_tt_sqrt((x))
+#define STBTT_pow(x, y) console_tt_pow((x), (y))
+#define STBTT_fabs(x) console_tt_fabs((x))
+#define STBTT_malloc(x, u) ((void)(u), kmalloc((uint32_t)(x)))
+#define STBTT_free(x, u) ((void)(u), kfree((x)))
+#define STBTT_assert(x) ((void)0)
+#define STBTT_memcpy memcpy
+#define STBTT_memset memset
+#include "stb_truetype.h"
 
 #define FONT_W 8u
 #define FONT_H 8u
@@ -26,6 +82,8 @@
 #define CONSOLE_SERIAL_LINE_CTRL (CONSOLE_SERIAL_COM1 + 3u)
 #define CONSOLE_SERIAL_MODEM_CTRL (CONSOLE_SERIAL_COM1 + 4u)
 #define CONSOLE_SERIAL_LINE_STATUS (CONSOLE_SERIAL_COM1 + 5u)
+#define CONSOLE_TTF_BITMAP_MAX_W 96u
+#define CONSOLE_TTF_BITMAP_MAX_H 128u
 
 typedef struct {
     uint32_t left;
@@ -274,9 +332,137 @@ static const uint8_t console_glyph_THORN[8] = {0x60,0x60,0x7C,0x66,0x66,0x7C,0x6
 static const uint8_t console_glyph_eth[8] = {0x0C,0x38,0x0C,0x3E,0x66,0x66,0x3C,0x00};
 static const uint8_t console_glyph_ETH[8] = {0x78,0x6C,0x66,0xF6,0x66,0x6C,0x78,0x00};
 static const uint8_t console_glyph_question[8] = {0x3C,0x66,0x06,0x0C,0x18,0x00,0x18,0x00};
+static stbtt_fontinfo console_ttf_font;
+static int console_ttf_ready;
 
 void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     graphics_put_pixel(x, y, color);
+}
+
+static int console_ttf_init(void) {
+    if (console_ttf_ready != 0) {
+        return console_ttf_ready > 0;
+    }
+    console_ttf_ready = stbtt_InitFont(&console_ttf_font,
+                                       dejavu_sans_ttf,
+                                       stbtt_GetFontOffsetForIndex(dejavu_sans_ttf, 0)) != 0 ? 1 : -1;
+    return console_ttf_ready > 0;
+}
+
+static uint32_t console_blend_rgb(uint32_t fg, uint32_t bg, uint32_t alpha) {
+    uint32_t inv = 255u - alpha;
+    uint32_t fr = (fg >> 16) & 0xffu;
+    uint32_t fg_g = (fg >> 8) & 0xffu;
+    uint32_t fb = fg & 0xffu;
+    uint32_t br = (bg >> 16) & 0xffu;
+    uint32_t bg_g = (bg >> 8) & 0xffu;
+    uint32_t bb = bg & 0xffu;
+
+    return (((fr * alpha + br * inv) / 255u) << 16) |
+           (((fg_g * alpha + bg_g * inv) / 255u) << 8) |
+           ((fb * alpha + bb * inv) / 255u);
+}
+
+static int console_put_codepoint_ttf_at_pixel(uint32_t x,
+                                              uint32_t y,
+                                              uint32_t codepoint,
+                                              uint32_t fg,
+                                              uint32_t bg,
+                                              uint32_t glyph_width,
+                                              uint32_t glyph_height,
+                                              int bold,
+                                              int italic) {
+    uint8_t bitmap[CONSOLE_TTF_BITMAP_MAX_W * CONSOLE_TTF_BITMAP_MAX_H];
+    float scale;
+    int ascent;
+    int descent;
+    int line_gap;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+    int width;
+    int height;
+    int baseline;
+    int x_shift = 0;
+
+    (void)descent;
+    (void)line_gap;
+
+    if (glyph_height < 9u || !console_ttf_init()) {
+        return 0;
+    }
+    if (glyph_height > 96u) {
+        glyph_height = 96u;
+    }
+    if (bg != 0xffffffffu && glyph_width != 0u) {
+        graphics_fill_rect(x, y, glyph_width, glyph_height, bg);
+    }
+    if (codepoint == '\t') {
+        codepoint = ' ';
+    }
+    if (codepoint < 32u) {
+        return 1;
+    }
+
+    scale = stbtt_ScaleForPixelHeight(&console_ttf_font, (float)glyph_height);
+    stbtt_GetFontVMetrics(&console_ttf_font, &ascent, &descent, &line_gap);
+    baseline = (int)y + console_tt_ceil((float)ascent * scale);
+
+    stbtt_GetCodepointBitmapBox(&console_ttf_font,
+                                (int)codepoint,
+                                scale,
+                                scale,
+                                &x0,
+                                &y0,
+                                &x1,
+                                &y1);
+    width = x1 - x0;
+    height = y1 - y0;
+    if (width <= 0 || height <= 0) {
+        return 1;
+    }
+    if ((uint32_t)width > CONSOLE_TTF_BITMAP_MAX_W ||
+        (uint32_t)height > CONSOLE_TTF_BITMAP_MAX_H) {
+        return 0;
+    }
+
+    memset(bitmap, 0, sizeof(bitmap));
+    stbtt_MakeCodepointBitmap(&console_ttf_font,
+                              bitmap,
+                              width,
+                              height,
+                              width,
+                              scale,
+                              scale,
+                              (int)codepoint);
+
+    for (int py = 0; py < height; ++py) {
+        if (italic != 0 && glyph_height > 10u) {
+            x_shift = (height - py) / 5;
+        } else {
+            x_shift = 0;
+        }
+        for (int px = 0; px < width; ++px) {
+            uint32_t alpha = bitmap[(uint32_t)py * (uint32_t)width + (uint32_t)px];
+            uint32_t dst_x;
+            uint32_t dst_y;
+            uint32_t base;
+
+            if (alpha == 0u) {
+                continue;
+            }
+            dst_x = (uint32_t)((int)x + x0 + px + x_shift);
+            dst_y = (uint32_t)(baseline + y0 + py);
+            base = bg == 0xffffffffu ? graphics_get_pixel(dst_x, dst_y) : bg;
+            put_pixel(dst_x, dst_y, console_blend_rgb(fg, base, alpha));
+            if (bold != 0 && px + 1 < width) {
+                base = bg == 0xffffffffu ? graphics_get_pixel(dst_x + 1u, dst_y) : bg;
+                put_pixel(dst_x + 1u, dst_y, console_blend_rgb(fg, base, alpha));
+            }
+        }
+    }
+    return 1;
 }
 
 static uint32_t console_pane_index(const console_pane_t *pane) {
@@ -929,6 +1115,18 @@ static void console_put_codepoint_sized_at_pixel_colors(uint32_t x,
     }
 
     glyph_bits = console_glyph_for_codepoint(codepoint, &accent);
+    if (console_put_codepoint_ttf_at_pixel(x,
+                                           y,
+                                           codepoint,
+                                           fg,
+                                           bg,
+                                           glyph_width,
+                                           glyph_height,
+                                           bold,
+                                           italic)) {
+        return;
+    }
+
     for (out_y = 0; out_y < glyph_height; ++out_y) {
         uint32_t glyph_row = (out_y * FONT_H) / glyph_height;
         uint8_t bits = glyph_bits[glyph_row];
@@ -983,6 +1181,50 @@ static void console_put_char_sized_at_pixel_colors(uint32_t x,
                                                 glyph_height,
                                                 bold,
                                                 italic);
+}
+
+static const char *console_utf8_next_codepoint(const char *text, uint32_t *codepoint) {
+    const uint8_t *s = (const uint8_t *)text;
+    uint32_t cp;
+
+    if (s[0] < 0x80u) {
+        *codepoint = s[0];
+        return text + 1;
+    }
+    if ((s[0] & 0xe0u) == 0xc0u &&
+        (s[1] & 0xc0u) == 0x80u) {
+        cp = ((uint32_t)(s[0] & 0x1fu) << 6) |
+             (uint32_t)(s[1] & 0x3fu);
+        if (cp >= 0x80u) {
+            *codepoint = cp;
+            return text + 2;
+        }
+    } else if ((s[0] & 0xf0u) == 0xe0u &&
+               (s[1] & 0xc0u) == 0x80u &&
+               (s[2] & 0xc0u) == 0x80u) {
+        cp = ((uint32_t)(s[0] & 0x0fu) << 12) |
+             ((uint32_t)(s[1] & 0x3fu) << 6) |
+             (uint32_t)(s[2] & 0x3fu);
+        if (cp >= 0x800u && (cp < 0xd800u || cp > 0xdfffu)) {
+            *codepoint = cp;
+            return text + 3;
+        }
+    } else if ((s[0] & 0xf8u) == 0xf0u &&
+               (s[1] & 0xc0u) == 0x80u &&
+               (s[2] & 0xc0u) == 0x80u &&
+               (s[3] & 0xc0u) == 0x80u) {
+        cp = ((uint32_t)(s[0] & 0x07u) << 18) |
+             ((uint32_t)(s[1] & 0x3fu) << 12) |
+             ((uint32_t)(s[2] & 0x3fu) << 6) |
+             (uint32_t)(s[3] & 0x3fu);
+        if (cp >= 0x10000u && cp <= 0x10ffffu) {
+            *codepoint = cp;
+            return text + 4;
+        }
+    }
+
+    *codepoint = s[0];
+    return text + 1;
 }
 
 static void console_put_char_at_pixel(uint32_t x, uint32_t y, char ch) {
@@ -1048,13 +1290,23 @@ void console_draw_text_at_pixel(unsigned int x,
                                 unsigned int fg,
                                 unsigned int bg) {
     uint32_t px = x;
+    uint32_t codepoint;
 
     if (text == 0) {
         return;
     }
 
     while (*text) {
-        console_put_char_at_pixel_colors(px, y, *text++, fg, bg);
+        text = console_utf8_next_codepoint(text, &codepoint);
+        console_put_codepoint_sized_at_pixel_colors(px,
+                                                    y,
+                                                    codepoint,
+                                                    fg,
+                                                    bg,
+                                                    FONT_W,
+                                                    FONT_H,
+                                                    0,
+                                                    0);
         px += FONT_W;
     }
 }
@@ -1066,6 +1318,7 @@ void console_draw_text_scaled_at_pixel(unsigned int x,
                                        unsigned int bg,
                                        unsigned int scale) {
     uint32_t px = x;
+    uint32_t codepoint;
 
     if (text == 0) {
         return;
@@ -1079,7 +1332,16 @@ void console_draw_text_scaled_at_pixel(unsigned int x,
     }
 
     while (*text) {
-        console_put_char_scaled_at_pixel_colors(px, y, *text++, fg, bg, scale);
+        text = console_utf8_next_codepoint(text, &codepoint);
+        console_put_codepoint_sized_at_pixel_colors(px,
+                                                    y,
+                                                    codepoint,
+                                                    fg,
+                                                    bg,
+                                                    FONT_W * scale,
+                                                    FONT_H * scale,
+                                                    0,
+                                                    0);
         px += FONT_W * scale;
     }
 }
@@ -1095,6 +1357,7 @@ void console_draw_text_sized_at_pixel(unsigned int x,
                                       int bold,
                                       int italic) {
     uint32_t px = x;
+    uint32_t codepoint;
 
     if (text == 0 || glyph_width == 0u || glyph_height == 0u) {
         return;
@@ -1104,15 +1367,16 @@ void console_draw_text_sized_at_pixel(unsigned int x,
     }
 
     while (*text) {
-        console_put_char_sized_at_pixel_colors(px,
-                                               y,
-                                               *text++,
-                                               fg,
-                                               bg,
-                                               glyph_width,
-                                               glyph_height,
-                                               bold,
-                                               italic);
+        text = console_utf8_next_codepoint(text, &codepoint);
+        console_put_codepoint_sized_at_pixel_colors(px,
+                                                    y,
+                                                    codepoint,
+                                                    fg,
+                                                    bg,
+                                                    glyph_width,
+                                                    glyph_height,
+                                                    bold,
+                                                    italic);
         px += advance;
     }
 }

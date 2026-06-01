@@ -1,0 +1,19 @@
+#ifndef LAINOS_FREESTANDING_ENDIAN_H
+#define LAINOS_FREESTANDING_ENDIAN_H
+
+#define __LITTLE_ENDIAN 1234
+#define __BIG_ENDIAN 4321
+#define __PDP_ENDIAN 3412
+
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#define __BYTE_ORDER __BIG_ENDIAN
+#else
+#define __BYTE_ORDER __LITTLE_ENDIAN
+#endif
+
+#define LITTLE_ENDIAN __LITTLE_ENDIAN
+#define BIG_ENDIAN __BIG_ENDIAN
+#define PDP_ENDIAN __PDP_ENDIAN
+#define BYTE_ORDER __BYTE_ORDER
+
+#endif

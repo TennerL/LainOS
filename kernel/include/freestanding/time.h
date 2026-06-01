@@ -18,8 +18,11 @@ struct tm {
 };
 
 struct tm *gmtime(const time_t *timep);
+struct tm *gmtime_r(const time_t *timep, struct tm *result);
 struct tm *localtime(const time_t *timep);
+struct tm *localtime_r(const time_t *timep, struct tm *result);
 time_t time(time_t *timer);
+double difftime(time_t time1, time_t time0);
 size_t strftime(char *buffer, size_t size, const char *format, const struct tm *timeptr);
 char *strptime(const char *buffer, const char *format, struct tm *timeptr);
 time_t mktime(struct tm *timeptr);

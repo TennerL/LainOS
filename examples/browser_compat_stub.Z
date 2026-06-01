@@ -1,0 +1,260 @@
+struct WebStyle {
+    uint32_t flags;
+    uint32_t text_align;
+    uint32_t position;
+    uint32_t display;
+    uint32_t float_side;
+    uint32_t font_weight;
+    uint32_t font_style;
+    uint32_t left;
+    uint32_t right;
+    uint32_t top;
+    uint32_t bottom;
+    uint32_t width;
+    uint32_t height;
+    uint32_t min_width;
+    uint32_t max_width;
+    uint32_t min_height;
+    uint32_t max_height;
+    uint32_t color;
+    uint32_t background_color;
+    uint32_t margin_left;
+    uint32_t margin_right;
+    uint32_t margin_top;
+    uint32_t margin_bottom;
+    uint32_t padding_left;
+    uint32_t padding_right;
+    uint32_t padding_top;
+    uint32_t padding_bottom;
+    uint32_t border_left;
+    uint32_t border_right;
+    uint32_t border_top;
+    uint32_t border_bottom;
+    uint32_t border_color;
+    uint32_t font_size;
+    uint32_t line_height;
+    uint32_t text_transform;
+    uint32_t white_space;
+    uint32_t list_style_type;
+    uint32_t overflow_x;
+    uint32_t overflow_y;
+    uint32_t box_sizing;
+    uint32_t border_collapse;
+    uint32_t border_spacing_h;
+    uint32_t border_spacing_v;
+    uint32_t text_indent;
+    uint32_t clear_side;
+    uint32_t vertical_align;
+    uint32_t list_style_position;
+    uint32_t caption_side;
+    uint32_t direction;
+    uint32_t table_layout;
+    uint32_t empty_cells;
+    uint32_t opacity;
+    uint32_t z_index;
+    uint32_t letter_spacing;
+    uint32_t word_spacing;
+    uint32_t background_repeat;
+    uint32_t background_position_x;
+    uint32_t background_position_y;
+    uint32_t background_position_mode_x;
+    uint32_t background_position_mode_y;
+};
+
+struct WebStyleRules {
+    uint64_t selectors;
+    uint64_t selector_stride;
+    uint64_t decls;
+    uint64_t decl_stride;
+    uint64_t rule_count;
+};
+
+global uint32_t browser_compat_dom_status;
+global uint32_t browser_compat_lwc_status;
+global uint32_t browser_compat_pu_status;
+global uint32_t browser_compat_css_status;
+
+void browser_compat_default_style(struct WebStyle *style) {
+    if (style == 0) {
+        return;
+    }
+
+    style->flags = 0;
+    style->text_align = 0;
+    style->position = 0;
+    style->display = 1;
+    style->float_side = 0;
+    style->font_weight = 400;
+    style->font_style = 0;
+    style->left = 0;
+    style->right = 0;
+    style->top = 0;
+    style->bottom = 0;
+    style->width = 0;
+    style->height = 0;
+    style->min_width = 0;
+    style->max_width = 0;
+    style->min_height = 0;
+    style->max_height = 0;
+    style->color = 0x202122;
+    style->background_color = 0xffffff;
+    style->margin_left = 0;
+    style->margin_right = 0;
+    style->margin_top = 0;
+    style->margin_bottom = 0;
+    style->padding_left = 0;
+    style->padding_right = 0;
+    style->padding_top = 0;
+    style->padding_bottom = 0;
+    style->border_left = 0;
+    style->border_right = 0;
+    style->border_top = 0;
+    style->border_bottom = 0;
+    style->border_color = 0xa2a9b1;
+    style->font_size = 16;
+    style->line_height = 20;
+    style->text_transform = 0;
+    style->white_space = 0;
+    style->list_style_type = 0;
+    style->overflow_x = 0;
+    style->overflow_y = 0;
+    style->box_sizing = 0;
+    style->border_collapse = 0;
+    style->border_spacing_h = 0;
+    style->border_spacing_v = 0;
+    style->text_indent = 0;
+    style->clear_side = 0;
+    style->vertical_align = 0;
+    style->list_style_position = 0;
+    style->caption_side = 0;
+    style->direction = 0;
+    style->table_layout = 0;
+    style->empty_cells = 0;
+    style->opacity = 255;
+    style->z_index = 0;
+    style->letter_spacing = 0;
+    style->word_spacing = 0;
+    style->background_repeat = 0;
+    style->background_position_x = 0;
+    style->background_position_y = 0;
+    style->background_position_mode_x = 0;
+    style->background_position_mode_y = 0;
+}
+
+export int web_style_prepare_document(const uint8_t *html, uint32_t viewport_width, uint32_t viewport_height) {
+    html = html;
+    viewport_width = viewport_width;
+    viewport_height = viewport_height;
+    return 0;
+}
+
+export int web_style_for_tag(const uint8_t *html,
+                             uint32_t tag_pos,
+                             uint32_t viewport_width,
+                             uint32_t viewport_height,
+                             struct WebStyle *out_style) {
+    html = html;
+    tag_pos = tag_pos;
+    viewport_width = viewport_width;
+    viewport_height = viewport_height;
+    browser_compat_default_style(out_style);
+    return 0;
+}
+
+export int web_style_for_cached_rules(const uint8_t *html,
+                                      uint32_t tag_pos,
+                                      uint32_t viewport_width,
+                                      uint32_t viewport_height,
+                                      struct WebStyleRules *rules,
+                                      struct WebStyle *out_style) {
+    rules = rules;
+    return web_style_for_tag(html, tag_pos, viewport_width, viewport_height, out_style);
+}
+
+int browser_compat_copy_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity) {
+    uint32_t i;
+
+    if (html == 0 || out == 0 || out_capacity == 0) {
+        browser_compat_dom_status = 0;
+        return -1;
+    }
+    if (len + 1 > out_capacity) {
+        browser_compat_dom_status = 0;
+        return -2;
+    }
+
+    i = 0;
+    while (i < len) {
+        out[i] = html[i];
+        i = i + 1;
+    }
+    out[len] = 0;
+    browser_compat_dom_status = 1;
+    return (int)len;
+}
+
+export int netsurf_port_rewrite_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity) {
+    return browser_compat_copy_html(html, len, out, out_capacity);
+}
+
+export int netsurf_port_rewrite_render_html(const uint8_t *html, uint32_t len, uint8_t *out, uint32_t out_capacity) {
+    return browser_compat_copy_html(html, len, out, out_capacity);
+}
+
+export int netsurf_port_style_hint_for_tag(const uint8_t *html,
+                                           uint32_t tag_pos,
+                                           uint32_t *out_display,
+                                           uint32_t *out_role,
+                                           uint32_t *out_flags) {
+    html = html;
+    tag_pos = tag_pos;
+    if (out_display != 0) {
+        *out_display = 1;
+    }
+    if (out_role != 0) {
+        *out_role = 0;
+    }
+    if (out_flags != 0) {
+        *out_flags = 0;
+    }
+    return 0;
+}
+
+export uint32_t netsurf_port_dom_status(void) {
+    return browser_compat_dom_status;
+}
+
+export uint32_t webcompat_lwc_smoke(void) {
+    browser_compat_lwc_status = 1;
+    return 1;
+}
+
+export uint32_t webcompat_lwc_last_status(void) {
+    return browser_compat_lwc_status;
+}
+
+export uint32_t webcompat_pu_smoke(void) {
+    browser_compat_pu_status = 1;
+    return 1;
+}
+
+export uint32_t webcompat_pu_status(void) {
+    return browser_compat_pu_status;
+}
+
+export uint32_t webcompat_css_smoke(void) {
+    browser_compat_css_status = 1;
+    return 1;
+}
+
+export uint32_t webcompat_css_status(void) {
+    return browser_compat_css_status;
+}
+
+export uint32_t netsurf_port_render_smoke(void) {
+    return 1;
+}
+
+export uint32_t netsurf_kernel_frontend_smoke(void) {
+    return 1;
+}

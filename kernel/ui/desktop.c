@@ -65,6 +65,7 @@ typedef enum {
     DESKTOP_APP_TERMINAL,
     DESKTOP_APP_BROWSER,
     DESKTOP_APP_MODULES,
+    DESKTOP_APP_NETSURF,
     DESKTOP_APP_MODULE_APP,
     DESKTOP_APP_EDITOR
 } desktop_app_t;
@@ -343,6 +344,7 @@ static void desktop_terminal_blur(void);
 static int point_in_rect(uint32_t px, uint32_t py, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 static uint32_t desktop_taskbar_height(void);
 static int text_equals(const char *a, const char *b);
+static int text_contains(const char *text, const char *needle);
 static void text_copy_limited(char *dst, uint32_t dst_size, const char *src);
 static void desktop_draw_taskbar(void);
 static int desktop_taskbar_clock_tick_due(void);
@@ -906,7 +908,7 @@ static void desktop_draw_button(uint32_t x, uint32_t y, uint32_t w, const char *
 }
 
 static void desktop_start_menu_rect(uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h) {
-    uint32_t menu_h = 122u + desktop_app_catalog_count() * START_MENU_ITEM_H;
+    uint32_t menu_h = 146u;
     uint32_t menu_y = graphics_height() > desktop_taskbar_height() + menu_h ?
                       graphics_height() - desktop_taskbar_height() - menu_h :
                       28u;
@@ -946,15 +948,7 @@ static void desktop_draw_start_menu(void) {
     desktop_draw_button(menu_x + 12u, menu_y + 32u, menu_w - 24u, "Terminal", 0);
     desktop_draw_button(menu_x + 12u, menu_y + 56u, menu_w - 24u, "Files", 0);
     desktop_draw_button(menu_x + 12u, menu_y + 80u, menu_w - 24u, "Modules", 0);
-
-    uint32_t module_count = desktop_app_catalog_count();
-    for (uint32_t i = 0; i < module_count; ++i) {
-        char name[DESKTOP_MODULE_NAME_SIZE];
-        if (desktop_app_catalog_name_at(i, name, sizeof(name)) != 0) {
-            text_copy_limited(name, sizeof(name), "module");
-        }
-        desktop_draw_button(menu_x + 22u, menu_y + 110u + i * START_MENU_ITEM_H, menu_w - 44u, name, 0);
-    }
+    desktop_draw_button(menu_x + 12u, menu_y + 104u, menu_w - 24u, "NetSurf", 0);
 }
 
 static desktop_app_t desktop_start_menu_hit(uint32_t x, uint32_t y, uint32_t *module_index) {
@@ -979,15 +973,8 @@ static desktop_app_t desktop_start_menu_hit(uint32_t x, uint32_t y, uint32_t *mo
         }
         return DESKTOP_APP_MODULES;
     }
-
-    uint32_t count = desktop_app_catalog_count();
-    for (uint32_t i = 0; i < count; ++i) {
-        if (point_in_rect(x, y, menu_x + 22u, menu_y + 110u + i * START_MENU_ITEM_H, menu_w - 44u, START_MENU_ITEM_H)) {
-            if (module_index != 0) {
-                *module_index = i;
-            }
-            return DESKTOP_APP_MODULES;
-        }
+    if (point_in_rect(x, y, menu_x + 12u, menu_y + 104u, menu_w - 24u, START_MENU_ITEM_H)) {
+        return DESKTOP_APP_NETSURF;
     }
 
     return DESKTOP_APP_NONE;
@@ -1163,6 +1150,28 @@ static int text_equals(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static int text_contains(const char *text, const char *needle) {
+    if (needle == 0 || needle[0] == '\0') {
+        return 1;
+    }
+    if (text == 0) {
+        return 0;
+    }
+    while (*text != '\0') {
+        const char *a = text;
+        const char *b = needle;
+        while (*a != '\0' && *b != '\0' && *a == *b) {
+            ++a;
+            ++b;
+        }
+        if (*b == '\0') {
+            return 1;
+        }
+        ++text;
+    }
+    return 0;
+}
+
 static uint32_t desktop_text_len(const char *text) {
     uint32_t len = 0;
 
@@ -1255,7 +1264,28 @@ static int desktop_find_module(const char *name) {
 
 static int desktop_mods_file_is_app(const char *name) {
     return desktop_name_has_zo_suffix(name) &&
+           !(name[0] == 'z' &&
+             name[1] == 'c' &&
+             name[2] >= '0' && name[2] <= '9' &&
+             name[3] >= '0' && name[3] <= '9' &&
+             name[4] >= '0' && name[4] <= '9' &&
+             text_equals(name + 5, ".zo")) &&
+           !text_equals(name, "zbrowser_engine_module.zo") &&
+           !text_equals(name, "zbrowser_netsurf_engine.zo") &&
            !text_equals(name, "zbrowser_html.zo");
+}
+
+static int desktop_module_is_netsurf_browser_name(const char *name) {
+    const char *base = desktop_path_basename(name);
+
+    return text_equals(base, "zbrowser_netsurf.zo") ||
+           text_equals(base, "zbrowser_netsurf") ||
+           text_equals(base, "zbrowser_netsurf_engine.zo") ||
+           text_equals(base, "zbrowser_netsurf_engine");
+}
+
+static const char *desktop_module_launch_name(const char *name) {
+    return desktop_module_is_netsurf_browser_name(name) ? "zbrowser_netsurf.zo" : name;
 }
 
 static uint32_t desktop_app_catalog_count(void) {
@@ -1872,6 +1902,9 @@ static void desktop_launch_app(desktop_app_t app, const boot_info_t *info) {
             modules_bounds_ready = 1;
         }
         desktop_damage_window(&modules_window);
+    } else if (app == DESKTOP_APP_NETSURF) {
+        (void)info;
+        (void)desktop_open_module_app_by_name("zbrowser_netsurf.zo", 1);
     }
     desktop_damage_taskbar();
 }
@@ -1900,8 +1933,12 @@ static void desktop_close_module_app(desktop_module_window_t *slot) {
 
 static int desktop_module_prefers_large_window(const char *name) {
     return name != 0 &&
-           (text_ends_with(name, "zbrowser_module.zo") ||
-            text_ends_with(name, "zbrowser_netsurf.zo"));
+           (text_contains(name, "zbrowser_module") ||
+            text_contains(name, "zbrowser_netsurf"));
+}
+
+static int desktop_module_prefers_browser_window(const char *name) {
+    return name != 0 && text_contains(name, "zbrowser_netsurf");
 }
 
 static void desktop_open_module_app(uint32_t index) {
@@ -1932,11 +1969,22 @@ static void desktop_open_module_app(uint32_t index) {
         if (desktop_module_prefers_large_window(name)) {
             slot->window.x += 24u + ordinal * 16u;
             slot->window.y += 24u + ordinal * 16u;
-            if (slot->window.w > 960u) {
-                slot->window.w = 960u;
-            }
-            if (slot->window.h > 640u) {
-                slot->window.h = 640u;
+            if (desktop_module_prefers_browser_window(name)) {
+                uint32_t screen_w = graphics_width();
+                uint32_t screen_h = graphics_height();
+                uint32_t task_h = desktop_taskbar_height();
+                uint32_t bottom = screen_h > task_h + 4u ? screen_h - task_h - 4u : screen_h;
+                slot->window.x = screen_w > 16u ? 8u : 0u;
+                slot->window.y = screen_h >= 420u ? 84u : 34u;
+                slot->window.w = screen_w > 16u ? screen_w - 16u : screen_w;
+                slot->window.h = bottom > slot->window.y + 8u ? bottom - slot->window.y - 8u : bottom;
+            } else {
+                if (slot->window.w > 960u) {
+                    slot->window.w = 960u;
+                }
+                if (slot->window.h > 640u) {
+                    slot->window.h = 640u;
+                }
             }
         } else {
             slot->window.x += 72u + ordinal * 24u;
@@ -1958,6 +2006,7 @@ static void desktop_open_module_app(uint32_t index) {
 }
 
 static int desktop_open_module_app_by_name(const char *name, int load_from_mods) {
+    const char *launch_name;
     int module_index;
     int loaded_by_desktop = 0;
     char module_path[DESKTOP_MODULE_NAME_SIZE];
@@ -1967,20 +2016,25 @@ static int desktop_open_module_app_by_name(const char *name, int load_from_mods)
         return -1;
     }
 
-    module_index = desktop_find_module(name);
+    launch_name = desktop_module_launch_name(name);
+    module_index = desktop_find_module(launch_name);
     if (module_index < 0 && load_from_mods) {
-        if (text_equals(name, "zbrowser_module.zo")) {
+        if (text_equals(launch_name, "zbrowser_module.zo")) {
             text_copy_limited(module_path,
                               sizeof(module_path),
                               "/mods/zbrowser_html.zo /mods/zbrowser_module.zo");
+        } else if (text_equals(launch_name, "zbrowser_netsurf.zo")) {
+            text_copy_limited(module_path,
+                              sizeof(module_path),
+                              "zbrowser_netsurf");
         } else {
-            desktop_mods_path_for_name(name, module_path, sizeof(module_path));
+            desktop_mods_path_for_name(launch_name, module_path, sizeof(module_path));
         }
         if (shell_api_zmod(module_path) != 0) {
             return -1;
         }
         loaded_by_desktop = 1;
-        module_index = desktop_find_module(name);
+        module_index = desktop_find_module(launch_name);
         if (module_index < 0 || !shell_module_is_ui_app((uint32_t)module_index)) {
             (void)shell_api_zunload(module_path);
             return -1;
@@ -3370,6 +3424,17 @@ static void desktop_files_load_selected(void) {
         return;
     }
     files_child_path(files_selected_name, path, sizeof(path));
+    if (files_selected_kind == FILE_KIND_OBJECT) {
+        if (desktop_open_module_app_by_name(files_selected_name, 1) == 0) {
+            editor_status = "module opened";
+        } else {
+            desktop_open_editor(path);
+            desktop_editor_output_begin("Load", target);
+            editor_status = shell_api_zreload(target) == 0 ? "module reloaded" : "module load failed";
+            desktop_editor_output_end();
+        }
+        return;
+    }
     desktop_open_editor(path);
     desktop_editor_output_begin("Load", target);
     if (files_selected_kind == FILE_KIND_SOURCE || files_selected_kind == FILE_KIND_MANIFEST) {
@@ -4484,6 +4549,8 @@ void desktop_run(const boot_info_t *info) {
                             char path[FILE_BROWSER_PATH_SIZE];
                             files_child_path(name, path, sizeof(path));
                             (void)desktop_api_open_image(path);
+                        } else if (files_selected_kind == FILE_KIND_OBJECT) {
+                            (void)desktop_open_module_app_by_name(name, 1);
                         } else if (files_selected_kind == FILE_KIND_SOURCE ||
                                    files_selected_kind == FILE_KIND_MANIFEST ||
                                    files_selected_kind == FILE_KIND_LOG ||
@@ -4605,23 +4672,26 @@ void desktop_run(const boot_info_t *info) {
 }
 static void desktop_try_zbrowser_autostart(void) {
     char flag[8];
+    int flag_size;
+    const char *browser_name = "zbrowser_netsurf.zo";
 
     if (desktop_zbrowser_autostart_done) {
         return;
     }
     desktop_zbrowser_autostart_done = 1;
-    if (shell_api_read_file("/mods/zbrowser.autostart", flag, sizeof(flag) - 1u) < 0) {
+    flag_size = shell_api_read_file("/mods/zbrowser.autostart", flag, sizeof(flag) - 1u);
+    if (flag_size < 0) {
         return;
     }
+    flag[flag_size] = '\0';
+    if (text_contains(flag, "legacy")) {
+        browser_name = "zbrowser_module.zo";
+    }
     console_puts("desktop: zbrowser autostart requested\n");
-    if (desktop_open_module_app_by_name("zbrowser_module.zo", 1) != 0) {
+    if (desktop_open_module_app_by_name(browser_name, 1) != 0) {
         console_puts("desktop: zbrowser autostart failed\n");
         return;
     }
-    desktop_blur_module_app();
     editor_focused = 0;
-    if (terminal_open) {
-        desktop_terminal_focus();
-    }
     console_puts("desktop: zbrowser autostart opened\n");
 }

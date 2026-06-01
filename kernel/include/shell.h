@@ -25,6 +25,12 @@ int shell_module_tick(uint32_t index);
 int shell_module_call(uint32_t index, const char *export_name);
 int shell_module_key(uint32_t index, uint32_t key_type, uint32_t ch);
 int shell_module_mouse(uint32_t index, uint32_t x, uint32_t y, uint32_t buttons, int32_t wheel);
+int shell_module_resolve_address(uint64_t address,
+                                 const char **name,
+                                 uint64_t *base,
+                                 uint32_t *size,
+                                 const char **nearest_export,
+                                 uint64_t *nearest_export_value);
 int shell_api_mkdir(const char *path);
 int shell_api_delete(const char *path);
 int shell_api_write_file(const char *path, const char *text);

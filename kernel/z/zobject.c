@@ -19,10 +19,10 @@
 #define ZOBJECT_HEADER_SIZE (16u + ZOBJECT_ENTRY_SIZE)
 #define ZOBJECT_V4_HEADER_SIZE 32u
 #define ZOBJECT_V5_HEADER_SIZE 36u
-#define ZOBJECT_LINK_ASM_SIZE (4u * 1024u * 1024u)
-#define ZOBJECT_MAX_SYMBOLS 512u
+#define ZOBJECT_LINK_ASM_SIZE (8u * 1024u * 1024u)
+#define ZOBJECT_MAX_SYMBOLS 4096u
 #define ZOBJECT_MAX_RELOCATIONS 16384u
-#define ZOBJECT_MAX_OBJECTS 256u
+#define ZOBJECT_MAX_OBJECTS 1024u
 #define ZOBJECT_MAX_SECTIONS 3u
 
 #define ZOBJECT_SYMBOL_EXPORT 1u
@@ -1064,6 +1064,36 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                               zobject_resolved_symbol_t *export_symbols,
                               uint32_t export_symbol_capacity,
                               uint32_t *export_symbol_count) {
+    return zobject_link_flat_many_ex_entry_from(objects,
+                                                object_sizes,
+                                                object_count,
+                                                out,
+                                                out_capacity,
+                                                base_address,
+                                                out_size,
+                                                error_line,
+                                                external_symbols,
+                                                external_symbol_count,
+                                                export_symbols,
+                                                export_symbol_capacity,
+                                                export_symbol_count,
+                                                0);
+}
+
+int zobject_link_flat_many_ex_entry_from(const unsigned char *const *objects,
+                                         const uint32_t *object_sizes,
+                                         uint32_t object_count,
+                                         unsigned char *out,
+                                         uint32_t out_capacity,
+                                         uint64_t base_address,
+                                         uint32_t *out_size,
+                                         uint32_t *error_line,
+                                         const zobject_resolved_symbol_t *external_symbols,
+                                         uint32_t external_symbol_count,
+                                         zobject_resolved_symbol_t *export_symbols,
+                                         uint32_t export_symbol_capacity,
+                                         uint32_t *export_symbol_count,
+                                         uint32_t entry_start_index) {
     uint32_t link_size = 0;
     uint32_t i;
     zo_object_info_t infos[ZOBJECT_MAX_OBJECTS];
@@ -1093,6 +1123,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
 
     if (object_count > ZOBJECT_MAX_OBJECTS ||
         external_symbol_count > ZOBJECT_MAX_RESOLVED_SYMBOLS ||
+        entry_start_index > object_count ||
         (external_symbol_count != 0 && external_symbols == 0) ||
         (export_symbol_count != 0 && export_symbols == 0)) {
         return -1;
@@ -1182,6 +1213,15 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
             uint32_t next_offset = call_offset + 5u;
             int64_t diff;
 
+            if (i < entry_start_index) {
+                out[call_offset] = 0x90u;
+                out[call_offset + 1u] = 0x90u;
+                out[call_offset + 2u] = 0x90u;
+                out[call_offset + 3u] = 0x90u;
+                out[call_offset + 4u] = 0x90u;
+                continue;
+            }
+
             if (zo_map_section_offset(object_sections[i],
                                       section_offsets[i],
                                       infos[i].section_count,
@@ -1218,13 +1258,16 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                     continue;
                 }
 
-                if (local_export_count >= ZOBJECT_MAX_RESOLVED_SYMBOLS ||
-                    zo_map_section_offset(object_sections[i],
+                if (local_export_count >= ZOBJECT_MAX_RESOLVED_SYMBOLS) {
+                    zo_set_last_error("too many exports", name);
+                    return -1;
+                }
+                if (zo_map_section_offset(object_sections[i],
                                           section_offsets[i],
                                           infos[i].section_count,
                                           value,
                                           &mapped_value) != 0) {
-                    return -1;
+                    continue;
                 }
 
                 zo_copy_name(local_exports[local_export_count].name,
@@ -1287,6 +1330,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                                                    external_symbol_count,
                                                    name,
                                                    &value) != 0) {
+                            zo_set_last_error("unresolved relocation", name);
                             return -1;
                         }
                         new_disp = (int64_t)value + (int64_t)old_disp -
@@ -1303,6 +1347,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                         new_disp = (int64_t)mapped_target - (int64_t)(patch_offset + 4u);
                     }
                     if (new_disp < -2147483648ll || new_disp > 2147483647ll) {
+                        zo_set_last_error("rip relocation out of range", name);
                         return -1;
                     }
                     zo_write_u32(out + patch_offset, (uint32_t)new_disp);
@@ -1317,6 +1362,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
                                                external_symbol_count,
                                                name,
                                                &value) != 0) {
+                        zo_set_last_error("unresolved relocation", name);
                         return -1;
                     }
                     zo_write_u64(out + patch_offset, (uint64_t)((int64_t)value + addend));
@@ -1373,6 +1419,7 @@ int zobject_link_flat_many_ex(const unsigned char *const *objects,
 
                 if (zo_symbol_at(&infos[i], j, &type, &name) != 0 ||
                     zo_symbol_value_at(&infos[i], j, &value) != 0) {
+                    zo_set_last_error("bad symbol", "");
                     return -1;
                 }
 

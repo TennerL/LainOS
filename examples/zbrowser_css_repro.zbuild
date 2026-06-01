@@ -2,4 +2,5 @@ include .
 output zbrowser_css_repro.bin
 install-name zbrowser_css_repro.bin
 test-return 0
+browser_compat_stub.Z browser_compat_stub.zo
 zbrowser_css_repro.Z zbrowser_css_repro.zo

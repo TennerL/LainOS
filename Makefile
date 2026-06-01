@@ -25,8 +25,14 @@ PXE_DIR := build/pxe
 PXE_BOOTLOADER := BOOTX64.EFI
 BUILD_VERSION_H := build/version.h
 RAMDISK_SEED_H := build/ramdisk_seed.h
-RAMDISK_SEED_FILES := $(shell find examples -type f | sort)
-RAMDISK_SEED_ARGS := $(RAMDISK_SEED_FILES)
+ZBROWSER_C_ENGINE_ZO := build/browser-c-engine/zbrowser_engine_module.zo
+ZBROWSER_FULL_PACKAGE_DIR := build/zbrowser-netsurf-full
+ZBROWSER_FULL_PACKAGE_STAMP := $(ZBROWSER_FULL_PACKAGE_DIR)/.stamp
+RAMDISK_SEED_MANIFEST := scripts/ramdisk-seed-files.txt
+RAMDISK_SEED_EXAMPLE_FILES := $(shell if [ -f $(RAMDISK_SEED_MANIFEST) ]; then sed '/^[[:space:]]*$$/d;/^[[:space:]]*#/d' $(RAMDISK_SEED_MANIFEST); else find examples -type f | sort; fi)
+ZBROWSER_FULL_SEED_ARGS = $(shell if [ -f $(ZBROWSER_FULL_PACKAGE_DIR)/seed-args.txt ]; then sed '/^[[:space:]]*$$/d' $(ZBROWSER_FULL_PACKAGE_DIR)/seed-args.txt; fi)
+RAMDISK_SEED_FILES := $(RAMDISK_SEED_MANIFEST) $(RAMDISK_SEED_EXAMPLE_FILES) $(ZBROWSER_C_ENGINE_ZO) $(ZBROWSER_FULL_PACKAGE_STAMP)
+RAMDISK_SEED_ARGS = $(RAMDISK_SEED_EXAMPLE_FILES) $(ZBROWSER_C_ENGINE_ZO)=examples/zbrowser_engine_module.zo $(ZBROWSER_FULL_SEED_ARGS)
 KERNEL_FONT_TTF := third_party/fonts/DejaVuSans.ttf
 KERNEL_FONT_TTF_H := build/dejavu_sans_ttf.h
 NETSURF_DEFAULT_CSS := third_party/netsurf/src/netsurf/resources/default.css
@@ -48,7 +54,7 @@ XORRISO ?= xorriso
 MKISOFS ?= mkisofs
 GENISOIMAGE ?= genisoimage
 ESP_SIZE_KB ?= 65536
-ISO_ESP_SIZE_KB ?= 16384
+ISO_ESP_SIZE_KB ?= 32760
 BOOTDISK_SIZE_KB ?= 131072
 DATA_SIZE_KB ?= 131072
 NTFS_DRIVER ?=
@@ -388,6 +394,10 @@ build:
 
 FORCE:
 
+$(ZBROWSER_FULL_PACKAGE_STAMP): scripts/zbrowser-netsurf-full-package.sh scripts/zbrowser-c-queue-module-link-probe.sh scripts/browser-selfhost-c-units.txt examples/browser_c_probe/src/zbrowser_engine_bridge.c examples/browser_c_probe/src/zbrowser_engine_platform.c examples/zbrowser_netsurf.Z | build
+	scripts/zbrowser-netsurf-full-package.sh build/browser-selfhost-c-stage build/browser-selfhost-c-queue-module-link $(ZBROWSER_FULL_PACKAGE_DIR)
+	@touch $@
+
 check-efi-linker:
 	@if ! $(LD) --version >/dev/null 2>&1; then \
 		echo "GNU ld is required for the EFI/kernel link step; Apple ld cannot link this project." >&2; \
@@ -470,7 +480,7 @@ build/pxe/$(PXE_BOOTLOADER): build/bootloader-pxe.so check-objcopy
 	$(MKDIR_P) $(PXE_DIR)
 	$(OBJCOPY) $(OBJCOPY_EFI_FLAGS) $< $@
 
-refresh-ramdisk: build/tools/ramdisk_seed_gen | build
+refresh-ramdisk: build/tools/ramdisk_seed_gen $(RAMDISK_SEED_FILES) | build
 	build/tools/ramdisk_seed_gen $(RAMDISK_SEED_H) $(RAMDISK_SEED_ARGS)
 
 pxe: refresh-ramdisk
@@ -479,6 +489,8 @@ pxe: refresh-ramdisk
 NETSURF_FRONTEND_CFLAGS := -Ithird_party/netsurf/src/netsurf -Ithird_party/netsurf/src/netsurf/include -Ithird_party/netsurf/src/netsurf/content/handlers -Ithird_party/netsurf/src/libnsutils/include -DNDEBUG -DWITHOUT_ICONV_FILTER -Wno-unused-parameter -Wno-unused-function -D_BSD_SOURCE -D_DEFAULT_SOURCE -D_GNU_SOURCE -D_ALIGNED=
 
 build/kernel/core/libc.o: KERNEL_CFLAGS += $(KERNEL_STACK_CFLAGS)
+build/kernel/drivers/console.o: $(KERNEL_FONT_TTF_H)
+build/kernel/drivers/console.o: KERNEL_CFLAGS += -Wno-unused-function
 
 build/kernel/%.o: kernel/%.c $(KERNEL_HEADERS) $(BUILD_VERSION_H) $(RAMDISK_SEED_H) $(KERNEL_CFLAGS_STAMP) | build
 	$(MKDIR_P) $(@D)
@@ -609,6 +621,13 @@ build/tools/zmod_link_host: tools/zmod_link_host.c kernel/z/zscript.c kernel/z/a
 build/tools/zelf_to_zobject: tools/zelf_to_zobject.c | build
 	$(MKDIR_P) build/tools
 	$(HOST_CC) $(HOST_CFLAGS) tools/zelf_to_zobject.c -o $@
+
+build/browser-c-engine/zbrowser_engine_module.o: examples/browser_c_probe/src/zbrowser_engine_module.c | build
+	$(MKDIR_P) $(@D)
+	$(CC) -c -ffreestanding -nostdinc -fno-stack-protector -fno-pic -fno-PIE -mcmodel=large -mno-red-zone -fno-asynchronous-unwind-tables -fno-unwind-tables -Ikernel/include/freestanding $< -o $@
+
+build/browser-c-engine/zbrowser_engine_module.zo: build/browser-c-engine/zbrowser_engine_module.o build/tools/zelf_to_zobject
+	build/tools/zelf_to_zobject $< $@
 
 zcc-smoke: build/tools/zcc_host | build
 	$(MKDIR_P) build/zcc-smoke

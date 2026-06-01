@@ -328,33 +328,12 @@ static void copy_bytes(void *dst, const void *src, uint32_t size) {
     }
 }
 
-static void pause_loops(uint32_t count) {
-    for (uint32_t i = 0; i < count; ++i) {
-        __asm__ __volatile__("pause");
-    }
-}
-
 static void quiesce_controller(e1000_controller_t *ctrl) {
     mmio_write32(ctrl->mmio_base, E1000_REG_RCTL, 0);
     mmio_write32(ctrl->mmio_base, E1000_REG_TCTL, 0);
     (void)mmio_read32(ctrl->mmio_base, E1000_REG_STATUS);
     mmio_write32(ctrl->mmio_base, E1000_REG_IMC, 0xFFFFFFFFu);
     (void)mmio_read32(ctrl->mmio_base, E1000_REG_ICR);
-}
-
-static int disable_pcie_master(e1000_controller_t *ctrl) {
-    uint32_t value = mmio_read32(ctrl->mmio_base, E1000_REG_CTRL);
-
-    value |= E1000_CTRL_GIO_MASTER_DISABLE;
-    mmio_write32(ctrl->mmio_base, E1000_REG_CTRL, value);
-    for (uint32_t i = 0; i < 800000u; ++i) {
-        if ((mmio_read32(ctrl->mmio_base, E1000_REG_STATUS) & E1000_STATUS_GIO_MASTER_ENABLE) == 0) {
-            return 0;
-        }
-        __asm__ __volatile__("pause");
-    }
-
-    return -1;
 }
 
 static void mark_driver_loaded(e1000_controller_t *ctrl) {
@@ -693,7 +672,8 @@ static int reinitialize_controller(e1000_controller_t *ctrl, uint32_t slot) {
     exit_ulp_with_firmware(ctrl);
     exit_phy_low_power(ctrl);
     mmio_write32(ctrl->mmio_base, E1000_REG_CTRL,
-                 mmio_read32(ctrl->mmio_base, E1000_REG_CTRL) |
+                 (mmio_read32(ctrl->mmio_base, E1000_REG_CTRL) &
+                  ~E1000_CTRL_GIO_MASTER_DISABLE) |
                  E1000_CTRL_FD |
                  E1000_CTRL_SLU |
                  E1000_CTRL_ASDE);
@@ -717,7 +697,7 @@ static int e1000_send_frame(void *ctx, const void *data, uint32_t size) {
     e1000_controller_t *ctrl = (e1000_controller_t *)ctx;
     uint32_t slot = (uint32_t)(ctrl - controllers);
     uint32_t tail = ctrl->tx_tail;
-    e1000_tx_desc_t *desc = &tx_desc[slot][tail];
+    volatile e1000_tx_desc_t *desc = &tx_desc[slot][tail];
 
     if (size > E1000_TX_BUFFER_SIZE) {
         net_record_tx_error((uint32_t)ctrl->net_index);
@@ -736,10 +716,10 @@ static int e1000_send_frame(void *ctx, const void *data, uint32_t size) {
     ctrl->last_tx_command = desc->command;
     ctrl->last_tx_length = desc->length;
     ctrl->last_tx_desc_addr = desc->address;
-    ctrl->last_tx_desc_phys = phys_addr(desc);
+    ctrl->last_tx_desc_phys = phys_addr((const void *)desc);
     ctrl->last_tx_buffer_phys = phys_addr(tx_buffer(slot, tail));
     for (uint32_t i = 0; i < sizeof(ctrl->last_tx_desc_bytes); ++i) {
-        ctrl->last_tx_desc_bytes[i] = ((uint8_t *)desc)[i];
+        ctrl->last_tx_desc_bytes[i] = ((volatile uint8_t *)desc)[i];
     }
 
     ctrl->tx_tail = (tail + 1u) % E1000_TX_DESC_COUNT;
@@ -759,7 +739,7 @@ static int e1000_send_frame(void *ctx, const void *data, uint32_t size) {
     net_record_tx_error((uint32_t)ctrl->net_index);
     ctrl->last_tx_status = desc->status;
     for (uint32_t i = 0; i < sizeof(ctrl->last_tx_desc_bytes); ++i) {
-        ctrl->last_tx_desc_bytes[i] = ((uint8_t *)desc)[i];
+        ctrl->last_tx_desc_bytes[i] = ((volatile uint8_t *)desc)[i];
     }
     return -1;
 }
@@ -774,13 +754,13 @@ static int e1000_poll(void *ctx) {
 
     for (;;) {
         uint32_t next = (ctrl->rx_tail + 1u) % E1000_RX_DESC_COUNT;
-        e1000_rx_desc_t *desc = &rx_desc[slot][next];
+        volatile e1000_rx_desc_t *desc = &rx_desc[slot][next];
 
         if ((desc->status & E1000_RX_STATUS_DD) == 0) {
             uint32_t found = E1000_RX_DESC_COUNT;
 
             for (uint32_t i = 0; i < E1000_RX_DESC_COUNT; ++i) {
-                if (rx_desc[slot][i].status & E1000_RX_STATUS_DD) {
+                if (((volatile e1000_rx_desc_t *)&rx_desc[slot][i])->status & E1000_RX_STATUS_DD) {
                     found = i;
                     break;
                 }
@@ -939,7 +919,8 @@ static void visit_pci(uint8_t bus, uint8_t device, uint8_t function, void *ctx) 
     exit_ulp_with_firmware(ctrl);
     exit_phy_low_power(ctrl);
     mmio_write32(ctrl->mmio_base, E1000_REG_CTRL,
-                 mmio_read32(ctrl->mmio_base, E1000_REG_CTRL) |
+                 (mmio_read32(ctrl->mmio_base, E1000_REG_CTRL) &
+                  ~E1000_CTRL_GIO_MASTER_DISABLE) |
                  E1000_CTRL_FD |
                  E1000_CTRL_SLU |
                  E1000_CTRL_ASDE);
@@ -1016,21 +997,6 @@ int e1000_reset_controller(uint32_t index) {
 
     ctrl = &controllers[index];
     ctrl->reset_result = 0;
-    quiesce_controller(ctrl);
-    mmio_write32(ctrl->mmio_base, E1000_REG_TCTL, E1000_TCTL_PSP);
-    pause_loops(200000u);
-
-    if (disable_pcie_master(ctrl) != 0) {
-        ctrl->reset_result |= 1u;
-    }
-
-    mmio_write32(ctrl->mmio_base,
-                 E1000_REG_CTRL,
-                 mmio_read32(ctrl->mmio_base, E1000_REG_CTRL) |
-                 E1000_CTRL_RST |
-                 E1000_CTRL_PHY_RST);
-
-    pause_loops(2000000u);
 
     if (reinitialize_controller(ctrl, index) != 0) {
         ctrl->reset_result |= 2u;

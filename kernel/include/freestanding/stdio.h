@@ -30,6 +30,7 @@ int feof(FILE *stream);
 int fseek(FILE *stream, long offset, int whence);
 int fprintf(FILE *stream, const char *format, ...);
 int printf(const char *format, ...);
+int sprintf(char *buffer, const char *format, ...);
 int fflush(FILE *stream);
 char *fgets(char *buffer, int size, FILE *stream);
 long ftell(FILE *stream);

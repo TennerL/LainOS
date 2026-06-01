@@ -2240,7 +2240,7 @@ static int net_build_http_request(const char *path,
         APPEND_DEC(parts[2]); APPEND_CH('.');
         APPEND_DEC(parts[3]);
     }
-    APPEND_TEXT("\r\nAccept: text/css,text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,*/*;q=0.5\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS/0.1\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/css,text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,*/*;q=0.5\r\nAccept-Encoding: identity\r\nUser-Agent: Mozilla/5.0 (X11; LainOS x86_64) LainOS-ZBrowser/0.1 NetSurf/3.12 (+https://github.com/TennerL/LainOS)\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_DEC
 #undef APPEND_TEXT

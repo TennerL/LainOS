@@ -147,6 +147,16 @@ static void tls_http_body_byte(tls_http_body_t *body, char ch) {
     }
 }
 
+static int tls_body_complete_on_close(const tls_http_body_t *body) {
+    if (!body || !body->header_done) {
+        return 0;
+    }
+    if (body->content_length_known && body->body_bytes < body->content_length) {
+        return 0;
+    }
+    return 1;
+}
+
 static int tls_build_http_request(const char *path,
                                   const char *host,
                                   char *request,
@@ -164,7 +174,7 @@ static int tls_build_http_request(const char *path,
     APPEND_TEXT(path);
     APPEND_TEXT(" HTTP/1.0\r\nHost: ");
     APPEND_TEXT(host);
-    APPEND_TEXT("\r\nAccept: text/css,text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,*/*;q=0.5\r\nAccept-Encoding: identity\r\nUser-Agent: LainOS/0.1\r\nConnection: close\r\n\r\n");
+    APPEND_TEXT("\r\nAccept: text/css,text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,image/bmp,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,*/*;q=0.5\r\nAccept-Encoding: identity\r\nUser-Agent: Mozilla/5.0 (X11; LainOS x86_64) LainOS-ZBrowser/0.1 NetSurf/3.12 (+https://github.com/TennerL/LainOS)\r\nConnection: close\r\n\r\n");
 
 #undef APPEND_TEXT
 #undef APPEND_CH
@@ -301,7 +311,7 @@ int net_tls_http_get(uint32_t index,
                                       (uint32_t)(0u - (uint32_t)send_status),
                                       0,
                                       body.out_size);
-                    result = -4;
+                    result = tls_body_complete_on_close(&body) ? 0 : -4;
                     break;
                 }
                 br_ssl_engine_sendrec_ack(&cc->eng, len);
@@ -352,7 +362,7 @@ int net_tls_http_get(uint32_t index,
                               got > 0 ? (uint32_t)got : 0,
                               body.out_size);
             if (got < 0) {
-                result = -6;
+                result = tls_body_complete_on_close(&body) ? 0 : -6;
                 break;
             }
             if (got > 0) {

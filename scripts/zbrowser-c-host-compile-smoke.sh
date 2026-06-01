@@ -26,7 +26,7 @@ mkdir -p "$output_root"
 
 compiled_count=0
 while IFS='|' read -r object_name rel_source include_roots extra_flags; do
-  compile_cmd=(cc -c -ffreestanding -nostdinc)
+  compile_cmd=(cc -c -ffreestanding -nostdinc -mno-red-zone -mstackrealign -mincoming-stack-boundary=3)
   source_path="$workspace_root/$rel_source"
 
   [[ -n "$object_name" ]] || continue

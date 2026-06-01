@@ -23,6 +23,13 @@ if [[ ! -f "$units_manifest_path" ]]; then
   exit 1
 fi
 
+if grep -qx 'build/netsurf_resource_css.h' "$manifest_path"; then
+  make build/netsurf_resource_css.h >/dev/null
+fi
+if grep -qx 'build/dejavu_sans_ttf.h' "$manifest_path"; then
+  make build/dejavu_sans_ttf.h >/dev/null
+fi
+
 rm -rf "$workspace_root" "$probe_root"
 mkdir -p "$workspace_root"
 
@@ -78,7 +85,8 @@ while IFS= read -r rel_path; do
 
   if [[ -d "$src_path" ]]; then
     mkdir -p "$(dirname "$dst_path")"
-    cp -R "$src_path" "$dst_path"
+    mkdir -p "$dst_path"
+    cp -R "$src_path"/. "$dst_path"/.
     continue
   fi
 
@@ -121,7 +129,7 @@ EOF
       done
     fi
 
-    printf '%u. cc -c -ffreestanding%s%s %s -o build/%s\n' \
+    printf '%u. cc -c -ffreestanding -mno-red-zone%s%s %s -o build/%s\n' \
       "$unit_index" "$include_flags" "$flag_text" "$rel_source" "$object_name"
     unit_index=$((unit_index + 1))
   done <"$units_manifest_path"

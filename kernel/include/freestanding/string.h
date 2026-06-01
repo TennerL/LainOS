@@ -18,6 +18,8 @@ char *strdup(const char *text);
 char *strerror(int errnum);
 char *strncpy(char *dest, const char *src, size_t count);
 size_t strspn(const char *text, const char *accept);
+size_t strcspn(const char *text, const char *reject);
+char *strtok(char *str, const char *delim);
 char *strstr(const char *haystack, const char *needle);
 
 #endif

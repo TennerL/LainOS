@@ -1,0 +1,10 @@
+# Default live ramdisk payload for normal boot/user testing.
+# Self-host smoke tests still build their own broader seed set.
+examples/autoexec
+examples/kernel_api.Z
+examples/taskmgr_module.Z
+examples/taskmgr_module.zbuild
+examples/filemgr_module.Z
+examples/filemgr_module.zbuild
+examples/personalize_module.Z
+examples/personalize_module.zbuild

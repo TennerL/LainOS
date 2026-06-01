@@ -3,7 +3,8 @@
 
 #define SECTOR_SIZE 512u
 #define RAMDISK_BLOCKS 131072ull
-#define RAMDISK_OVERLAY_SECTORS 2048u
+#define RAMDISK_PARTITION_START_LBA 2048u
+#define RAMDISK_OVERLAY_SECTORS 65536u
 #define GPT_HEADER_LBA 1ull
 #define GPT_HEADER_MIN_SIZE 92u
 #define GPT_ENTRY_TYPE_GUID_OFFSET 0u
@@ -218,8 +219,8 @@ static void create_demo_mbr(void) {
     mem_zero(ramdisk_mbr, sizeof(ramdisk_mbr));
     entry[0] = 0x80;
     entry[4] = 0x99;
-    write_le32(&entry[8], 2048u);
-    write_le32(&entry[12], 32768u);
+    write_le32(&entry[8], RAMDISK_PARTITION_START_LBA);
+    write_le32(&entry[12], RAMDISK_BLOCKS - RAMDISK_PARTITION_START_LBA);
     ramdisk_mbr[MBR_SIGNATURE_OFFSET] = 0x55;
     ramdisk_mbr[MBR_SIGNATURE_OFFSET + 1] = 0xAA;
 }

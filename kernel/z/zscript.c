@@ -4,7 +4,7 @@
 #define Z_MAX_FUNCTIONS 512u
 #define Z_MAX_LABEL_TEXT 128u
 #define Z_MAX_LABEL_PREFIX 8u
-#define Z_MAX_LOCALS 64u
+#define Z_MAX_LOCALS 96u
 #define Z_MAX_PARAMS 6u
 #define Z_MAX_STRINGS 1536u
 #define Z_STRING_POOL_SIZE 65536u

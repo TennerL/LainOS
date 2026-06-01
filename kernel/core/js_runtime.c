@@ -33,6 +33,10 @@ double floor(double x) {
     return (double)i;
 }
 
+double fabs(double x) {
+    return x < 0.0 ? -x : x;
+}
+
 double trunc(double x) {
     if (x != x || x > 9223372036854774784.0 || x < -9223372036854774784.0) {
         return x;
