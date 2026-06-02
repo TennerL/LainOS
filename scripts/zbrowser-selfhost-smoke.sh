@@ -215,6 +215,12 @@ zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/cache-control.c src/
 zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/strict-transport-security.c src/selfhost_http_sts.zo
 zcc ../browser_c/third_party/netsurf/src/netsurf/utils/log.c src/selfhost_log.zo
 ztest tier4
+zcc ../browser_c/third_party/netsurf/src/netsurf/utils/idna.c src/selfhost_idna.zo
+zcc ../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/nsurl.c src/selfhost_nsurl_core.zo
+zcc ../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/parse.c src/selfhost_nsurl_parse.zo
+zcc ../browser_c/third_party/netsurf/src/netsurf/utils/corestrings.c src/selfhost_corestrings.zo
+zcc ../browser_c/third_party/netsurf/src/netsurf/content/handlers/css/internal.c src/selfhost_css_internal.zo
+ztest tier5
 ztest http_chal
 ztest http_wa
 ztest http_cc
@@ -264,8 +270,12 @@ browser_c_seed_paths=(
   third_party/netsurf/src/libhubbub/include/hubbub/errors.h
   third_party/netsurf/src/netsurf/utils/bloom.c
   third_party/netsurf/src/netsurf/utils/bloom.h
+  third_party/netsurf/src/netsurf/utils/ascii.h
   third_party/netsurf/src/netsurf/utils/utils.h
+  third_party/netsurf/src/netsurf/utils/corestringlist.h
+  third_party/netsurf/src/netsurf/utils/corestrings.h
   third_party/netsurf/src/netsurf/utils/corestrings.c
+  third_party/netsurf/src/netsurf/utils/errors.h
   third_party/netsurf/src/netsurf/utils/file.c
   third_party/netsurf/src/netsurf/utils/hashmap.c
   third_party/netsurf/src/netsurf/utils/hashtable.c
@@ -308,6 +318,8 @@ browser_c_seed_paths=(
   third_party/netsurf/src/netsurf/utils/nsurl/nsurl.c
   third_party/netsurf/src/netsurf/utils/nsurl/parse.c
   third_party/netsurf/src/netsurf/utils/nsurl/private.h
+  third_party/netsurf/src/netsurf/content/handlers/css/internal.c
+  third_party/netsurf/src/netsurf/content/handlers/css/internal.h
   third_party/netsurf/src/netsurf/desktop/browser_private.h
   third_party/netsurf/src/netsurf/desktop/frame_types.h
   third_party/netsurf/src/netsurf/desktop/mouse.c
@@ -372,6 +384,7 @@ browser_c_seed_paths=(
   third_party/netsurf/src/libdom/src/utils/character_valid.h
   third_party/netsurf/src/libhubbub/include/hubbub/errors.h
   third_party/netsurf/src/libcss/include/libcss/libcss.h
+  third_party/netsurf/src/libcss/include/libcss/errors.h
   third_party/netsurf/src/libparserutils/include/parserutils/charset/utf8.h
 )
 ramdisk_seed_args=(
@@ -564,6 +577,13 @@ check_serial_success() {
     exit 1
   fi
 
+  if ! grep -q 'zbuild: linked 12 object(s) to browser_c_tier5.bin' "$serial_log" ||
+     ! grep -q 'ztest: running browser_c_tier5.bin' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected tier5 browser C guest-compiled unit success output\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
   if ! grep -q 'browser_c http challenge: ok' "$serial_log"; then
     printf 'zbrowser self-host smoke: expected HTTP challenge guest-compiled unit success output\n' >&2
     tail -n 120 "$serial_log" >&2 || true
@@ -662,7 +682,12 @@ check_file "browser_c/third_party/netsurf/src/libhubbub/src/charset/detect.c"
 check_file "browser_c/third_party/netsurf/src/libhubbub/src/charset/detect.h"
 check_file "browser_c/third_party/netsurf/src/libhubbub/include/hubbub/types.h"
 check_file "browser_c/third_party/netsurf/src/libhubbub/include/hubbub/errors.h"
+check_file "browser_c/third_party/netsurf/src/netsurf/utils/ascii.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/bloom.c"
+check_file "browser_c/third_party/netsurf/src/netsurf/utils/corestringlist.h"
+check_file "browser_c/third_party/netsurf/src/netsurf/utils/corestrings.h"
+check_file "browser_c/third_party/netsurf/src/netsurf/utils/corestrings.c"
+check_file "browser_c/third_party/netsurf/src/netsurf/utils/errors.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/hashmap.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/hashtable.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/talloc.c"
@@ -681,6 +706,8 @@ check_file "browser_c/third_party/netsurf/src/netsurf/utils/log.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/url.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/useragent.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/utsname.h"
+check_file "browser_c/third_party/netsurf/src/netsurf/content/handlers/css/internal.c"
+check_file "browser_c/third_party/netsurf/src/netsurf/content/handlers/css/internal.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/desktop/plot_style.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/desktop/mouse.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/desktop/system_colour.c"
@@ -688,6 +715,7 @@ check_file "browser_c/third_party/netsurf/src/netsurf/desktop/version.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/include/netsurf/css.h"
 check_file "browser_c/third_party/netsurf/src/netsurf/utils/utils.c"
 check_file "browser_c/third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h"
+check_file "browser_c/third_party/netsurf/src/libcss/include/libcss/errors.h"
 check_file "browser_c_probe/browser_c_probe.status"
 check_file "browser_c_probe/browser_c_probe.bin"
 check_file "browser_c_probe/kernel.buildlog"
@@ -736,6 +764,11 @@ check_file "browser_c_probe/src/selfhost_http_wa.zo"
 check_file "browser_c_probe/src/selfhost_http_cc.zo"
 check_file "browser_c_probe/src/selfhost_http_sts.zo"
 check_file "browser_c_probe/src/selfhost_log.zo"
+check_file "browser_c_probe/src/selfhost_idna.zo"
+check_file "browser_c_probe/src/selfhost_nsurl_core.zo"
+check_file "browser_c_probe/src/selfhost_nsurl_parse.zo"
+check_file "browser_c_probe/src/selfhost_corestrings.zo"
+check_file "browser_c_probe/src/selfhost_css_internal.zo"
 check_file "browser_c_probe/browser_c_first_unit.bin"
 check_file "browser_c_probe/first_unit.buildlog"
 check_file "browser_c_probe/first_unit.testlog"
@@ -751,6 +784,9 @@ check_file "browser_c_probe/tier3.testlog"
 check_file "browser_c_probe/browser_c_tier4.bin"
 check_file "browser_c_probe/tier4.buildlog"
 check_file "browser_c_probe/tier4.testlog"
+check_file "browser_c_probe/browser_c_tier5.bin"
+check_file "browser_c_probe/tier5.buildlog"
+check_file "browser_c_probe/tier5.testlog"
 check_file "browser_c_probe/http_chal.bin"
 check_file "browser_c_probe/http_chal.buildlog"
 check_file "browser_c_probe/http_chal.testlog"
@@ -827,6 +863,10 @@ check_log_contains "browser_c_probe/tier4.buildlog" '^objects 24$' "browser C ti
 check_log_contains "browser_c_probe/tier4.buildlog" '^status ok$' "browser C tier4 build log"
 check_log_contains "browser_c_probe/tier4.testlog" '^result 0$' "browser C tier4 test log"
 check_log_contains "browser_c_probe/tier4.testlog" '^status ok$' "browser C tier4 test log"
+check_log_contains "browser_c_probe/tier5.buildlog" '^objects 12$' "browser C tier5 build log"
+check_log_contains "browser_c_probe/tier5.buildlog" '^status ok$' "browser C tier5 build log"
+check_log_contains "browser_c_probe/tier5.testlog" '^result 0$' "browser C tier5 test log"
+check_log_contains "browser_c_probe/tier5.testlog" '^status ok$' "browser C tier5 test log"
 check_log_contains "browser_c_probe/http_chal.buildlog" '^objects 6$' "browser C HTTP challenge build log"
 check_log_contains "browser_c_probe/http_chal.buildlog" '^status ok$' "browser C HTTP challenge build log"
 check_log_contains "browser_c_probe/http_chal.testlog" '^result 0$' "browser C HTTP challenge test log"

@@ -96,6 +96,9 @@ static const char *const host_kernel_exports[] = {
     "puts",
     "put_hex64",
     "put_dec64",
+    "debug_puts",
+    "debug_put_hex64",
+    "debug_put_dec64",
     "ticks",
     "clock_unix_time",
     "clock_get_rtc_time",
@@ -615,6 +618,18 @@ static void host_runtime_put_dec64(unsigned long long value) {
     fflush(stdout);
 }
 
+static void host_runtime_debug_puts(const char *s) {
+    host_runtime_puts(s);
+}
+
+static void host_runtime_debug_put_hex64(unsigned long long value) {
+    host_runtime_put_hex64(value);
+}
+
+static void host_runtime_debug_put_dec64(unsigned long long value) {
+    host_runtime_put_dec64(value);
+}
+
 static unsigned long long host_runtime_ticks(void) {
     time_t now = time(0);
 
@@ -1115,6 +1130,18 @@ static int host_runtime_export_value(const char *name, uint64_t *out) {
     }
     if (host_streq(name, "put_dec64")) {
         *out = (uint64_t)(uintptr_t)host_runtime_put_dec64;
+        return 0;
+    }
+    if (host_streq(name, "debug_puts")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_debug_puts;
+        return 0;
+    }
+    if (host_streq(name, "debug_put_hex64")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_debug_put_hex64;
+        return 0;
+    }
+    if (host_streq(name, "debug_put_dec64")) {
+        *out = (uint64_t)(uintptr_t)host_runtime_debug_put_dec64;
         return 0;
     }
     if (host_streq(name, "ticks")) {

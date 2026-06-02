@@ -45,6 +45,7 @@ launch_page="${ZBROWSER_LAUNCH_REPRO_PAGE:-zbrowser_border_box.html}"
 send_keys="${ZBROWSER_LAUNCH_REPRO_SENDKEYS:-}"
 send_keys_delay="${ZBROWSER_LAUNCH_REPRO_SENDKEYS_DELAY_SECONDS:-1}"
 post_keys_capture_delay="${ZBROWSER_LAUNCH_REPRO_POST_KEYS_CAPTURE_DELAY_SECONDS:-2}"
+idle_capture_delay="${ZBROWSER_LAUNCH_REPRO_IDLE_CAPTURE_DELAY_SECONDS:-6}"
 capture_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_CAPTURE_TRIGGER_PATTERN:-phase page}"
 idle_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_IDLE_TRIGGER_PATTERN:-zbrowser redraw-summary page}"
 send_keys_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_SENDKEYS_TRIGGER_PATTERN:-zbrowser renderer-status}"
@@ -58,6 +59,16 @@ idle_max_page="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_PAGE:-2}"
 idle_max_poll_full="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_POLL_FULL:-1}"
 idle_max_poll_chrome="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_POLL_CHROME:-4}"
 idle_max_render_fail="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_RENDER_FAIL:-0}"
+min_rendered_bitmaps="${ZBROWSER_LAUNCH_REPRO_MIN_BITMAPS:-0}"
+min_rendered_objects="${ZBROWSER_LAUNCH_REPRO_MIN_OBJECTS:-0}"
+require_style_sample="${ZBROWSER_LAUNCH_REPRO_REQUIRE_STYLE_SAMPLE:-}"
+if [ -z "$require_style_sample" ]; then
+  if [ "$launch_page" = "zbrowser_border_box.html" ]; then
+    require_style_sample=1
+  else
+    require_style_sample=0
+  fi
+fi
 qemu_memory="${ZBROWSER_LAUNCH_REPRO_MEMORY:-2048M}"
 qemu_smp="${ZBROWSER_LAUNCH_REPRO_SMP:-2}"
 qemu_accel="${ZBROWSER_LAUNCH_REPRO_ACCEL:-}"
@@ -298,7 +309,7 @@ start_repro_watchers() {
   if [ -n "$send_keys" ]; then
     send_keys_after_log "$send_keys_trigger_pattern" "$send_keys" "$send_keys_delay" 40
   else
-    capture_screendump_after_log "$idle_trigger_pattern" "$screenshot_2" 4 60 8
+    capture_screendump_after_log "$idle_trigger_pattern" "$screenshot_2" "$idle_capture_delay" 60 8
   fi
   if [ "$auto_quit" = "1" ]; then
     quit_after_log "$idle_trigger_pattern" "$auto_quit_delay" "$timeout_seconds"
@@ -383,6 +394,35 @@ else
   exit 1
 fi
 
+extract_visual_sample_value() {
+  local line="$1"
+  local key="$2"
+
+  awk -v key="$key" '{
+    for (i = 1; i < NF; ++i) {
+      if ($i == key) {
+        print $(i + 1)
+        exit
+      }
+    }
+  }' <<<"$line"
+}
+
+require_visual_sample_value() {
+  local line="$1"
+  local key="$2"
+  local expected="$3"
+  local actual
+
+  actual="$(extract_visual_sample_value "$line" "$key")"
+  if [ "$actual" != "$expected" ]; then
+    printf 'zbrowser launch repro: visual sample %s expected %s got %s\n' \
+      "$key" "$expected" "${actual:-missing}" >&2
+    tail -n 220 "$serial_log" || true
+    exit 1
+  fi
+}
+
 renderer_path=unknown
 renderer_failed=0
 
@@ -410,6 +450,15 @@ if [ "$renderer_path" = "html-redraw" ]; then
     tail -n 220 "$serial_log" || true
     exit 1
   fi
+  if [ "$require_style_sample" = "1" ]; then
+    visual_sample="$(grep 'zbrowser visual-sample' "$serial_log" | tail -n 1)"
+    require_visual_sample_value "$visual_sample" "body" "0000000000F7F3EA"
+    require_visual_sample_value "$visual_sample" "frame-border" "00000000002F4858"
+    require_visual_sample_value "$visual_sample" "frame-fill" "0000000000FFFDF8"
+    require_visual_sample_value "$visual_sample" "heading-text" "0000000000355C7D"
+    require_visual_sample_value "$visual_sample" "badge-border" "00000000008D3B12"
+    require_visual_sample_value "$visual_sample" "badge-fill" "0000000000FFE8D6"
+  fi
   idle_summary="$(grep 'zbrowser redraw-summary' "$serial_log" | tail -n 1)"
   idle_full="$(awk -v key="full" '{value=""; for (i=1; i<NF; ++i) if ($i == key) value=$(i + 1); print value}' <<<"$idle_summary")"
   idle_chrome="$(awk -v key="chrome" '{value=""; for (i=1; i<NF; ++i) if ($i == key) value=$(i + 1); print value}' <<<"$idle_summary")"
@@ -436,6 +485,21 @@ if [ "$renderer_path" = "html-redraw" ]; then
       "$idle_max_poll_chrome" "$idle_max_render_fail" >&2
     tail -n 220 "$serial_log" || true
     exit 1
+  fi
+  if [ "$min_rendered_bitmaps" -gt 0 ] || [ "$min_rendered_objects" -gt 0 ]; then
+    rendered_status="$(grep 'status NS rendered' "$serial_log" | tail -n 1)"
+    rendered_bitmaps="$(sed -n 's/.* bmp\([0-9][0-9]*\)\/[0-9][0-9]* .*/\1/p' <<<"$rendered_status")"
+    rendered_objects="$(sed -n 's/.* obj\([0-9][0-9]*\)\/[0-9][0-9]* .*/\1/p' <<<"$rendered_status")"
+    rendered_bitmaps="${rendered_bitmaps:-0}"
+    rendered_objects="${rendered_objects:-0}"
+    if [ "$rendered_bitmaps" -lt "$min_rendered_bitmaps" ] ||
+       [ "$rendered_objects" -lt "$min_rendered_objects" ]; then
+      printf 'zbrowser launch repro: rendered counters too low: %s\n' "$rendered_status" >&2
+      printf 'zbrowser launch repro: minimums bmp>=%s obj>=%s\n' \
+        "$min_rendered_bitmaps" "$min_rendered_objects" >&2
+      tail -n 220 "$serial_log" || true
+      exit 1
+    fi
   fi
   printf 'zbrowser launch repro: renderer path=%s\n' "$renderer_path"
 elif [ "$require_html_redraw" = "1" ]; then

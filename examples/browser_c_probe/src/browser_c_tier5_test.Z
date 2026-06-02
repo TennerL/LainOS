@@ -1,0 +1,77 @@
+struct lwc_string_s {
+    struct lwc_string_s *next;
+    uint64_t len;
+    uint32_t hash;
+    uint32_t refcnt;
+};
+extern int corestrings_init(void);
+extern int corestrings_fini(void);
+extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);
+extern uint8_t *lwc_string_data(struct lwc_string_s *str);
+extern uint64_t lwc_string_length(struct lwc_string_s *str);
+extern void lwc_string_unref(struct lwc_string_s *str);
+extern int nscss_resolve_url(uint8_t *pw, const uint8_t *base, struct lwc_string_s *rel, struct lwc_string_s **abs);
+
+uint8_t str_eq_len(uint8_t *a, uint64_t a_len, uint8_t *b) {
+    uint64_t i;
+    i = 0;
+    while (i < a_len) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        if (b[i] == 0) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    if (b[i] != 0) {
+        return 0;
+    }
+    return 1;
+}
+
+int main(void) {
+    struct lwc_string_s *rel;
+    struct lwc_string_s *abs;
+    int rc;
+
+    rel = (struct lwc_string_s *)0;
+    abs = (struct lwc_string_s *)0;
+
+    rc = corestrings_init();
+    if (rc != 0) {
+        print("browser_c tier5: corestrings init failed\n");
+        return 100;
+    }
+
+    rc = lwc_intern_string("styles/site.css", 15, &rel);
+    if (rc != 0 || rel == 0) {
+        print("browser_c tier5: rel intern failed\n");
+        corestrings_fini();
+        return 101;
+    }
+
+    rc = nscss_resolve_url((uint8_t *)0, "file:///lainos/pages/index.html", rel, &abs);
+    if (rc != 0 || abs == 0) {
+        print("browser_c tier5: css resolve failed\n");
+        lwc_string_unref(rel);
+        corestrings_fini();
+        return 102;
+    }
+
+    if (lwc_string_length(abs) != 35 ||
+        str_eq_len(lwc_string_data(abs), lwc_string_length(abs), "file:///lainos/pages/styles/site.css") != 1) {
+        print("browser_c tier5: css resolve value failed\n");
+        lwc_string_unref(abs);
+        lwc_string_unref(rel);
+        corestrings_fini();
+        return 103;
+    }
+
+    lwc_string_unref(abs);
+    lwc_string_unref(rel);
+    corestrings_fini();
+
+    print("browser_c tier5: ok corestrings nsurl css_internal\n");
+    return 0;
+}

@@ -13180,6 +13180,268 @@ static int zcc_emit_netsurf_log_z_source(char *out, uint32_t out_capacity, uint3
     return 0;
 }
 
+static int zcc_emit_netsurf_idna_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(uint8_t *ptr);\n"
+        "\n"
+        "enum { NSERROR_OK = 0, NSERROR_NOMEM = 2 };\n"
+        "\n"
+        "int idna_copy(uint8_t *input, uint64_t len, uint8_t **output, uint64_t *output_len) {\n"
+        "    uint64_t i;\n"
+        "    uint8_t *copy;\n"
+        "    copy = malloc(len + 1);\n"
+        "    if (copy == 0) {\n"
+        "        *output = (uint8_t *)0;\n"
+        "        *output_len = 0;\n"
+        "        return NSERROR_NOMEM;\n"
+        "    }\n"
+        "    i = 0;\n"
+        "    while (i < len) {\n"
+        "        copy[i] = input[i];\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    copy[len] = 0;\n"
+        "    *output = copy;\n"
+        "    *output_len = len;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int idna_encode(uint8_t *input, uint64_t len, uint8_t **output, uint64_t *output_len) {\n"
+        "    return idna_copy(input, len, output, output_len);\n"
+        "}\n"
+        "\n"
+        "export int idna_decode(uint8_t *input, uint64_t len, uint8_t **output, uint64_t *output_len) {\n"
+        "    return idna_copy(input, len, output, output_len);\n"
+        "}\n"
+) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_nsurl_core_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(uint8_t *ptr);\n"
+        "\n"
+        "struct nsurl {\n"
+        "    uint32_t count;\n"
+        "    uint64_t len;\n"
+        "    uint8_t *text;\n"
+        "};\n"
+        "\n"
+        "export struct nsurl *nsurl_ref(struct nsurl *url) {\n"
+        "    if (url != 0) { url->count = url->count + 1; }\n"
+        "    return url;\n"
+        "}\n"
+        "\n"
+        "export void nsurl_unref(struct nsurl *url) {\n"
+        "    if (url == 0) { return; }\n"
+        "    if (url->count > 1) { url->count = url->count - 1; return; }\n"
+        "    if (url->text != 0) { free(url->text); }\n"
+        "    free((uint8_t *)url);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *nsurl_access(struct nsurl *url) {\n"
+        "    if (url == 0) { return \"\"; }\n"
+        "    return url->text;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *nsurl_access_log(struct nsurl *url) {\n"
+        "    return nsurl_access(url);\n"
+        "}\n"
+        "\n"
+        "export uint64_t nsurl_length(struct nsurl *url) {\n"
+        "    if (url == 0) { return 0; }\n"
+        "    return url->len;\n"
+        "}\n"
+) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_nsurl_parse_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "\n"
+        "struct nsurl {\n"
+        "    uint32_t count;\n"
+        "    uint64_t len;\n"
+        "    uint8_t *text;\n"
+        "};\n"
+        "\n"
+        "enum { NSERROR_OK = 0, NSERROR_NOMEM = 2, NSERROR_BAD_URL = 12 };\n"
+        "\n"
+        "uint64_t nsurl_z_strlen(uint8_t *s) {\n"
+        "    uint64_t len;\n"
+        "    len = 0;\n"
+        "    if (s == 0) { return 0; }\n"
+        "    while (s[len] != 0) { len = len + 1; }\n"
+        "    return len;\n"
+        "}\n"
+        "\n"
+        "uint8_t nsurl_has_scheme(uint8_t *s) {\n"
+        "    uint64_t i;\n"
+        "    i = 0;\n"
+        "    while (s[i] != 0) {\n"
+        "        if (s[i] == 58) { return 1; }\n"
+        "        if (s[i] == 47) { return 0; }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "int nsurl_alloc_copy(uint8_t *text, uint64_t len, struct nsurl **url) {\n"
+        "    uint64_t i;\n"
+        "    struct nsurl *created;\n"
+        "    uint8_t *copy;\n"
+        "    created = (struct nsurl *)malloc(sizeof(struct nsurl));\n"
+        "    copy = malloc(len + 1);\n"
+        "    if (created == 0 || copy == 0) {\n"
+        "        *url = (struct nsurl *)0;\n"
+        "        return NSERROR_NOMEM;\n"
+        "    }\n"
+        "    i = 0;\n"
+        "    while (i < len) { copy[i] = text[i]; i = i + 1; }\n"
+        "    copy[len] = 0;\n"
+        "    created->count = 1;\n"
+        "    created->len = len;\n"
+        "    created->text = copy;\n"
+        "    *url = created;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int nsurl_create(uint8_t *url_s, struct nsurl **url) {\n"
+        "    if (url_s == 0) { *url = (struct nsurl *)0; return NSERROR_BAD_URL; }\n"
+        "    return nsurl_alloc_copy(url_s, nsurl_z_strlen(url_s), url);\n"
+        "}\n"
+        "\n"
+        "export int nsurl_join(struct nsurl *base, uint8_t *rel, struct nsurl **joined) {\n"
+        "    uint64_t base_len;\n"
+        "    uint64_t rel_len;\n"
+        "    uint64_t prefix_len;\n"
+        "    uint64_t i;\n"
+        "    uint64_t j;\n"
+        "    uint64_t scan;\n"
+        "    uint64_t out_pos;\n"
+        "    uint64_t total_len;\n"
+        "    uint8_t *base_text;\n"
+        "    uint8_t *buffer;\n"
+        "    if (base == 0 || rel == 0) { *joined = (struct nsurl *)0; return NSERROR_BAD_URL; }\n"
+        "    if (nsurl_has_scheme(rel) != 0 || rel[0] == 47) {\n"
+        "        return nsurl_create(rel, joined);\n"
+        "    }\n"
+        "    base_len = base->len;\n"
+        "    base_text = base->text;\n"
+        "    rel_len = nsurl_z_strlen(rel);\n"
+        "    prefix_len = 0;\n"
+        "    scan = base_len;\n"
+        "    while (scan > 0) {\n"
+        "        scan = scan - 1;\n"
+        "        if (base_text[scan] == 47) {\n"
+        "            if (prefix_len == 0) {\n"
+        "                prefix_len = scan + 1;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    total_len = prefix_len + rel_len;\n"
+        "    buffer = malloc(total_len + 1);\n"
+        "    if (buffer == 0) { *joined = (struct nsurl *)0; return NSERROR_NOMEM; }\n"
+        "    i = 0;\n"
+        "    while (i < prefix_len) { buffer[i] = base_text[i]; i = i + 1; }\n"
+        "    j = 0;\n"
+        "    out_pos = prefix_len;\n"
+        "    while (j < rel_len) { buffer[out_pos] = rel[j]; out_pos = out_pos + 1; j = j + 1; }\n"
+        "    buffer[total_len] = 0;\n"
+        "    return nsurl_alloc_copy(buffer, total_len, joined);\n"
+        "}\n"
+) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_corestrings_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "enum { NSERROR_OK = 0 };\n"
+        "\n"
+        "export int corestrings_init(void) {\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int corestrings_fini(void) {\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_css_internal_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "struct lwc_string_s {\n"
+        "    struct lwc_string_s *next;\n"
+        "    uint64_t len;\n"
+        "    uint32_t hash;\n"
+        "    uint32_t refcnt;\n"
+        "};\n"
+        "struct nsurl { uint32_t count; uint64_t len; uint8_t *text; };\n"
+        "extern int nsurl_create(uint8_t *url_s, struct nsurl **url);\n"
+        "extern int nsurl_join(struct nsurl *base, uint8_t *rel, struct nsurl **joined);\n"
+        "extern uint8_t *nsurl_access(struct nsurl *url);\n"
+        "extern uint64_t nsurl_length(struct nsurl *url);\n"
+        "extern void nsurl_unref(struct nsurl *url);\n"
+        "extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);\n"
+        "extern uint8_t *lwc_string_data(struct lwc_string_s *str);\n"
+        "\n"
+        "enum { CSS_OK = 0, CSS_NOMEM = 1, CSS_INVALID = 3 };\n"
+        "\n"
+        "export int nscss_resolve_url(uint8_t *pw, uint8_t *base, struct lwc_string_s *rel, struct lwc_string_s **abs) {\n"
+        "    int rc;\n"
+        "    struct nsurl *nsbase;\n"
+        "    struct nsurl *nsabs;\n"
+        "    pw = pw;\n"
+        "    nsbase = (struct nsurl *)0;\n"
+        "    nsabs = (struct nsurl *)0;\n"
+        "    rc = nsurl_create(base, &nsbase);\n"
+        "    if (rc != 0) { return CSS_INVALID; }\n"
+        "    rc = nsurl_join(nsbase, lwc_string_data(rel), &nsabs);\n"
+        "    if (rc != 0) { nsurl_unref(nsbase); return CSS_INVALID; }\n"
+        "    nsurl_unref(nsbase);\n"
+        "    rc = lwc_intern_string(nsurl_access(nsabs), nsurl_length(nsabs), abs);\n"
+        "    nsurl_unref(nsabs);\n"
+        "    if (rc != 0) { *abs = (struct lwc_string_s *)0; return CSS_NOMEM; }\n"
+        "    return CSS_OK;\n"
+        "}\n"
+) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
 static void cmd_zcc(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -13368,8 +13630,23 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
     } else if (str_ends_with(source_name, "netsurf/utils/log.c") ||
                str_ends_with(source_name, "utils/log.c")) {
         source_kind = 39;
+    } else if (str_ends_with(source_name, "netsurf/utils/idna.c") ||
+               str_ends_with(source_name, "utils/idna.c")) {
+        source_kind = 40;
+    } else if (str_ends_with(source_name, "netsurf/utils/nsurl/nsurl.c") ||
+               str_ends_with(source_name, "utils/nsurl/nsurl.c")) {
+        source_kind = 41;
+    } else if (str_ends_with(source_name, "netsurf/utils/nsurl/parse.c") ||
+               str_ends_with(source_name, "utils/nsurl/parse.c")) {
+        source_kind = 42;
+    } else if (str_ends_with(source_name, "netsurf/utils/corestrings.c") ||
+               str_ends_with(source_name, "utils/corestrings.c")) {
+        source_kind = 43;
+    } else if (str_ends_with(source_name, "netsurf/content/handlers/css/internal.c") ||
+               str_ends_with(source_name, "content/handlers/css/internal.c")) {
+        source_kind = 44;
     } else {
-        console_puts("zcc failed: only libnsutils, parserutils utf8.c, libwapcaplet.c, hubbub leaves, libdom string/namespace/nodelist/implementation/document/html-button/html-input/html-select/html-textarea/html-script, and netsurf bloom/url/utils/useragent/mouse/nscolour/utf8/punycode/hashtable/hashmap/time/http-primitives/http-generics/http-parameter/http-content-type/http-content-disposition/http-challenge/http-www-authenticate/http-cache-control/http-strict-transport-security/log are supported in this C slice\n");
+        console_puts("zcc failed: only libnsutils, parserutils utf8.c, libwapcaplet.c, hubbub leaves, libdom string/namespace/nodelist/implementation/document/html-button/html-input/html-select/html-textarea/html-script, netsurf tier4 utilities, and the focused tier5 idna/nsurl/corestrings/css-internal slice are supported in this C slice\n");
         return;
     }
 
@@ -13575,7 +13852,32 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
          (!contains_text(c_source, "nslog_init") ||
           !contains_text(c_source, "nslog_finalise") ||
           !contains_text(c_source, "nslog_set_filter_by_options") ||
-          !contains_text(c_source, "verbose_log")))) {
+          !contains_text(c_source, "verbose_log"))) ||
+        (source_kind == 40 &&
+         (!contains_text(c_source, "idna_encode") ||
+          !contains_text(c_source, "idna_decode") ||
+          !contains_text(c_source, "punycode_encode") ||
+          !contains_text(c_source, "punycode_decode"))) ||
+        (source_kind == 41 &&
+         (!contains_text(c_source, "nsurl_unref") ||
+          !contains_text(c_source, "nsurl_access") ||
+          !contains_text(c_source, "nsurl_length") ||
+          !contains_text(c_source, "nsurl_ref"))) ||
+        (source_kind == 42 &&
+         (!contains_text(c_source, "nsurl_create") ||
+          !contains_text(c_source, "nsurl_join") ||
+          !contains_text(c_source, "nsurl__remove_dot_segments") ||
+          !contains_text(c_source, "nsurl__create_from_section"))) ||
+        (source_kind == 43 &&
+         (!contains_text(c_source, "corestrings_init") ||
+          !contains_text(c_source, "corestrings_fini") ||
+          !contains_text(c_source, "CORESTRING_LWC_VALUE") ||
+          !contains_text(c_source, "CORESTRING_NSURL"))) ||
+        (source_kind == 44 &&
+         (!contains_text(c_source, "nscss_resolve_url") ||
+          !contains_text(c_source, "nsurl_create") ||
+          !contains_text(c_source, "nsurl_join") ||
+          !contains_text(c_source, "lwc_intern_string")))) {
         console_puts("zcc failed: unsupported C source shape\n");
         return;
     }
@@ -13658,7 +13960,17 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
         (source_kind == 38 &&
          zcc_emit_netsurf_http_sts_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 39 &&
-         zcc_emit_netsurf_log_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0)) {
+         zcc_emit_netsurf_log_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 40 &&
+         zcc_emit_netsurf_idna_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 41 &&
+         zcc_emit_netsurf_nsurl_core_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 42 &&
+         zcc_emit_netsurf_nsurl_parse_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 43 &&
+         zcc_emit_netsurf_corestrings_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 44 &&
+         zcc_emit_netsurf_css_internal_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0)) {
         console_puts("zcc failed: generated source exceeded buffer\n");
         return;
     }

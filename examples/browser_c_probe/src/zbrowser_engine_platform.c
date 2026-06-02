@@ -113,6 +113,8 @@ extern int os_http_get_ex(const char *url,
                           char *buffer,
                           uint32_t capacity,
                           zbrowser_lainos_http_info_t *info);
+extern int os_file_size(const uint8_t *path);
+extern int os_read_file(const uint8_t *path, uint8_t *buffer, uint32_t capacity);
 extern void put_pixel(uint32_t x, uint32_t y, uint32_t color);
 extern uint32_t gfx_get_pixel(uint32_t x, uint32_t y);
 extern uint32_t gfx_width(void);
@@ -1337,6 +1339,8 @@ nserror zbrowser_lainos_image_init(void) {
         "image/gif",
         "image/bmp",
         "image/x-ms-bmp",
+        "image/x-portable-pixmap",
+        "image/x-portable-anymap",
         "image/webp",
         "image/x-icon",
         "image/vnd.microsoft.icon",
@@ -3713,6 +3717,245 @@ nserror zbrowser_lainos_resource_fetcher_register(void) {
     return fetcher_add(scheme, &ops);
 }
 
+typedef struct zbrowser_lainos_file_fetch {
+#ifdef ZBROWSER_ENGINE_USE_REAL_NETSURF_CACHE
+    struct zbrowser_lainos_file_fetch *next;
+#endif
+    struct fetch *fetch;
+    uint8_t *data;
+    uint32_t len;
+    const char *content_type;
+    bool sent;
+    bool aborted;
+} zbrowser_lainos_file_fetch_t;
+
+#ifdef ZBROWSER_ENGINE_USE_REAL_NETSURF_CACHE
+static zbrowser_lainos_file_fetch_t *zbrowser_lainos_file_fetches;
+#endif
+
+static bool zbrowser_lainos_file_initialise(lwc_string *scheme) {
+    (void)scheme;
+    return true;
+}
+
+static bool zbrowser_lainos_file_acceptable(const nsurl *url) {
+    (void)url;
+    return true;
+}
+
+static bool zbrowser_lainos_file_path_from_url(nsurl *url,
+        uint8_t *path,
+        size_t path_size) {
+    lwc_string *component;
+    const char *input;
+    size_t in_pos = 0u;
+    size_t out_pos = 0u;
+
+    if (url == 0 || path == 0 || path_size == 0u) {
+        return false;
+    }
+    component = nsurl_get_component(url, NSURL_PATH);
+    if (component == 0) {
+        return false;
+    }
+    input = lwc_string_data(component);
+    while (input[in_pos] == '/') {
+        ++in_pos;
+    }
+    while (input[in_pos] != 0 && out_pos + 1u < path_size) {
+        path[out_pos++] = input[in_pos] == '/' ? '/' : (uint8_t)input[in_pos];
+        ++in_pos;
+    }
+    path[out_pos] = 0;
+    lwc_string_unref(component);
+    return out_pos != 0u;
+}
+
+static void *zbrowser_lainos_file_setup(struct fetch *parent_fetch,
+        nsurl *url,
+        bool only_2xx,
+        bool downgrade_tls,
+        const char *post_urlenc,
+        const struct fetch_multipart_data *post_multipart,
+        const char **headers) {
+    zbrowser_lainos_file_fetch_t *file;
+    uint8_t path[512];
+    int size;
+    int read_size;
+
+    (void)only_2xx;
+    (void)downgrade_tls;
+    (void)post_urlenc;
+    (void)post_multipart;
+    (void)headers;
+    if (!zbrowser_lainos_file_path_from_url(url, path, sizeof(path))) {
+        return 0;
+    }
+    size = os_file_size(path);
+    if (size <= 0 || size > 4 * 1024 * 1024) {
+        return 0;
+    }
+    file = calloc(1, sizeof(*file));
+    if (file == 0) {
+        return 0;
+    }
+    file->data = malloc((size_t)size + 1u);
+    if (file->data == 0) {
+        free(file);
+        return 0;
+    }
+    read_size = os_read_file(path, file->data, (uint32_t)size);
+    if (read_size <= 0) {
+        free(file->data);
+        free(file);
+        return 0;
+    }
+    file->data[read_size] = 0;
+    file->fetch = parent_fetch;
+    file->len = (uint32_t)read_size;
+    file->content_type = zbrowser_lainos_filetype_for_url((const char *)path);
+#ifdef ZBROWSER_ENGINE_USE_REAL_NETSURF_CACHE
+    file->next = zbrowser_lainos_file_fetches;
+    zbrowser_lainos_file_fetches = file;
+    ++zbrowser_lainos_real_fetch_pending_count;
+#endif
+    return file;
+}
+
+static bool zbrowser_lainos_file_start(void *fetch) {
+    (void)fetch;
+    return true;
+}
+
+static void zbrowser_lainos_file_abort(void *fetch) {
+    zbrowser_lainos_file_fetch_t *file = (zbrowser_lainos_file_fetch_t *)fetch;
+    if (file != 0) {
+        file->aborted = true;
+    }
+}
+
+static void zbrowser_lainos_file_free(void *fetch) {
+    zbrowser_lainos_file_fetch_t *file = (zbrowser_lainos_file_fetch_t *)fetch;
+#ifdef ZBROWSER_ENGINE_USE_REAL_NETSURF_CACHE
+    zbrowser_lainos_file_fetch_t **slot = &zbrowser_lainos_file_fetches;
+    while (*slot != 0) {
+        if (*slot == file) {
+            *slot = file->next;
+            if (zbrowser_lainos_real_fetch_pending_count != 0u) {
+                --zbrowser_lainos_real_fetch_pending_count;
+            }
+            break;
+        }
+        slot = &(*slot)->next;
+    }
+#endif
+    if (file != 0) {
+        free(file->data);
+    }
+    free(file);
+}
+
+static void zbrowser_lainos_file_send_header(zbrowser_lainos_file_fetch_t *file,
+        const char *header,
+        size_t len) {
+    fetch_msg msg;
+
+    memset(&msg, 0, sizeof(msg));
+    msg.type = FETCH_HEADER;
+    msg.data.header_or_data.buf = (const uint8_t *)header;
+    msg.data.header_or_data.len = len;
+    fetch_send_callback(&msg, file->fetch);
+}
+
+static void zbrowser_lainos_file_send(zbrowser_lainos_file_fetch_t *file,
+        struct fetch *fetch) {
+    fetch_msg msg;
+    char header[128];
+    int header_len;
+
+    file->sent = true;
+    (void)fetch_set_http_code(fetch, 200);
+    header_len = snprintf(header, sizeof(header), "Content-Type: %s", file->content_type);
+    if (header_len > 0 && header_len < (int)sizeof(header)) {
+        zbrowser_lainos_file_send_header(file, header, (size_t)header_len);
+    }
+    header_len = snprintf(header, sizeof(header), "Content-Length: %u", file->len);
+    if (!file->aborted && header_len > 0 && header_len < (int)sizeof(header)) {
+        zbrowser_lainos_file_send_header(file, header, (size_t)header_len);
+    }
+    if (!file->aborted) {
+        memset(&msg, 0, sizeof(msg));
+        msg.type = FETCH_DATA;
+        msg.data.header_or_data.buf = file->data;
+        msg.data.header_or_data.len = file->len;
+        fetch_send_callback(&msg, fetch);
+    }
+    if (!file->aborted) {
+        memset(&msg, 0, sizeof(msg));
+        msg.type = FETCH_FINISHED;
+        fetch_send_callback(&msg, fetch);
+    }
+}
+
+static void zbrowser_lainos_file_poll(lwc_string *scheme) {
+#ifdef ZBROWSER_ENGINE_USE_REAL_NETSURF_CACHE
+    zbrowser_lainos_file_fetch_t *file;
+
+    (void)scheme;
+    file = zbrowser_lainos_file_fetches;
+    while (file != 0) {
+        zbrowser_lainos_file_fetch_t *next = file->next;
+        if (!file->sent && !file->aborted) {
+            zbrowser_lainos_file_send(file, file->fetch);
+            fetch_remove_from_queues(file->fetch);
+            fetch_free(file->fetch);
+        }
+        file = next;
+    }
+#else
+    struct fetch *fetch;
+
+    (void)scheme;
+    fetch = zbrowser_lainos_fetches;
+    while (fetch != 0) {
+        struct fetch *next = fetch->next;
+        zbrowser_lainos_file_fetch_t *file =
+            (zbrowser_lainos_file_fetch_t *)fetch->fetcher_handle;
+        if (fetch->fetcher != 0 &&
+            fetch->fetcher->ops.poll == zbrowser_lainos_file_poll &&
+            file != 0 &&
+            !file->sent &&
+            !file->aborted) {
+            zbrowser_lainos_file_send(file, fetch);
+            if (fetch->auto_free) {
+                fetch_remove_from_queues(fetch);
+                fetch_free(fetch);
+            }
+        }
+        fetch = next;
+    }
+#endif
+}
+
+nserror zbrowser_lainos_file_fetcher_register(void) {
+    lwc_string *scheme = 0;
+    const struct fetcher_operation_table ops = {
+        .initialise = zbrowser_lainos_file_initialise,
+        .acceptable = zbrowser_lainos_file_acceptable,
+        .setup = zbrowser_lainos_file_setup,
+        .start = zbrowser_lainos_file_start,
+        .abort = zbrowser_lainos_file_abort,
+        .free = zbrowser_lainos_file_free,
+        .poll = zbrowser_lainos_file_poll,
+        .finalise = 0
+    };
+
+    if (lwc_intern_string("file", 4, &scheme) != lwc_error_ok) {
+        return NSERROR_NOMEM;
+    }
+    return fetcher_add(scheme, &ops);
+}
+
 typedef struct zbrowser_lainos_http_fetch {
 #ifdef ZBROWSER_ENGINE_USE_REAL_NETSURF_CACHE
     struct zbrowser_lainos_http_fetch *next;
@@ -4024,6 +4267,9 @@ static const char *zbrowser_lainos_filetype_for_url(const char *url) {
     }
     if (zbrowser_lainos_extension_is(dot, ".bmp")) {
         return "image/bmp";
+    }
+    if (zbrowser_lainos_extension_is(dot, ".ppm")) {
+        return "image/x-portable-pixmap";
     }
     if (zbrowser_lainos_extension_is(dot, ".webp")) {
         return "image/webp";

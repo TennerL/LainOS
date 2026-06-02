@@ -1,0 +1,15 @@
+output browser_c_tier5.bin
+test-return 0
+src src
+selfhost_utf8.zo selfhost_utf8.zo
+selfhost_lwc.zo selfhost_lwc.zo
+selfhost_dom_string.zo selfhost_dom_string.zo
+selfhost_punycode.zo selfhost_punycode.zo
+selfhost_log.zo selfhost_log.zo
+selfhost_utils.zo selfhost_utils.zo
+selfhost_idna.zo selfhost_idna.zo
+selfhost_nsurl_core.zo selfhost_nsurl_core.zo
+selfhost_nsurl_parse.zo selfhost_nsurl_parse.zo
+selfhost_corestrings.zo selfhost_corestrings.zo
+selfhost_css_internal.zo selfhost_css_internal.zo
+browser_c_tier5_test.Z browser_c_tier5_test.zo

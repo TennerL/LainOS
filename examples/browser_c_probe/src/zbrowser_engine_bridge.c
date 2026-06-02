@@ -1630,6 +1630,7 @@ static const struct plotter_table zbrowser_engine_plotters;
 
 #ifdef ZBROWSER_ENGINE_USE_NETSURF_CONTENT
 extern nserror zbrowser_lainos_resource_fetcher_register(void);
+extern nserror zbrowser_lainos_file_fetcher_register(void);
 extern nserror zbrowser_lainos_http_fetcher_register(void);
 extern void zbrowser_lainos_schedule_clear(void);
 extern unsigned int zbrowser_lainos_schedule_count(void);
@@ -1795,6 +1796,11 @@ static int zbrowser_engine_content_init(void) {
     }
 #endif
     error = zbrowser_lainos_resource_fetcher_register();
+    if (error != NSERROR_OK) {
+        zbrowser_engine_status_text = zbrowser_engine_status_content_init_failed;
+        return -1;
+    }
+    error = zbrowser_lainos_file_fetcher_register();
     if (error != NSERROR_OK) {
         zbrowser_engine_status_text = zbrowser_engine_status_content_init_failed;
         return -1;
@@ -3139,6 +3145,9 @@ static void zbrowser_engine_draw_rect_clipped(const struct redraw_context *ctx,
     }
 }
 
+static void zbrowser_engine_draw_diagonal_line_clipped(const struct redraw_context *ctx,
+        int x0, int y0, int x1, int y1, int width, uint32_t colour);
+
 static void zbrowser_engine_draw_line_clipped(const struct redraw_context *ctx,
         int x0, int y0, int x1, int y1, int width, uint32_t colour) {
     zbrowser_engine_plot_ctx_t *plot = ctx != 0 ? (zbrowser_engine_plot_ctx_t *)ctx->priv : 0;
@@ -3151,8 +3160,10 @@ static void zbrowser_engine_draw_line_clipped(const struct redraw_context *ctx,
         width = 1;
     }
     if (plot != 0 &&
-        (max_x < plot->clip.x0 || max_y < plot->clip.y0 ||
-         min_x >= plot->clip.x1 || min_y >= plot->clip.y1)) {
+        (max_x + width / 2 < plot->clip.x0 ||
+         max_y + width / 2 < plot->clip.y0 ||
+         min_x - width / 2 >= plot->clip.x1 ||
+         min_y - width / 2 >= plot->clip.y1)) {
         return;
     }
     if (y0 == y1) {
@@ -3173,20 +3184,7 @@ static void zbrowser_engine_draw_line_clipped(const struct redraw_context *ctx,
                                           colour);
         return;
     }
-    if (width == 1 && x0 >= 0 && y0 >= 0 && x1 >= 0 && y1 >= 0) {
-        gfx_draw_line((uint32_t)x0, (uint32_t)y0, (uint32_t)x1, (uint32_t)y1, colour);
-        return;
-    }
-    for (int i = 0; i < width; ++i) {
-        int off = i - width / 2;
-        if (x0 >= 0 && y0 + off >= 0 && x1 >= 0 && y1 + off >= 0) {
-            gfx_draw_line((uint32_t)x0,
-                          (uint32_t)(y0 + off),
-                          (uint32_t)x1,
-                          (uint32_t)(y1 + off),
-                          colour);
-        }
-    }
+    zbrowser_engine_draw_diagonal_line_clipped(ctx, x0, y0, x1, y1, width, colour);
 }
 
 static void zbrowser_engine_plot_pixel(const struct redraw_context *ctx,
@@ -3204,6 +3202,55 @@ static void zbrowser_engine_plot_pixel(const struct redraw_context *ctx,
         return;
     }
     put_pixel((uint32_t)x, (uint32_t)y, colour);
+}
+
+static void zbrowser_engine_plot_line_brush(const struct redraw_context *ctx,
+        int x,
+        int y,
+        int width,
+        uint32_t colour) {
+    if (width <= 1) {
+        zbrowser_engine_plot_pixel(ctx, x, y, colour);
+        return;
+    }
+    zbrowser_engine_fill_rect_clipped(ctx,
+                                      x - width / 2,
+                                      y - width / 2,
+                                      x - width / 2 + width,
+                                      y - width / 2 + width,
+                                      colour);
+}
+
+static void zbrowser_engine_draw_diagonal_line_clipped(const struct redraw_context *ctx,
+        int x0,
+        int y0,
+        int x1,
+        int y1,
+        int width,
+        uint32_t colour) {
+    int dx = x1 >= x0 ? x1 - x0 : x0 - x1;
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = y1 >= y0 ? y0 - y1 : y1 - y0;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    for (;;) {
+        int e2;
+
+        zbrowser_engine_plot_line_brush(ctx, x0, y0, width, colour);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        e2 = err * 2;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
 }
 
 static void zbrowser_engine_fill_polygon_points(const struct redraw_context *ctx,

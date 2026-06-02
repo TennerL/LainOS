@@ -1765,6 +1765,60 @@ void console_put_dec64(unsigned long long value) {
     console_unlock();
 }
 
+static void debug_puts_unlocked(const char *s) {
+    while (*s) {
+        console_serial_putc(*s++);
+    }
+}
+
+static void debug_put_hex_n_unlocked(uint64_t value, unsigned digits) {
+    for (unsigned i = 0; i < digits; ++i) {
+        unsigned nibble = (unsigned)((value >> ((digits - 1u - i) * 4u)) & 0xFu);
+        console_serial_putc((char)(nibble < 10 ? ('0' + nibble) : ('A' + nibble - 10)));
+    }
+}
+
+void debug_puts(const char *s) {
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    if (s == 0) {
+        return;
+    }
+    console_lock();
+    debug_puts_unlocked(s);
+    console_unlock();
+}
+
+void debug_put_hex64(unsigned long long value) {
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    console_lock();
+    debug_put_hex_n_unlocked(value, 16);
+    console_unlock();
+}
+
+void debug_put_dec64(unsigned long long value) {
+    if (console_current_cpu_suppressed()) {
+        return;
+    }
+    console_lock();
+    if (value == 0) {
+        console_serial_putc('0');
+        console_unlock();
+        return;
+    }
+    dec_buffer[31] = '\0';
+    int i = 30;
+    while (value && i >= 0) {
+        dec_buffer[i--] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    debug_puts_unlocked(&dec_buffer[i + 1]);
+    console_unlock();
+}
+
 static unsigned long long next_arg(int *idx, unsigned long long a1, unsigned long long a2) {
     unsigned long long v = (*idx == 0) ? a1 : a2;
     (*idx)++;

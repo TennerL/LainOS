@@ -33,6 +33,9 @@ extern int os_http_get_ex(const uint8_t *url, uint8_t *buffer, uint32_t capacity
 extern void puts(const uint8_t *text);
 extern void put_hex64(uint64_t value);
 extern void put_dec64(uint64_t value);
+extern void debug_puts(const uint8_t *text);
+extern void debug_put_hex64(uint64_t value);
+extern void debug_put_dec64(uint64_t value);
 extern uint8_t *kmalloc(uint32_t size);
 extern void kfree(uint8_t *ptr);
 extern uint32_t kernel_task_submit_named(void (*fn)(uint8_t *arg), uint8_t *arg, const uint8_t *name);
@@ -345,52 +348,52 @@ void zbrowser_ns_log_renderer_status(const uint8_t *phase) {
         return;
     }
     zbrowser_ns_copy(zbrowser_ns_last_renderer_status, ZBROWSER_NS_LINE_CAPACITY, status);
-    puts("zbrowser renderer-status\n");
-    puts("phase ");
-    puts(phase);
-    puts("\nstatus ");
-    puts(status);
-    puts("\nzbrowser redraw-counters full ");
-    put_dec64(zbrowser_ns_full_redraw_count);
-    puts("\nzbrowser redraw-counters chrome ");
-    put_dec64(zbrowser_ns_chrome_redraw_count);
-    puts("\nzbrowser redraw-counters page ");
-    put_dec64(zbrowser_ns_page_redraw_count);
-    puts("\nzbrowser redraw-counters poll-full ");
-    put_dec64(zbrowser_ns_poll_full_redraw_count);
-    puts("\nzbrowser redraw-counters poll-chrome ");
-    put_dec64(zbrowser_ns_poll_chrome_redraw_count);
-    puts("\nzbrowser redraw-counters render-fail ");
-    put_dec64(zbrowser_ns_render_fail_count);
-    puts("\n");
+    debug_puts("zbrowser renderer-status\n");
+    debug_puts("phase ");
+    debug_puts(phase);
+    debug_puts("\nstatus ");
+    debug_puts(status);
+    debug_puts("\nzbrowser redraw-counters full ");
+    debug_put_dec64(zbrowser_ns_full_redraw_count);
+    debug_puts("\nzbrowser redraw-counters chrome ");
+    debug_put_dec64(zbrowser_ns_chrome_redraw_count);
+    debug_puts("\nzbrowser redraw-counters page ");
+    debug_put_dec64(zbrowser_ns_page_redraw_count);
+    debug_puts("\nzbrowser redraw-counters poll-full ");
+    debug_put_dec64(zbrowser_ns_poll_full_redraw_count);
+    debug_puts("\nzbrowser redraw-counters poll-chrome ");
+    debug_put_dec64(zbrowser_ns_poll_chrome_redraw_count);
+    debug_puts("\nzbrowser redraw-counters render-fail ");
+    debug_put_dec64(zbrowser_ns_render_fail_count);
+    debug_puts("\n");
 }
 
 void zbrowser_ns_log_redraw_summary(const uint8_t *phase) {
-    puts("zbrowser redraw-summary ");
-    puts(phase);
-    puts(" full ");
-    put_dec64(zbrowser_ns_full_redraw_count);
-    puts(" chrome ");
-    put_dec64(zbrowser_ns_chrome_redraw_count);
-    puts(" page ");
-    put_dec64(zbrowser_ns_page_redraw_count);
-    puts(" scroll ");
-    put_dec64(zbrowser_ns_scroll_redraw_count);
-    puts(" poll-full ");
-    put_dec64(zbrowser_ns_poll_full_redraw_count);
-    puts(" poll-chrome ");
-    put_dec64(zbrowser_ns_poll_chrome_redraw_count);
-    puts(" render-fail ");
-    put_dec64(zbrowser_ns_render_fail_count);
-    puts("\n");
+    debug_puts("zbrowser redraw-summary ");
+    debug_puts(phase);
+    debug_puts(" full ");
+    debug_put_dec64(zbrowser_ns_full_redraw_count);
+    debug_puts(" chrome ");
+    debug_put_dec64(zbrowser_ns_chrome_redraw_count);
+    debug_puts(" page ");
+    debug_put_dec64(zbrowser_ns_page_redraw_count);
+    debug_puts(" scroll ");
+    debug_put_dec64(zbrowser_ns_scroll_redraw_count);
+    debug_puts(" poll-full ");
+    debug_put_dec64(zbrowser_ns_poll_full_redraw_count);
+    debug_puts(" poll-chrome ");
+    debug_put_dec64(zbrowser_ns_poll_chrome_redraw_count);
+    debug_puts(" render-fail ");
+    debug_put_dec64(zbrowser_ns_render_fail_count);
+    debug_puts("\n");
 }
 
 void zbrowser_ns_log_stage(const uint8_t *phase) {
-    puts("zbrowser stage ");
-    puts(phase);
-    puts(" status ");
-    puts(zbrowser_ns_status);
-    puts("\n");
+    debug_puts("zbrowser stage ");
+    debug_puts(phase);
+    debug_puts(" status ");
+    debug_puts(zbrowser_ns_status);
+    debug_puts("\n");
 }
 
 void zbrowser_ns_log_visual_sample(void) {
@@ -403,23 +406,29 @@ void zbrowser_ns_log_visual_sample(void) {
     zbrowser_ns_visual_sample_logged = 1;
     x = zbrowser_ns_view.x;
     y = zbrowser_ns_view.y;
-    puts("zbrowser visual-sample body ");
-    put_hex64(gfx_get_pixel(x + 4, y + 4));
-    puts(" frame-border ");
-    put_hex64(gfx_get_pixel(x + 16, y + 16));
-    puts(" frame-fill ");
-    put_hex64(gfx_get_pixel(x + 20, y + 20));
-    puts(" text-area ");
-    put_hex64(gfx_get_pixel(x + 36, y + 54));
-    puts(" view ");
-    put_dec64(zbrowser_ns_view.x);
-    puts(",");
-    put_dec64(zbrowser_ns_view.y);
-    puts(" ");
-    put_dec64(zbrowser_ns_view.width);
-    puts("x");
-    put_dec64(zbrowser_ns_view.height);
-    puts("\n");
+    debug_puts("zbrowser visual-sample body ");
+    debug_put_hex64(gfx_get_pixel(x + 4, y + 4));
+    debug_puts(" frame-border ");
+    debug_put_hex64(gfx_get_pixel(x + 16, y + 16));
+    debug_puts(" frame-fill ");
+    debug_put_hex64(gfx_get_pixel(x + 20, y + 20));
+    debug_puts(" text-area ");
+    debug_put_hex64(gfx_get_pixel(x + 36, y + 54));
+    debug_puts(" heading-text ");
+    debug_put_hex64(gfx_get_pixel(x + 36, y + 59));
+    debug_puts(" badge-border ");
+    debug_put_hex64(gfx_get_pixel(x + 34, y + 123));
+    debug_puts(" badge-fill ");
+    debug_put_hex64(gfx_get_pixel(x + 35, y + 124));
+    debug_puts(" view ");
+    debug_put_dec64(zbrowser_ns_view.x);
+    debug_puts(",");
+    debug_put_dec64(zbrowser_ns_view.y);
+    debug_puts(" ");
+    debug_put_dec64(zbrowser_ns_view.width);
+    debug_puts("x");
+    debug_put_dec64(zbrowser_ns_view.height);
+    debug_puts("\n");
 }
 
 void zbrowser_ns_set_status_loaded(void) {
