@@ -1,0 +1,8 @@
+output http_sts.bin
+test-return 0
+src src
+selfhost_lwc.zo selfhost_lwc.zo
+selfhost_http_primitives.zo selfhost_http_primitives.zo
+selfhost_http_generics.zo selfhost_http_generics.zo
+selfhost_http_sts.zo selfhost_http_sts.zo
+http_sts_test.Z http_sts_test.zo

@@ -1,0 +1,54 @@
+struct http_cc {
+    uint32_t max_age;
+    uint8_t max_age_valid;
+    uint8_t no_cache;
+    uint8_t no_store;
+};
+extern int http_parse_cache_control(const uint8_t *header_value, struct http_cc **result);
+extern void http_cache_control_destroy(struct http_cc *victim);
+extern uint8_t http_cache_control_has_max_age(struct http_cc *cc);
+extern uint32_t http_cache_control_max_age(struct http_cc *cc);
+extern uint8_t http_cache_control_no_cache(struct http_cc *cc);
+extern uint8_t http_cache_control_no_store(struct http_cc *cc);
+
+uint8_t cc_input[36] = "max-age=42, no-cache, no-store";
+uint8_t cc_quoted[13] = "max-age=\"7\"";
+uint8_t cc_dup[19] = "no-cache, NO-CACHE";
+uint8_t cc_bad_age[13] = "max-age=abc";
+uint8_t cc_bad[5] = "=bad";
+struct http_cc *cc;
+
+cc = (struct http_cc *)0;
+if (http_parse_cache_control(cc_input, &cc) != 0 || cc == 0) {
+    print("browser_c http cc: parse failed\n");
+    return 10;
+}
+if (http_cache_control_has_max_age(cc) != 1 || http_cache_control_max_age(cc) != 42 || http_cache_control_no_cache(cc) != 1 || http_cache_control_no_store(cc) != 1) {
+    print("browser_c http cc: values failed\n");
+    return 11;
+}
+http_cache_control_destroy(cc);
+cc = (struct http_cc *)0;
+if (http_parse_cache_control(cc_quoted, &cc) != 0 || cc == 0 || http_cache_control_max_age(cc) != 7) {
+    print("browser_c http cc: quoted max-age failed\n");
+    return 12;
+}
+http_cache_control_destroy(cc);
+cc = (struct http_cc *)0;
+if (http_parse_cache_control(cc_dup, &cc) != 4 || cc != 0) {
+    print("browser_c http cc: duplicate failed\n");
+    return 13;
+}
+cc = (struct http_cc *)0;
+if (http_parse_cache_control(cc_bad_age, &cc) != 0 || cc == 0 || http_cache_control_has_max_age(cc) != 0 || http_cache_control_no_cache(cc) != 0) {
+    print("browser_c http cc: bad max-age failed\n");
+    return 14;
+}
+http_cache_control_destroy(cc);
+cc = (struct http_cc *)0;
+if (http_parse_cache_control(cc_bad, &cc) != 4 || cc != 0) {
+    print("browser_c http cc: bad parse failed\n");
+    return 15;
+}
+print("browser_c http cc: ok\n");
+return 0;

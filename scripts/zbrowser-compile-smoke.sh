@@ -13,6 +13,7 @@ mkdir -p build/zbrowser-smoke/all-ztests
 make build/tools/zmod_link_host build/browser-c-engine/zbrowser_engine_module.zo
 scripts/zbrowser-c-selfhost-stage-smoke.sh
 scripts/zbrowser-c-queue-probe-smoke.sh
+scripts/zbrowser-c-tier-smoke.sh
 scripts/zbrowser-c-host-compile-smoke.sh
 
 export ZBUILD_HOST_FORCE_BUILD_ROOT=1
@@ -302,7 +303,7 @@ manifest_skips_broad_ztest() {
   local manifest="$1"
 
   case "$manifest" in
-    examples/browser_c_probe/kernel.zbuild)
+    examples/browser_c_probe/kernel.zbuild|examples/browser_c_probe/first_unit.zbuild|examples/browser_c_probe/tier1.zbuild|examples/browser_c_probe/tier2.zbuild|examples/browser_c_probe/tier3.zbuild|examples/browser_c_probe/tier4.zbuild|examples/browser_c_probe/http_chal.zbuild|examples/browser_c_probe/http_wa.zbuild|examples/browser_c_probe/http_cc.zbuild|examples/browser_c_probe/http_sts.zbuild|examples/browser_c_probe/log.zbuild)
       return 0
       ;;
   esac

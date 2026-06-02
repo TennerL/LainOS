@@ -1,0 +1,9 @@
+output http_chal.bin
+test-return 0
+src src
+selfhost_lwc.zo selfhost_lwc.zo
+selfhost_http_primitives.zo selfhost_http_primitives.zo
+selfhost_http_generics.zo selfhost_http_generics.zo
+selfhost_http_parameter.zo selfhost_http_parameter.zo
+selfhost_http_chal.zo selfhost_http_chal.zo
+http_chal_test.Z http_chal_test.zo

@@ -82,5 +82,78 @@ This is the active browser integration roadmap. Work through it top-to-bottom un
 - [partial] Expand computed-style traversal from root-only to document nodes before layout/paint replacement. The bridge keeps parsed author stylesheets alive, selects libcss style per element during traversal, skips hidden/script/style/head content, and now consumes color/background/display/visibility/font-size/margins/padding/text-align for a visibly more CSS-driven text-flow paint. This is still not full CSS because it does not build NetSurf HTML boxes or run NetSurf layout/redraw yet.
 - [partial] Link and stage the NetSurf `content/handlers/html` box construction/layout/redraw path behind the existing browser C package. The selfhost queue now carries NetSurf CSS select/hints/internal plus HTML `box_construct`, `box_inspect`, `box_manipulate`, `box_normalise`, `box_special`, `box_textarea`, `font`, `form`, `forms`, `imagemap`, `object`, `layout`, `layout_flex`, `table`, `redraw_border`, and `redraw`, with frontend/content lifecycle hooks stubbed in the LainOS platform layer.
 - [partial] Instantiate a real module-side `html_content`, feed the parsed DOM plus libcss selection context into NetSurf `dom_to_box`, run `layout_document`, and try `html_redraw` first through a LainOS plotter table. The old DOM text-flow painter remains as fallback while the frontend plotters, font metrics, object/content hooks, and runtime stability are hardened.
+- [done] Split the staged browser C queue into self-hosting tiers. The generated guest tree now carries `COMPILE_TIER0.txt` through `COMPILE_TIER5.txt` plus `COMPILE_TIERS.txt`, with validation proving all 123 queue units land in exactly one tier and remain host-built/guest-linked until the in-OS C compiler emits browser objects.
+- [done] Compile the first staged browser C unit inside LainOS. The guest `zcc` command recognizes staged `libnsutils/src/base64.c`, emits a linkable `.zo` for `nsu_base64_encode`, and the selfhost smoke links/calls it from `first_unit.zbuild`.
+- [done] Expand the guest-compiled tier1 slice to the current three libnsutils objects. `zcc` now recognizes staged `libnsutils/src/base64.c`, `time.c`, and `unistd.c`, emits `nsu_base64_encode`, `nsu_getmonotonic_ms`, `nsu_pread`, and `nsu_pwrite`, and the guest `tier1.zbuild` smoke links all three self-hosted objects into one callable binary.
+- [done] Start tier2 guest C compilation with parserutils/libwapcaplet leaves. `zcc` recognizes staged `libparserutils/src/charset/encodings/utf8.c` and `libwapcaplet/src/libwapcaplet.c`, emits UTF-8 helpers plus the libwapcaplet intern/string API surface, and the guest `tier2.zbuild` smoke links six self-hosted leaves across libnsutils, parserutils, and libwapcaplet.
+- [done] Expand tier3 guest C compilation into libdom strings, namespace helpers, implementation entry points, document front doors, NodeList traversal, and the first HTML form-control/front-door elements. `zcc` recognizes staged `libhubbub/src/utils/errors.c`, `libhubbub/src/utils/string.c`, `libhubbub/src/charset/detect.c`, `libdom/src/core/string.c`, `libdom/src/utils/namespace.c`, `libdom/src/core/implementation.c`, `libdom/src/core/document.c`, `libdom/src/core/nodelist.c`, `libdom/src/html/html_button_element.c`, `libdom/src/html/html_input_element.c`, `libdom/src/html/html_select_element.c`, `libdom/src/html/html_script_element.c`, and `libdom/src/html/html_text_area_element.c`, emits Hubbub utility/charset helpers plus DOM string/QName namespace/implementation/document/NodeList/html-button/html-input/html-select/html-script/html-textarea slices backed by the self-hosted parserutils UTF-8 and libwapcaplet objects, and the guest `tier3.zbuild` smoke links sixteen objects while testing DOM string interning/UTF-8 navigation, namespace URI lookup, QName validation, split-prefix behavior, implementation feature/document validation front doors, document URI/quirks access, document-owned tag and namespace NodeList traversal, item lookup, ref/unref, list equality, HTML button disabled/tab-index/string/form properties, HTML input checked/default/value/size/tab/max-length/form/click properties, HTML select type/selected-index/value/length/disabled/multiple/name/size/tab-index/form/focus properties, HTML script flags/defer/async/text/html-for/event/charset/src/type properties, and HTML textarea disabled/read-only/default/value/cols/rows/tab-index/string/form/select properties.
+- [done] Expand tier4 guest C compilation to the first NetSurf utility/desktop set.
+  `zcc` recognizes staged `netsurf/utils/bloom.c`, `netsurf/utils/url.c`,
+  `netsurf/utils/utils.c`, `netsurf/utils/useragent.c`,
+  `netsurf/desktop/mouse.c`, `netsurf/utils/nscolour.c`,
+  `netsurf/utils/utf8.c`, `netsurf/utils/punycode.c`,
+  `netsurf/utils/hashtable.c`, `netsurf/utils/hashmap.c`,
+  `netsurf/utils/time.c`, `netsurf/utils/http/primitives.c`,
+  `netsurf/utils/http/generics.c`, `netsurf/utils/http/parameter.c`,
+  `netsurf/utils/http/content-type.c`,
+  `netsurf/utils/http/content-disposition.c`,
+  `netsurf/utils/http/challenge.c`,
+  `netsurf/utils/http/www-authenticate.c`,
+  `netsurf/utils/http/cache-control.c`, and
+  `netsurf/utils/http/strict-transport-security.c`, and
+  `netsurf/utils/log.c`; emits the bloom
+  create/destroy/search/count surface, `url_escape`/`url_unescape`,
+  `squash_whitespace`, `cnv_space2nbsp`, `user_agent_string`,
+  `free_user_agent_string`, `browser_mouse_state_dump`, `nscolour_update`,
+  `nscolour_get_stylesheet`, the NetSurf UTF-8 wrapper surface over the
+  self-hosted parserutils UTF-8 object, `punycode_encode`/`punycode_decode`,
+  the plain NetSurf write-once string hashtable API, the callback-backed
+  generic hashmap API, the NetSurf time formatting/parsing surface, HTTP
+  whitespace/token/quoted-string primitives, HTTP generic item-list
+  parse/destroy helpers, HTTP parameter parse/find/iterate/destroy helpers,
+  HTTP content-type parse/destroy helpers, HTTP content-disposition
+  parse/destroy helpers, HTTP challenge parse/iterate/destroy helpers,
+  HTTP WWW-Authenticate parse/destroy helpers, HTTP Cache-Control
+  parse/accessor/destroy helpers, and HTTP Strict-Transport-Security
+  parse/accessor/destroy helpers, plus NetSurf log init/filter/log/finalise
+  helpers; and
+  the guest `tier4.zbuild`
+  smoke links the parserutils UTF-8 and libwapcaplet dependencies plus all
+  twenty-one NetSurf self-hosted objects while testing FNV-backed bloom
+  membership, raw hash membership, false negatives, empty strings, item
+  counts, percent escaping with slash exceptions, plus-space conversion, valid
+  percent decoding, malformed percent preservation, whitespace squashing,
+  UTF-8 NBSP conversion, user-agent caching, user-agent rebuild after free,
+  the browser mouse-state dump call boundary, nscolour update, stylesheet
+  selectors, stylesheet caching, UTF-8 scalar length, byte length, navigation,
+  UCS-4 decode, UCS-4 encode, finalisation, Punycode encode/decode vectors,
+  small-output handling, invalid-input handling, hashtable add/get,
+  duplicate-key precedence, inline plain parsing, invalid inline data,
+  bad-parameter handling, hashmap insert/lookup/duplicate replacement,
+  callback iteration, removal, missing-key behavior, counts, RFC1123 date
+  formatting/parsing, numeric timestamp formatting/parsing, invalid date
+  handling, HTTP LWS skipping, token parsing, quoted-string parsing,
+  parse-failure handling, HTTP item-list callback parsing, ownership transfer,
+  parse cursor advancement, empty-list failure, destructor callbacks, HTTP
+  parameter list parsing, unquoted and quoted parameter values,
+  case-insensitive parameter lookup, iteration order, bad-parameter failure,
+  parameter-list cleanup, content-type parsing, media type interning,
+  content-type charset lookup, malformed content-type rejection, and
+  content-type cleanup, content-disposition parsing, disposition-token
+  interning, quoted boundary parameter lookup, malformed content-disposition
+  rejection, content-disposition cleanup, challenge parsing, challenge scheme
+  iteration, challenge auth-parameter lookup, malformed challenge rejection,
+  challenge-list cleanup, WWW-Authenticate parsing, WWW-Authenticate challenge
+  list access, WWW-Authenticate auth-parameter lookup, malformed
+  WWW-Authenticate rejection, WWW-Authenticate cleanup, Cache-Control parsing,
+  max-age/no-cache/no-store accessors, quoted max-age parsing, duplicate
+  directive rejection, invalid max-age handling, malformed Cache-Control
+  rejection, Cache-Control cleanup, Strict-Transport-Security parsing,
+  required max-age validation, includeSubDomains access, quoted max-age
+  parsing, duplicate directive rejection, invalid includeSubDomains value
+  rejection, malformed Strict-Transport-Security rejection, and
+  Strict-Transport-Security cleanup, log `-v`/`-V` argument handling, ensure
+  callback success/failure, filter no-op behavior, log call boundary, and
+  finalise cleanup.
 - Next full-CSS milestone: remove the fallback dependency by completing the NetSurf frontend shims: accurate font metrics, clipping/line/path/bitmap plotters, object content redraw, form widgets, and content lifecycle cleanup.
-- Move from "source and queue visible inside the OS" to an in-OS C compile loop that emits at least one NetSurf object from the staged queue.
+- Expand the in-OS C compile loop from hand-lowered tier1/tier2 and first tier3 leaves toward broader small-library slices.

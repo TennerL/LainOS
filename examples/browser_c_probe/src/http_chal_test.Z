@@ -1,0 +1,81 @@
+struct lwc_string_s {
+    uint32_t opaque;
+};
+struct http_parameter {
+    uint32_t opaque;
+};
+struct http_chal {
+    uint32_t opaque;
+};
+extern int http__parse_challenge(const uint8_t **input, struct http_chal **challenge);
+extern struct http_chal *http_challenge_list_iterate(struct http_chal *cur, struct lwc_string_s **scheme, struct http_parameter **parameters);
+extern void http_challenge_list_destroy(struct http_chal *list);
+extern int http_parameter_list_find_item(struct http_parameter *list, struct lwc_string_s *name, struct lwc_string_s **value);
+extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);
+extern uint8_t *lwc_string_data(struct lwc_string_s *str);
+extern uint64_t lwc_string_length(struct lwc_string_s *str);
+extern void lwc_string_unref(struct lwc_string_s *str);
+
+uint8_t str_eq(uint8_t *a, uint8_t *b) {
+    uint64_t i;
+    i = 0;
+    while (a[i] != 0 || b[i] != 0) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+uint8_t chal_input[21] = "Basic charset=utf-8;";
+uint8_t chal_bad[6] = "Basic";
+uint8_t charset_name[8] = "charset";
+uint8_t charset_value[6] = "utf-8";
+uint8_t *pos;
+uint8_t *scheme_data;
+struct http_chal *chal;
+struct http_chal *next_chal;
+struct http_parameter *params;
+struct lwc_string_s *name;
+struct lwc_string_s *value;
+
+pos = chal_input;
+chal = (struct http_chal *)0;
+if (http__parse_challenge(&pos, &chal) != 0 || chal == 0 || pos[0] != 59) {
+    print("browser_c http challenge: parse failed\n");
+    return 10;
+}
+name = (struct lwc_string_s *)0;
+params = (struct http_parameter *)0;
+next_chal = http_challenge_list_iterate(chal, &name, &params);
+if (next_chal != 0 || name == 0 || params == 0) {
+    print("browser_c http challenge: iterate failed\n");
+    return 11;
+}
+scheme_data = lwc_string_data(name);
+if (lwc_string_length(name) != 5 || scheme_data[0] != 66 || scheme_data[1] != 97 || scheme_data[2] != 115 || scheme_data[3] != 105 || scheme_data[4] != 99) {
+    print("browser_c http challenge: scheme failed\n");
+    return 12;
+}
+lwc_string_unref(name);
+if (lwc_intern_string(charset_name, 7, &name) != 0) {
+    print("browser_c http challenge: charset intern failed\n");
+    return 13;
+}
+value = (struct lwc_string_s *)0;
+if (http_parameter_list_find_item(params, name, &value) != 0 || value == 0 || str_eq(lwc_string_data(value), charset_value) != 1) {
+    print("browser_c http challenge: charset failed\n");
+    return 14;
+}
+lwc_string_unref(name);
+lwc_string_unref(value);
+http_challenge_list_destroy(chal);
+pos = chal_bad;
+chal = (struct http_chal *)0;
+if (http__parse_challenge(&pos, &chal) != 4 || chal != 0) {
+    print("browser_c http challenge: bad failed\n");
+    return 15;
+}
+print("browser_c http challenge: ok\n");
+return 0;

@@ -1,0 +1,68 @@
+struct http_sts {
+    uint32_t max_age;
+    uint8_t include_sub_domains;
+};
+extern int http_parse_strict_transport_security(const uint8_t *header_value, struct http_sts **result);
+extern void http_strict_transport_security_destroy(struct http_sts *victim);
+extern uint32_t http_strict_transport_security_max_age(struct http_sts *sts);
+extern uint8_t http_strict_transport_security_include_subdomains(struct http_sts *sts);
+
+uint8_t sts_input[31] = "max-age=315; includeSubDomains";
+uint8_t sts_no_sub[11] = "max-age=7";
+uint8_t sts_quoted[12] = "max-age=\"9\"";
+uint8_t sts_missing[18] = "includeSubDomains";
+uint8_t sts_bad_age[12] = "max-age=bad";
+uint8_t sts_dup[21] = "max-age=1; MAX-AGE=2";
+uint8_t sts_bad_isd[29] = "max-age=1; includeSubDomains=1";
+uint8_t sts_bad[5] = "=bad";
+struct http_sts *sts;
+
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_input, &sts) != 0 || sts == 0) {
+    print("browser_c http sts: parse failed\n");
+    return 10;
+}
+if (http_strict_transport_security_max_age(sts) != 315 || http_strict_transport_security_include_subdomains(sts) != 1) {
+    print("browser_c http sts: values failed\n");
+    return 11;
+}
+http_strict_transport_security_destroy(sts);
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_no_sub, &sts) != 0 || sts == 0 || http_strict_transport_security_max_age(sts) != 7 || http_strict_transport_security_include_subdomains(sts) != 0) {
+    print("browser_c http sts: no subdomains failed\n");
+    return 12;
+}
+http_strict_transport_security_destroy(sts);
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_quoted, &sts) != 0 || sts == 0 || http_strict_transport_security_max_age(sts) != 9) {
+    print("browser_c http sts: quoted max-age failed\n");
+    return 13;
+}
+http_strict_transport_security_destroy(sts);
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_missing, &sts) != 4 || sts != 0) {
+    print("browser_c http sts: missing max-age failed\n");
+    return 14;
+}
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_bad_age, &sts) != 4 || sts != 0) {
+    print("browser_c http sts: bad max-age failed\n");
+    return 15;
+}
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_dup, &sts) != 4 || sts != 0) {
+    print("browser_c http sts: duplicate failed\n");
+    return 16;
+}
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_bad_isd, &sts) != 4 || sts != 0) {
+    print("browser_c http sts: includeSubDomains value failed\n");
+    return 17;
+}
+sts = (struct http_sts *)0;
+if (http_parse_strict_transport_security(sts_bad, &sts) != 4 || sts != 0) {
+    print("browser_c http sts: bad parse failed\n");
+    return 18;
+}
+print("browser_c http sts: ok\n");
+return 0;

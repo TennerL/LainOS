@@ -1,0 +1,5 @@
+output log.bin
+test-return 0
+src src
+selfhost_log.zo selfhost_log.zo
+log_test.Z log_test.zo

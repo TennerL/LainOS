@@ -1,0 +1,226 @@
+extern int nsu_base64_encode(const uint8_t *input,
+                             uint64_t input_length,
+                             uint8_t *output,
+                             uint64_t *output_length);
+extern int nsu_getmonotonic_ms(uint64_t *current_out);
+extern int nsu_pwrite(int fd, const uint8_t *buf, uint64_t count, uint64_t offset);
+extern int nsu_pread(int fd, uint8_t *buf, uint64_t count, uint64_t offset);
+extern int parserutils_charset_utf8_to_ucs4(const uint8_t *s,
+                                            uint64_t len,
+                                            uint32_t *ucs4,
+                                            uint64_t *clen);
+extern int parserutils_charset_utf8_from_ucs4(uint32_t ucs4,
+                                              uint8_t **s,
+                                              uint64_t *len);
+extern int parserutils_charset_utf8_length(const uint8_t *s,
+                                           uint64_t max,
+                                           uint64_t *len);
+extern int parserutils_charset_utf8_char_byte_length(const uint8_t *s,
+                                                     uint64_t *len);
+extern int parserutils_charset_utf8_prev(const uint8_t *s,
+                                         uint32_t off,
+                                         uint32_t *prevoff);
+extern int parserutils_charset_utf8_next(const uint8_t *s,
+                                         uint32_t len,
+                                         uint32_t off,
+                                         uint32_t *nextoff);
+extern int parserutils_charset_utf8_next_paranoid(const uint8_t *s,
+                                                  uint32_t len,
+                                                  uint32_t off,
+                                                  uint32_t *nextoff);
+
+struct lwc_string_s {
+    struct lwc_string_s *next;
+    uint64_t len;
+    uint32_t hash;
+    uint32_t refcnt;
+};
+
+extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);
+extern int lwc_intern_substring(struct lwc_string_s *str,
+                                uint64_t ssoffset,
+                                uint64_t sslen,
+                                struct lwc_string_s **ret);
+extern int lwc_string_tolower(struct lwc_string_s *str, struct lwc_string_s **ret);
+extern struct lwc_string_s *lwc_string_ref(struct lwc_string_s *str);
+extern void lwc_string_unref(struct lwc_string_s *str);
+extern uint8_t *lwc_string_data(struct lwc_string_s *str);
+extern uint64_t lwc_string_length(struct lwc_string_s *str);
+extern uint32_t lwc_string_hash_value(struct lwc_string_s *str);
+extern int lwc_string_isequal(struct lwc_string_s *a, struct lwc_string_s *b, int *ret);
+extern int lwc_string_caseless_isequal(struct lwc_string_s *a,
+                                       struct lwc_string_s *b,
+                                       int *ret);
+extern int lwc_string_caseless_hash_value(struct lwc_string_s *str, uint32_t *hash);
+
+uint8_t input[4] = "Ma";
+uint8_t output[8];
+uint8_t text[5];
+uint8_t encoded[4];
+uint8_t mixed[6] = "HeLLo";
+uint8_t lower[6] = "hello";
+uint8_t *encoded_ptr;
+uint8_t *lwc_data_ptr;
+struct lwc_string_s *lwc_a;
+struct lwc_string_s *lwc_b;
+struct lwc_string_s *lwc_sub;
+struct lwc_string_s *lwc_lowered;
+uint64_t output_length;
+uint64_t first_tick;
+uint64_t second_tick;
+uint64_t scalar_len;
+uint64_t byte_len;
+uint64_t encoded_space;
+uint32_t ucs4;
+uint32_t nextoff;
+uint32_t prevoff;
+uint32_t hash_a;
+uint32_t hash_lower;
+int match;
+int rc;
+
+output_length = 8;
+rc = nsu_base64_encode(input, 2, output, &output_length);
+if (rc != 0 || output_length != 4 ||
+    output[0] != 84 || output[1] != 87 || output[2] != 69 || output[3] != 61) {
+    print("browser_c tier2: base64 failed\n");
+    return 30;
+}
+rc = nsu_getmonotonic_ms(&first_tick);
+if (rc != 0) {
+    print("browser_c tier2: time rc=");
+    print(rc);
+    print("\n");
+    return 31;
+}
+rc = nsu_getmonotonic_ms(&second_tick);
+if (rc != 0 || second_tick < first_tick) {
+    print("browser_c tier2: time monotonic failed\n");
+    return 32;
+}
+if (nsu_pread(-1, output, 1, 0) != -1 || nsu_pwrite(-1, input, 1, 0) != -1) {
+    print("browser_c tier2: unistd failed\n");
+    return 33;
+}
+
+text[0] = 65;
+text[1] = 195;
+text[2] = 169;
+text[3] = 66;
+text[4] = 0;
+
+rc = parserutils_charset_utf8_length(text, 4, &scalar_len);
+if (rc != 0 || scalar_len != 3) {
+    print("browser_c tier2: utf8 length failed rc=");
+    print(rc);
+    print("\n");
+    return 34;
+}
+rc = parserutils_charset_utf8_char_byte_length(text + 1, &byte_len);
+if (rc != 0 || byte_len != 2) {
+    print("browser_c tier2: utf8 byte length failed\n");
+    return 35;
+}
+rc = parserutils_charset_utf8_to_ucs4(text + 1, 3, &ucs4, &byte_len);
+if (rc != 0 || ucs4 != 233 || byte_len != 2) {
+    print("browser_c tier2: utf8 to ucs4 failed\n");
+    return 36;
+}
+rc = parserutils_charset_utf8_next(text, 4, 0, &nextoff);
+if (rc != 0 || nextoff != 1) {
+    print("browser_c tier2: utf8 next ascii failed\n");
+    return 37;
+}
+rc = parserutils_charset_utf8_next(text, 4, 1, &nextoff);
+if (rc != 0 || nextoff != 3) {
+    print("browser_c tier2: utf8 next multibyte failed\n");
+    return 38;
+}
+rc = parserutils_charset_utf8_prev(text, 3, &prevoff);
+if (rc != 0 || prevoff != 1) {
+    print("browser_c tier2: utf8 prev failed\n");
+    return 39;
+}
+rc = parserutils_charset_utf8_next_paranoid(text, 4, 1, &nextoff);
+if (rc != 0 || nextoff != 3) {
+    print("browser_c tier2: utf8 next paranoid failed\n");
+    return 40;
+}
+
+encoded_ptr = encoded;
+encoded_space = 4;
+rc = parserutils_charset_utf8_from_ucs4(233, &encoded_ptr, &encoded_space);
+if (rc != 0 || encoded_space != 2 || encoded[0] != 195 || encoded[1] != 169) {
+    print("browser_c tier2: utf8 from ucs4 failed\n");
+    return 41;
+}
+
+rc = lwc_intern_string(mixed, 5, &lwc_a);
+if (rc != 0 || lwc_a == 0) {
+    print("browser_c tier2: lwc intern failed rc=");
+    print(rc);
+    print("\n");
+    return 42;
+}
+rc = lwc_intern_string(mixed, 5, &lwc_b);
+if (rc != 0 || lwc_b != lwc_a) {
+    print("browser_c tier2: lwc reintern failed\n");
+    return 43;
+}
+if (lwc_string_length(lwc_a) != 5) {
+    print("browser_c tier2: lwc length failed\n");
+    return 44;
+}
+lwc_data_ptr = lwc_string_data(lwc_a);
+if (lwc_data_ptr[0] != 72 || lwc_data_ptr[1] != 101 || lwc_data_ptr[2] != 76) {
+    print("browser_c tier2: lwc data failed\n");
+    return 45;
+}
+rc = lwc_string_isequal(lwc_a, lwc_b, &match);
+if (rc != 0 || match != 1) {
+    print("browser_c tier2: lwc equal failed\n");
+    return 46;
+}
+rc = lwc_intern_substring(lwc_a, 2, 2, &lwc_sub);
+if (rc != 0 || lwc_string_length(lwc_sub) != 2) {
+    print("browser_c tier2: lwc substring failed\n");
+    return 47;
+}
+lwc_data_ptr = lwc_string_data(lwc_sub);
+if (lwc_data_ptr[0] != 76 || lwc_data_ptr[1] != 76) {
+    print("browser_c tier2: lwc substring data failed\n");
+    return 48;
+}
+rc = lwc_string_tolower(lwc_a, &lwc_lowered);
+if (rc != 0 || lwc_lowered == 0) {
+    print("browser_c tier2: lwc tolower failed\n");
+    return 49;
+}
+lwc_data_ptr = lwc_string_data(lwc_lowered);
+if (lwc_data_ptr[0] != 104 || lwc_data_ptr[2] != 108 || lwc_data_ptr[4] != 111) {
+    print("browser_c tier2: lwc lower data failed\n");
+    return 50;
+}
+rc = lwc_intern_string(lower, 5, &lwc_b);
+if (rc != 0) {
+    print("browser_c tier2: lwc lower intern failed\n");
+    return 51;
+}
+rc = lwc_string_caseless_isequal(lwc_a, lwc_b, &match);
+if (rc != 0 || match != 1) {
+    print("browser_c tier2: lwc caseless equal failed\n");
+    return 52;
+}
+hash_a = lwc_string_hash_value(lwc_a);
+rc = lwc_string_caseless_hash_value(lwc_a, &hash_lower);
+if (rc != 0 || hash_a == 0 || hash_lower == 0) {
+    print("browser_c tier2: lwc hash failed\n");
+    return 53;
+}
+lwc_string_unref(lwc_a);
+lwc_string_unref(lwc_b);
+lwc_string_unref(lwc_sub);
+lwc_string_unref(lwc_lowered);
+
+print("browser_c tier2: ok base64 time unistd utf8 lwc\n");
+return 0;

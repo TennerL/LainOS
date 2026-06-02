@@ -1,0 +1,77 @@
+extern int nslog_init(uint8_t (*ensure)(uint8_t *fptr), int *pargc, uint8_t **argv);
+extern void nslog_finalise(void);
+extern int nslog_set_filter(const uint8_t *filter);
+extern int nslog_set_filter_by_options(void);
+extern void nslog_log(const uint8_t *file, const uint8_t *func, int ln, const uint8_t *format);
+
+global uint8_t ensure_calls;
+global uint8_t ensure_result;
+
+uint8_t ensure_log(uint8_t *fptr) {
+    ensure_calls = ensure_calls + 1;
+    if (fptr != 0) {
+        return 0;
+    }
+    return ensure_result;
+}
+
+uint8_t prog[5] = "prog";
+uint8_t dash_v[3] = "-v";
+uint8_t dash_big_v[3] = "-V";
+uint8_t logfile[8] = "log.txt";
+uint8_t page[5] = "page";
+uint8_t filter[5] = "none";
+uint8_t file[5] = "file";
+uint8_t func[5] = "func";
+uint8_t fmt[4] = "msg";
+uint8_t *argvv[4];
+int argc;
+
+ensure_calls = 0;
+ensure_result = 1;
+argc = 3;
+argvv[0] = prog;
+argvv[1] = dash_v;
+argvv[2] = page;
+argvv[3] = (uint8_t *)0;
+if (nslog_init(ensure_log, &argc, argvv) != 0 || argc != 2 || argvv[1] != page || ensure_calls != 1) {
+    print("browser_c log: dash-v failed\n");
+    return 10;
+}
+if (nslog_set_filter(filter) != 0 || nslog_set_filter_by_options() != 0) {
+    print("browser_c log: filter failed\n");
+    return 11;
+}
+nslog_log(file, func, 12, fmt);
+nslog_finalise();
+ensure_calls = 0;
+ensure_result = 1;
+argc = 4;
+argvv[0] = prog;
+argvv[1] = dash_big_v;
+argvv[2] = logfile;
+argvv[3] = page;
+if (nslog_init(ensure_log, &argc, argvv) != 0 || argc != 2 || argvv[1] != page || ensure_calls != 1) {
+    print("browser_c log: dash-big-v failed\n");
+    return 13;
+}
+ensure_calls = 0;
+ensure_result = 0;
+argc = 2;
+argvv[0] = prog;
+argvv[1] = dash_v;
+argvv[2] = (uint8_t *)0;
+if (nslog_init(ensure_log, &argc, argvv) != 8 || argc != 1 || ensure_calls != 1) {
+    print("browser_c log: ensure failure failed\n");
+    return 14;
+}
+ensure_calls = 0;
+argc = 1;
+argvv[0] = prog;
+argvv[1] = (uint8_t *)0;
+if (nslog_init((uint8_t *)0, &argc, argvv) != 0 || argc != 1 || ensure_calls != 0) {
+    print("browser_c log: default failed\n");
+    return 15;
+}
+print("browser_c log: ok\n");
+return 0;

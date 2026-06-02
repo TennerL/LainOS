@@ -62,13 +62,13 @@ uint8_t nsurl_private_header[96] = "../browser_c/third_party/netsurf/src/netsurf
 uint8_t parserutils_include[96] = "../browser_c/third_party/netsurf/src/libparserutils/include";
 uint8_t parserutils_utf8_header[96] = "../browser_c/third_party/netsurf/src/libparserutils/include/parserutils/charset/utf8.h";
 uint8_t zlib_header[40] = "../browser_c/kernel/include/zlib.h";
-uint8_t compile_units[20000];
+uint8_t compile_units[40000];
 
 int read_size;
 int compile_units_size;
 
 compile_units_size = os_file_size(compile_units_path);
-read_size = os_read_file(compile_units_path, compile_units, 19999);
+read_size = os_read_file(compile_units_path, compile_units, 39999);
 if (read_size <= 0) {
     print("browser_c probe: read failed\n");
     return 11;

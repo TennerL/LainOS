@@ -13,6 +13,7 @@ notes_path="$workspace_root/README.txt"
 commands_path="$workspace_root/NEXT_C.txt"
 filelist_path="$workspace_root/FILES.txt"
 compile_units_path="$workspace_root/COMPILE_UNITS.txt"
+tier_status_path="$workspace_root/COMPILE_TIERS.txt"
 
 if [[ ! -f "$manifest_path" ]]; then
   printf 'prepare-browser-selfhost-c-workspace: missing manifest %s\n' "$manifest_path" >&2
@@ -59,6 +60,11 @@ It is validated on the host by scripts/zbrowser-c-host-compile-smoke.sh with
 -nostdinc plus repo-staged freestanding headers, and is intended to become the
 first in-OS browser-C compile queue.
 
+COMPILE_TIER0.txt through COMPILE_TIER5.txt split that same queue into the
+self-hosting gradient. COMPILE_TIERS.txt records the current state of each
+tier. For now every tier is host-built and guest-linked; no tier is marked
+guest-compiled until the in-OS C compiler emits its first browser object.
+
 browser_c_probe/ is a tiny Z project that runs from the same staged workspace
 and validates that the in-OS toolchain can consume that compile queue before a
 guest C compiler exists.
@@ -70,6 +76,57 @@ EOF
 
 cp "$manifest_path" "$filelist_path"
 cp "$units_manifest_path" "$compile_units_path"
+
+classify_compile_tier() {
+  local rel_source="$1"
+
+  case "$rel_source" in
+    examples/browser_c_probe/src/*)
+      printf '0'
+      ;;
+    third_party/netsurf/src/libnsutils/*)
+      printf '1'
+      ;;
+    third_party/netsurf/src/libwapcaplet/*|third_party/netsurf/src/libparserutils/*)
+      printf '2'
+      ;;
+    third_party/netsurf/src/libcss/*|third_party/netsurf/src/libdom/*|third_party/netsurf/src/libhubbub/*)
+      printf '3'
+      ;;
+    third_party/netsurf/src/netsurf/content/handlers/html/*|third_party/netsurf/src/netsurf/content/handlers/css/*)
+      printf '5'
+      ;;
+    third_party/netsurf/src/netsurf/*)
+      printf '4'
+      ;;
+    *)
+      printf '4'
+      ;;
+  esac
+}
+
+for tier_index in 0 1 2 3 4 5; do
+  : >"$workspace_root/COMPILE_TIER${tier_index}.txt"
+done
+
+while IFS='|' read -r object_name rel_source include_roots extra_flags; do
+  [[ -n "$object_name" ]] || continue
+  tier_index="$(classify_compile_tier "$rel_source")"
+  if [[ -n "${extra_flags:-}" ]]; then
+    printf '%s|%s|%s|%s\n' "$object_name" "$rel_source" "$include_roots" "$extra_flags"
+  else
+    printf '%s|%s|%s\n' "$object_name" "$rel_source" "$include_roots"
+  fi >>"$workspace_root/COMPILE_TIER${tier_index}.txt"
+done <"$units_manifest_path"
+
+cat >"$tier_status_path" <<'EOF'
+tier0|libc/compiler smoke C files|host-built|guest-linked
+tier1|libnsutils and simple utility leaf files|host-built|guest-linked
+tier2|libwapcaplet and parserutils leaf files|host-built|guest-linked
+tier3|libcss/libdom/hubbub parser leaf files|host-built|guest-linked
+tier4|NetSurf utility/desktop/content support files|host-built|guest-linked
+tier5|NetSurf CSS, HTML, layout, form, and redraw files|host-built|guest-linked
+EOF
 
 while IFS= read -r rel_path; do
   src_path="$repo_root/$rel_path"
@@ -95,6 +152,18 @@ while IFS= read -r rel_path; do
     exit 1
   fi
 done <"$manifest_path"
+
+if [[ "${ZBROWSER_SELFHOST_COMPACT_ASSETS:-0}" != 0 ]]; then
+  mkdir -p "$workspace_root/build"
+  cat >"$workspace_root/build/dejavu_sans_ttf.h" <<'EOF'
+#ifndef BUILD_DEJAVU_SANS_TTF_H
+#define BUILD_DEJAVU_SANS_TTF_H
+#include <stdint.h>
+static const uint8_t dejavu_sans_ttf[] = { 0 };
+static const uint32_t dejavu_sans_ttf_len = 0;
+#endif
+EOF
+fi
 
 mkdir -p "$workspace_root/third_party/netsurf/src/libdom/include/dom/bindings/hubbub"
 cp "$workspace_root/third_party/netsurf/src/libdom/bindings/hubbub/parser.h" \
@@ -139,6 +208,10 @@ EOF
 All units avoid parser-generator outputs and keep the first browser-C step
 generic and small, even where upstream ships a checked-in data table such as
 utils/idna_props.h.
+
+The same commands are also available as COMPILE_TIER0.txt through
+COMPILE_TIER5.txt, with the current host/guest status tracked in
+COMPILE_TIERS.txt.
 EOF
 } >"$commands_path"
 

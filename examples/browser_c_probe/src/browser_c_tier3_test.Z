@@ -1,0 +1,827 @@
+extern uint8_t *hubbub_error_to_string(int error);
+extern int hubbub_string_match_ci(const uint8_t *a, uint64_t a_len, const uint8_t *b, uint64_t b_len);
+extern uint16_t hubbub_charset_parse_content(const uint8_t *value, uint32_t valuelen);
+extern int hubbub_charset_extract(const uint8_t *data, uint64_t len, uint16_t *mibenum, uint32_t *source);
+struct lwc_string_s {
+    struct lwc_string_s *next;
+    uint64_t len;
+    uint32_t hash;
+    uint32_t refcnt;
+};
+struct dom_string {
+    uint32_t refcnt;
+    uint32_t type;
+    uint64_t len;
+    uint8_t *ptr;
+};
+extern int dom_string_create(const uint8_t *ptr, uint64_t len, struct dom_string **str);
+extern int dom_string_create_interned(const uint8_t *ptr, uint64_t len, struct dom_string **str);
+extern int dom_string_intern(struct dom_string *str, struct lwc_string_s **lwcstr);
+extern uint8_t *dom_string_data(const struct dom_string *str);
+extern uint64_t dom_string_byte_length(const struct dom_string *str);
+extern int dom_string_caseless_isequal(const struct dom_string *s1, const struct dom_string *s2);
+extern int dom_string_lwc_isequal(const struct dom_string *s1, struct lwc_string_s *s2);
+extern uint32_t dom_string_length(struct dom_string *str);
+extern uint32_t dom_string_index(struct dom_string *str, uint32_t chr);
+extern int dom_string_at(struct dom_string *str, uint32_t index, uint32_t *ch);
+extern void dom_string_unref(struct dom_string *str);
+extern void lwc_string_unref(struct lwc_string_s *str);
+extern int _dom_validate_name(struct dom_string *name);
+extern int _dom_validate_ncname(struct dom_string *name);
+extern int _dom_namespace_validate_qname(struct dom_string *qname, struct dom_string *ns);
+extern uint32_t dom_namespace_split_prefix_length(struct dom_string *qname);
+extern struct dom_string *dom_namespace_get_by_index(uint32_t index);
+extern uint8_t *malloc(uint64_t size);
+struct dom_node_internal {
+    struct dom_string *name;
+    uint32_t type;
+    struct dom_node_internal *parent;
+    struct dom_node_internal *first_child;
+    struct dom_node_internal *last_child;
+    struct dom_node_internal *previous;
+    struct dom_node_internal *next;
+    struct dom_node_internal *owner;
+    struct dom_string *namespace;
+};
+struct dom_document {
+    struct dom_string *name;
+    uint32_t type;
+    struct dom_node_internal *parent;
+    struct dom_node_internal *first_child;
+    struct dom_node_internal *last_child;
+    struct dom_node_internal *previous;
+    struct dom_node_internal *next;
+    struct dom_node_internal *owner;
+    struct dom_string *namespace;
+    struct dom_string *uri;
+    uint32_t quirks;
+};
+struct dom_nodelist {
+    uint32_t opaque;
+};
+struct dom_html_button_element {
+    uint32_t opaque;
+};
+struct dom_html_input_element {
+    uint32_t opaque;
+};
+struct dom_html_select_element {
+    uint32_t opaque;
+};
+struct dom_html_script_element {
+    uint32_t opaque;
+};
+struct dom_html_text_area_element {
+    uint32_t opaque;
+};
+extern uint8_t *_dom_nodelist_create(struct dom_node_internal *doc, uint32_t type, struct dom_node_internal *root, struct dom_string *tagname, struct dom_string *namespace, struct dom_string *localname);
+extern void dom_nodelist_ref(struct dom_nodelist *list);
+extern void dom_nodelist_unref(struct dom_nodelist *list);
+extern int dom_nodelist_get_length(struct dom_nodelist *list, uint32_t *length);
+extern uint8_t *_dom_nodelist_item(struct dom_nodelist *list, uint32_t index);
+extern int _dom_nodelist_match(struct dom_nodelist *list, uint32_t type, struct dom_node_internal *root, struct dom_string *tagname, struct dom_string *namespace, struct dom_string *localname);
+extern int _dom_nodelist_equal(struct dom_nodelist *l1, struct dom_nodelist *l2);
+extern int dom_implementation_has_feature(uint8_t *feature, uint8_t *version, uint8_t *result);
+extern int dom_implementation_create_document_type(uint8_t *qname, uint8_t *public_id, uint8_t *system_id, uint8_t *doctype);
+extern int dom_implementation_create_document(uint32_t impl_type, uint8_t *namespace_uri, uint8_t *qname, uint8_t *doctype, uint8_t *daf, uint8_t *daf_ctx);
+extern int dom_implementation_get_feature(uint8_t *feature, uint8_t *version, uint8_t *object);
+extern uint8_t *_dom_document_create(uint8_t *daf, uint8_t *daf_ctx);
+extern void _dom_document_destroy(struct dom_node_internal *node);
+extern uint8_t *_dom_document_get_implementation(struct dom_document *doc);
+extern uint8_t *_dom_document_get_uri(struct dom_document *doc);
+extern int _dom_document_get_quirks_mode(struct dom_document *doc, uint32_t *result);
+extern int _dom_document_set_quirks_mode(struct dom_document *doc, uint32_t result);
+extern uint8_t *_dom_document_get_elements_by_tag_name(struct dom_document *doc, struct dom_string *tagname);
+extern uint8_t *_dom_document_get_elements_by_tag_name_ns(struct dom_document *doc, struct dom_string *namespace, struct dom_string *localname);
+extern int _dom_document_create_element_ns(struct dom_document *doc, struct dom_string *namespace, struct dom_string *qname, uint8_t *result);
+extern int _dom_html_button_element_create(uint8_t *params, struct dom_html_button_element **ele);
+extern void _dom_html_button_element_destroy(struct dom_html_button_element *ele);
+extern int dom_html_button_element_get_disabled(struct dom_html_button_element *ele, uint8_t *disabled);
+extern int dom_html_button_element_set_disabled(struct dom_html_button_element *ele, uint8_t disabled);
+extern int dom_html_button_element_get_tab_index(struct dom_html_button_element *button, int32_t *tab_index);
+extern int dom_html_button_element_set_tab_index(struct dom_html_button_element *button, uint32_t tab_index);
+extern int dom_html_button_element_get_access_key(struct dom_html_button_element *element, struct dom_string **attr);
+extern int dom_html_button_element_set_access_key(struct dom_html_button_element *element, struct dom_string *attr);
+extern int dom_html_button_element_get_name(struct dom_html_button_element *element, struct dom_string **attr);
+extern int dom_html_button_element_set_name(struct dom_html_button_element *element, struct dom_string *attr);
+extern int dom_html_button_element_get_type(struct dom_html_button_element *element, struct dom_string **attr);
+extern int dom_html_button_element_get_value(struct dom_html_button_element *element, struct dom_string **attr);
+extern int dom_html_button_element_set_value(struct dom_html_button_element *element, struct dom_string *attr);
+extern int dom_html_button_element_get_form(struct dom_html_button_element *button, uint8_t **form);
+extern int _dom_html_button_element_set_form(struct dom_html_button_element *button, uint8_t *form);
+extern int _dom_html_input_element_create(uint8_t *params, struct dom_html_input_element **ele);
+extern void _dom_html_input_element_destroy(struct dom_html_input_element *ele);
+extern int dom_html_input_element_get_disabled(struct dom_html_input_element *ele, uint8_t *disabled);
+extern int dom_html_input_element_set_disabled(struct dom_html_input_element *ele, uint8_t disabled);
+extern int dom_html_input_element_get_read_only(struct dom_html_input_element *ele, uint8_t *read_only);
+extern int dom_html_input_element_set_read_only(struct dom_html_input_element *ele, uint8_t read_only);
+extern int dom_html_input_element_get_checked(struct dom_html_input_element *ele, uint8_t *checked);
+extern int dom_html_input_element_set_checked(struct dom_html_input_element *ele, uint8_t checked);
+extern int dom_html_input_element_get_default_checked(struct dom_html_input_element *ele, uint8_t *default_checked);
+extern int dom_html_input_element_set_default_checked(struct dom_html_input_element *ele, uint8_t default_checked);
+extern int dom_html_input_element_get_size(struct dom_html_input_element *input, uint32_t *size);
+extern int dom_html_input_element_set_size(struct dom_html_input_element *input, uint32_t size);
+extern int dom_html_input_element_get_tab_index(struct dom_html_input_element *input, int32_t *tab_index);
+extern int dom_html_input_element_set_tab_index(struct dom_html_input_element *input, uint32_t tab_index);
+extern int dom_html_input_element_get_max_length(struct dom_html_input_element *input, int32_t *max_length);
+extern int dom_html_input_element_set_max_length(struct dom_html_input_element *input, uint32_t max_length);
+extern int dom_html_input_element_get_default_value(struct dom_html_input_element *input, struct dom_string **value);
+extern int dom_html_input_element_set_default_value(struct dom_html_input_element *input, struct dom_string *value);
+extern int dom_html_input_element_get_type(struct dom_html_input_element *input, struct dom_string **value);
+extern int dom_html_input_element_get_value(struct dom_html_input_element *input, struct dom_string **value);
+extern int dom_html_input_element_set_value(struct dom_html_input_element *input, struct dom_string *value);
+extern int dom_html_input_element_get_form(struct dom_html_input_element *input, uint8_t **form);
+extern int _dom_html_input_element_set_form(struct dom_html_input_element *input, uint8_t *form);
+extern int dom_html_input_element_click(struct dom_html_input_element *ele);
+extern int _dom_html_select_element_create(uint8_t *params, struct dom_html_select_element **ele);
+extern void _dom_html_select_element_destroy(struct dom_html_select_element *ele);
+extern int dom_html_select_element_get_type(struct dom_html_select_element *ele, struct dom_string **type);
+extern int dom_html_select_element_get_selected_index(struct dom_html_select_element *ele, int32_t *index);
+extern int dom_html_select_element_set_selected_index(struct dom_html_select_element *ele, int32_t index);
+extern int dom_html_select_element_get_value(struct dom_html_select_element *ele, struct dom_string **value);
+extern int dom_html_select_element_set_value(struct dom_html_select_element *ele, struct dom_string *value);
+extern int dom_html_select_element_get_length(struct dom_html_select_element *ele, uint32_t *len);
+extern int dom_html_select_element_set_length(struct dom_html_select_element *ele, uint32_t len);
+extern int dom_html_select_element_get_form(struct dom_html_select_element *ele, uint8_t **form);
+extern int _dom_html_select_element_set_form(struct dom_html_select_element *ele, uint8_t *form);
+extern int dom_html_select_element_get_disabled(struct dom_html_select_element *ele, uint8_t *disabled);
+extern int dom_html_select_element_set_disabled(struct dom_html_select_element *ele, uint8_t disabled);
+extern int dom_html_select_element_get_multiple(struct dom_html_select_element *ele, uint8_t *multiple);
+extern int dom_html_select_element_set_multiple(struct dom_html_select_element *ele, uint8_t multiple);
+extern int dom_html_select_element_get_name(struct dom_html_select_element *ele, struct dom_string **name);
+extern int dom_html_select_element_set_name(struct dom_html_select_element *ele, struct dom_string *name);
+extern int dom_html_select_element_get_size(struct dom_html_select_element *ele, int32_t *size);
+extern int dom_html_select_element_set_size(struct dom_html_select_element *ele, int32_t size);
+extern int dom_html_select_element_get_tab_index(struct dom_html_select_element *ele, int32_t *tab_index);
+extern int dom_html_select_element_set_tab_index(struct dom_html_select_element *ele, int32_t tab_index);
+extern int dom__html_select_element_add(struct dom_html_select_element *select, uint8_t *ele, uint8_t *before);
+extern int dom_html_select_element_remove(struct dom_html_select_element *ele, int32_t index);
+extern int dom_html_select_element_blur(struct dom_html_select_element *ele);
+extern int dom_html_select_element_focus(struct dom_html_select_element *ele);
+extern int _dom_html_script_element_create(uint8_t *params, struct dom_html_script_element **ele);
+extern void _dom_html_script_element_destroy(struct dom_html_script_element *ele);
+extern int dom_html_script_element_get_flags(struct dom_html_script_element *ele, uint32_t *flags);
+extern int dom_html_script_element_set_flags(struct dom_html_script_element *ele, uint32_t flags);
+extern int dom_html_script_element_get_defer(struct dom_html_script_element *ele, uint8_t *defer);
+extern int dom_html_script_element_set_defer(struct dom_html_script_element *ele, uint8_t defer);
+extern int dom_html_script_element_get_async(struct dom_html_script_element *ele, uint8_t *async);
+extern int dom_html_script_element_set_async(struct dom_html_script_element *ele, uint8_t async);
+extern int dom_html_script_element_get_text(struct dom_html_script_element *ele, struct dom_string **text);
+extern int dom_html_script_element_set_text(struct dom_html_script_element *ele, struct dom_string *text);
+extern int dom_html_script_element_get_html_for(struct dom_html_script_element *ele, struct dom_string **value);
+extern int dom_html_script_element_set_html_for(struct dom_html_script_element *ele, struct dom_string *value);
+extern int dom_html_script_element_get_event(struct dom_html_script_element *ele, struct dom_string **value);
+extern int dom_html_script_element_set_event(struct dom_html_script_element *ele, struct dom_string *value);
+extern int dom_html_script_element_get_charset(struct dom_html_script_element *ele, struct dom_string **value);
+extern int dom_html_script_element_set_charset(struct dom_html_script_element *ele, struct dom_string *value);
+extern int dom_html_script_element_get_src(struct dom_html_script_element *ele, struct dom_string **value);
+extern int dom_html_script_element_set_src(struct dom_html_script_element *ele, struct dom_string *value);
+extern int dom_html_script_element_get_type(struct dom_html_script_element *ele, struct dom_string **value);
+extern int dom_html_script_element_set_type(struct dom_html_script_element *ele, struct dom_string *value);
+extern int _dom_html_text_area_element_create(uint8_t *params, struct dom_html_text_area_element **ele);
+extern void _dom_html_text_area_element_destroy(struct dom_html_text_area_element *ele);
+extern int dom_html_text_area_element_get_disabled(struct dom_html_text_area_element *ele, uint8_t *disabled);
+extern int dom_html_text_area_element_set_disabled(struct dom_html_text_area_element *ele, uint8_t disabled);
+extern int dom_html_text_area_element_get_read_only(struct dom_html_text_area_element *ele, uint8_t *read_only);
+extern int dom_html_text_area_element_set_read_only(struct dom_html_text_area_element *ele, uint8_t read_only);
+extern int dom_html_text_area_element_get_default_value(struct dom_html_text_area_element *ele, struct dom_string **value);
+extern int dom_html_text_area_element_set_default_value(struct dom_html_text_area_element *ele, struct dom_string *value);
+extern int dom_html_text_area_element_get_value(struct dom_html_text_area_element *ele, struct dom_string **value);
+extern int dom_html_text_area_element_set_value(struct dom_html_text_area_element *ele, struct dom_string *value);
+extern int dom_html_text_area_element_get_access_key(struct dom_html_text_area_element *ele, struct dom_string **value);
+extern int dom_html_text_area_element_set_access_key(struct dom_html_text_area_element *ele, struct dom_string *value);
+extern int dom_html_text_area_element_get_name(struct dom_html_text_area_element *ele, struct dom_string **value);
+extern int dom_html_text_area_element_set_name(struct dom_html_text_area_element *ele, struct dom_string *value);
+extern int dom_html_text_area_element_get_type(struct dom_html_text_area_element *ele, struct dom_string **value);
+extern int dom_html_text_area_element_get_tab_index(struct dom_html_text_area_element *ele, int32_t *tab_index);
+extern int dom_html_text_area_element_set_tab_index(struct dom_html_text_area_element *ele, uint32_t tab_index);
+extern int dom_html_text_area_element_get_cols(struct dom_html_text_area_element *ele, int32_t *cols);
+extern int dom_html_text_area_element_set_cols(struct dom_html_text_area_element *ele, uint32_t cols);
+extern int dom_html_text_area_element_get_rows(struct dom_html_text_area_element *ele, int32_t *rows);
+extern int dom_html_text_area_element_set_rows(struct dom_html_text_area_element *ele, uint32_t rows);
+extern int dom_html_text_area_element_get_form(struct dom_html_text_area_element *ele, uint8_t **form);
+extern int _dom_html_text_area_element_set_form(struct dom_html_text_area_element *ele, uint8_t *form);
+extern int dom_html_text_area_element_select(struct dom_html_text_area_element *ele);
+uint8_t token_lower[6] = "Token";
+uint8_t token_upper[6] = "TOKEN";
+uint8_t content_type[31] = "text/html; charset=ISO-8859-1";
+uint8_t bom_utf8[4];
+uint8_t dom_hello[6] = "Hello";
+uint8_t dom_lowercase[6] = "hello";
+uint8_t dom_utf8[5];
+uint8_t dom_qname[8] = "xml:lang";
+uint8_t dom_div_text[4] = "div";
+uint8_t dom_span_text[5] = "span";
+uint8_t impl_feature_text[5] = "Core";
+uint8_t impl_version_text[4] = "2.0";
+uint8_t impl_xml_qname[9] = "xml:lang";
+uint8_t *message;
+uint8_t *dom_data;
+uint8_t *null_bytes;
+uint8_t *impl_object;
+uint8_t *impl_name;
+uint8_t *doc_raw;
+uint16_t mibenum;
+uint32_t source;
+uint32_t ch;
+uint32_t length;
+uint32_t quirks;
+uint32_t input_size;
+uint8_t impl_result;
+uint8_t disabled;
+int32_t tab_index;
+int32_t max_length;
+struct dom_string *dom_a;
+struct dom_string *dom_b;
+struct dom_string *dom_name;
+struct dom_string *dom_xml_ns;
+struct dom_string *dom_html_ns;
+struct dom_string *dom_div;
+struct dom_string *dom_span;
+struct lwc_string_s *dom_lwc;
+struct dom_node_internal *root;
+struct dom_node_internal *div1;
+struct dom_node_internal *span;
+struct dom_node_internal *div2;
+struct dom_node_internal *item;
+struct dom_node_internal *null_node;
+struct dom_node_internal *doc_node;
+struct dom_string *null_string;
+struct dom_document *doc;
+struct dom_string *doc_uri;
+uint8_t *item_raw;
+uint8_t *list_raw;
+struct dom_nodelist *by_name_again;
+struct dom_nodelist *doc_by_name;
+struct dom_nodelist *doc_by_ns;
+struct dom_html_button_element *button;
+struct dom_html_input_element *input;
+struct dom_html_select_element *select;
+struct dom_html_script_element *script;
+struct dom_html_text_area_element *textarea;
+struct dom_string *button_attr;
+struct dom_string *input_attr;
+struct dom_string *select_attr;
+struct dom_string *script_attr;
+struct dom_string *textarea_attr;
+uint8_t *form_raw;
+int rc;
+message = hubbub_error_to_string(0);
+if (message == 0 || message[0] != 78 || message[1] != 111) {
+    print("browser_c tier3: hubbub errors failed\n");
+    return 60;
+}
+if (hubbub_string_match_ci(token_lower, 5, token_upper, 5) != 1) {
+    print("browser_c tier3: hubbub string failed\n");
+    return 61;
+}
+if (hubbub_charset_parse_content(content_type, 29) != 4) {
+    print("browser_c tier3: hubbub content charset failed\n");
+    return 62;
+}
+bom_utf8[0] = 239;
+bom_utf8[1] = 187;
+bom_utf8[2] = 191;
+bom_utf8[3] = 65;
+mibenum = 0;
+source = 0;
+rc = hubbub_charset_extract(bom_utf8, 4, &mibenum, &source);
+if (rc != 0 || mibenum != 106 || source != 2) {
+    print("browser_c tier3: hubbub detect failed\n");
+    return 63;
+}
+rc = dom_string_create(dom_hello, 5, &dom_a);
+if (rc != 0 || dom_a == 0) {
+    print("browser_c tier3: dom string create failed\n");
+    return 64;
+}
+if (dom_string_byte_length(dom_a) != 5) {
+    print("browser_c tier3: dom string byte length failed\n");
+    return 65;
+}
+dom_data = dom_string_data(dom_a);
+if (dom_data[0] != 72 || dom_data[4] != 111) {
+    print("browser_c tier3: dom string data failed\n");
+    return 66;
+}
+rc = dom_string_create_interned(dom_lowercase, 5, &dom_b);
+if (rc != 0 || dom_b == 0) {
+    print("browser_c tier3: dom string interned failed\n");
+    return 67;
+}
+if (dom_string_caseless_isequal(dom_a, dom_b) != 1) {
+    print("browser_c tier3: dom string compare failed\n");
+    return 68;
+}
+rc = dom_string_intern(dom_a, &dom_lwc);
+if (rc != 0 || dom_lwc == 0) {
+    print("browser_c tier3: dom string lwc intern failed\n");
+    return 69;
+}
+if (dom_string_lwc_isequal(dom_a, dom_lwc) != 1) {
+    print("browser_c tier3: dom string lwc compare failed\n");
+    return 70;
+}
+lwc_string_unref(dom_lwc);
+dom_utf8[0] = 65;
+dom_utf8[1] = 195;
+dom_utf8[2] = 169;
+dom_utf8[3] = 66;
+dom_utf8[4] = 0;
+rc = dom_string_create(dom_utf8, 4, &dom_b);
+if (rc != 0 || dom_string_length(dom_b) != 3) {
+    print("browser_c tier3: dom string utf8 length failed\n");
+    return 71;
+}
+if (dom_string_index(dom_b, 233) != 1) {
+    print("browser_c tier3: dom string utf8 index failed\n");
+    return 72;
+}
+ch = 0;
+rc = dom_string_at(dom_b, 1, &ch);
+if (rc != 0 || ch != 233) {
+    print("browser_c tier3: dom string utf8 at failed\n");
+    return 73;
+}
+rc = dom_string_create(dom_qname, 8, &dom_name);
+if (rc != 0 || _dom_validate_name(dom_name) != 1) {
+    print("browser_c tier3: dom namespace name failed\n");
+    return 74;
+}
+if (_dom_validate_ncname(dom_name) != 0) {
+    print("browser_c tier3: dom namespace ncname failed\n");
+    return 75;
+}
+dom_xml_ns = dom_namespace_get_by_index(5);
+dom_html_ns = dom_namespace_get_by_index(1);
+if (dom_xml_ns == 0 || dom_html_ns == 0) {
+    print("browser_c tier3: dom namespace uri failed\n");
+    return 76;
+}
+if (_dom_namespace_validate_qname(dom_name, dom_xml_ns) != 0) {
+    print("browser_c tier3: dom namespace qname failed\n");
+    return 77;
+}
+if (_dom_namespace_validate_qname(dom_name, dom_html_ns) != 14) {
+    print("browser_c tier3: dom namespace mismatch failed\n");
+    return 78;
+}
+if (dom_namespace_split_prefix_length(dom_name) != 3) {
+    print("browser_c tier3: dom namespace split failed\n");
+    return 79;
+}
+null_bytes = (uint8_t *)0;
+impl_object = (uint8_t *)0;
+impl_result = 7;
+rc = dom_implementation_has_feature(impl_feature_text, impl_version_text, &impl_result);
+if (rc != 9) {
+    print("browser_c tier3: dom implementation feature failed\n");
+    return 80;
+}
+rc = dom_implementation_create_document_type(null_bytes, null_bytes, null_bytes, impl_object);
+if (rc != 5) {
+    print("browser_c tier3: dom implementation doctype null failed\n");
+    return 81;
+}
+rc = dom_implementation_create_document_type(dom_div_text, null_bytes, null_bytes, impl_object);
+if (rc != 9) {
+    print("browser_c tier3: dom implementation doctype unsupported failed\n");
+    return 83;
+}
+rc = dom_implementation_create_document(0, dom_html_ns->ptr, null_bytes, null_bytes, null_bytes, null_bytes);
+if (rc != 14) {
+    print("browser_c tier3: dom implementation document namespace failed\n");
+    return 84;
+}
+rc = dom_implementation_create_document(0, dom_html_ns->ptr, dom_div_text, null_bytes, null_bytes, null_bytes);
+if (rc != 9) {
+    print("browser_c tier3: dom implementation document unsupported failed\n");
+    return 87;
+}
+rc = dom_implementation_get_feature(impl_feature_text, impl_version_text, impl_object);
+if (rc != 9) {
+    print("browser_c tier3: dom implementation get feature failed\n");
+    return 88;
+}
+rc = dom_string_create(dom_div_text, 3, &dom_div);
+if (rc != 0) {
+    print("browser_c tier3: dom nodelist div string failed\n");
+    return 89;
+}
+rc = dom_string_create(dom_span_text, 4, &dom_span);
+if (rc != 0) {
+    print("browser_c tier3: dom nodelist span string failed\n");
+    return 91;
+}
+null_node = (struct dom_node_internal *)0;
+null_string = (struct dom_string *)0;
+root = (struct dom_node_internal *)malloc(80);
+div1 = (struct dom_node_internal *)malloc(80);
+span = (struct dom_node_internal *)malloc(80);
+div2 = (struct dom_node_internal *)malloc(80);
+if (root == 0 || div1 == 0 || span == 0 || div2 == 0) {
+    print("browser_c tier3: dom nodelist node alloc failed\n");
+    return 92;
+}
+root->name = null_string;
+root->type = 9;
+root->parent = null_node;
+root->first_child = div1;
+root->last_child = div2;
+root->previous = null_node;
+root->next = null_node;
+root->owner = root;
+root->namespace = null_string;
+div1->name = dom_div;
+div1->type = 1;
+div1->parent = root;
+div1->first_child = span;
+div1->last_child = span;
+div1->previous = null_node;
+div1->next = div2;
+div1->owner = root;
+div1->namespace = dom_html_ns;
+span->name = dom_span;
+span->type = 1;
+span->parent = div1;
+span->first_child = null_node;
+span->last_child = null_node;
+span->previous = null_node;
+span->next = null_node;
+span->owner = root;
+span->namespace = dom_xml_ns;
+div2->name = dom_div;
+div2->type = 1;
+div2->parent = root;
+div2->first_child = null_node;
+div2->last_child = null_node;
+div2->previous = div1;
+div2->next = null_node;
+div2->owner = root;
+div2->namespace = dom_xml_ns;
+doc_raw = _dom_document_create(null_bytes, null_bytes);
+doc = (struct dom_document *)doc_raw;
+doc_node = (struct dom_node_internal *)doc;
+if (doc == 0) {
+    return 93;
+}
+impl_name = _dom_document_get_implementation(doc);
+if (impl_name == 0 || impl_name[0] != 108 || impl_name[1] != 105 || impl_name[2] != 98) {
+    return 94;
+}
+doc_uri = (struct dom_string *)_dom_document_get_uri(doc);
+if (doc_uri == 0 || dom_string_byte_length(doc_uri) != 11) {
+    return 95;
+}
+dom_data = dom_string_data(doc_uri);
+if (dom_data[0] != 97 || dom_data[6] != 98) {
+    return 96;
+}
+dom_string_unref(doc_uri);
+rc = _dom_document_set_quirks_mode(doc, 2);
+quirks = 0;
+if (rc != 0 || _dom_document_get_quirks_mode(doc, &quirks) != 0 || quirks != 2) {
+    return 97;
+}
+doc->first_child = div1;
+doc->last_child = div2;
+doc->owner = doc_node;
+list_raw = _dom_document_get_elements_by_tag_name(doc, dom_div);
+doc_by_name = (struct dom_nodelist *)list_raw;
+if (doc_by_name == 0) {
+    return 90;
+}
+length = 0;
+rc = dom_nodelist_get_length(doc_by_name, &length);
+if (rc != 0 || length != 2) {
+    return 98;
+}
+item_raw = _dom_nodelist_item(doc_by_name, 1);
+item = (struct dom_node_internal *)item_raw;
+if (item != div2) {
+    return 92;
+}
+list_raw = _dom_document_get_elements_by_tag_name_ns(doc, dom_xml_ns, dom_span);
+doc_by_ns = (struct dom_nodelist *)list_raw;
+if (doc_by_ns == 0) {
+    return 99;
+}
+length = 0;
+rc = dom_nodelist_get_length(doc_by_ns, &length);
+if (rc != 0 || length != 1) {
+    return 90;
+}
+rc = _dom_document_create_element_ns(doc, dom_html_ns, dom_name, null_bytes);
+if (rc != 14) {
+    return 91;
+}
+rc = _dom_document_create_element_ns(doc, dom_html_ns, dom_div, null_bytes);
+if (rc != 9) {
+    return 92;
+}
+button = (struct dom_html_button_element *)0;
+rc = _dom_html_button_element_create(null_bytes, &button);
+if (rc != 0 || button == 0) {
+    return 93;
+}
+disabled = 7;
+if (dom_html_button_element_get_disabled(button, &disabled) != 0 || disabled != 0) {
+    return 94;
+}
+if (dom_html_button_element_set_disabled(button, 1) != 0 ||
+    dom_html_button_element_get_disabled(button, &disabled) != 0 || disabled != 1) {
+    return 95;
+}
+tab_index = 0;
+if (dom_html_button_element_set_tab_index(button, 7) != 0 ||
+    dom_html_button_element_get_tab_index(button, &tab_index) != 0 || tab_index != 7) {
+    return 96;
+}
+button_attr = (struct dom_string *)0;
+if (dom_html_button_element_get_type(button, &button_attr) != 0 ||
+    button_attr == 0 || dom_string_byte_length(button_attr) != 6) {
+    return 97;
+}
+dom_string_unref(button_attr);
+if (dom_html_button_element_set_access_key(button, dom_a) != 0 ||
+    dom_html_button_element_get_access_key(button, &button_attr) != 0 ||
+    button_attr == 0 || dom_string_byte_length(button_attr) != 5) {
+    return 98;
+}
+dom_string_unref(button_attr);
+if (dom_html_button_element_set_name(button, dom_div) != 0 ||
+    dom_html_button_element_get_name(button, &button_attr) != 0 ||
+    button_attr == 0 || dom_string_byte_length(button_attr) != 3) {
+    return 99;
+}
+dom_string_unref(button_attr);
+if (dom_html_button_element_set_value(button, dom_span) != 0 ||
+    dom_html_button_element_get_value(button, &button_attr) != 0 ||
+    button_attr == 0 || dom_string_byte_length(button_attr) != 4) {
+    return 90;
+}
+dom_string_unref(button_attr);
+form_raw = (uint8_t *)0;
+if (_dom_html_button_element_set_form(button, doc_raw) != 0 ||
+    dom_html_button_element_get_form(button, &form_raw) != 0 || form_raw != doc_raw) {
+    return 91;
+}
+input = (struct dom_html_input_element *)0;
+rc = _dom_html_input_element_create(null_bytes, &input);
+if (rc != 0 || input == 0) {
+    return 92;
+}
+disabled = 0;
+if (dom_html_input_element_set_disabled(input, 1) != 0 ||
+    dom_html_input_element_get_disabled(input, &disabled) != 0 || disabled != 1) {
+    return 93;
+}
+if (dom_html_input_element_set_read_only(input, 1) != 0 ||
+    dom_html_input_element_get_read_only(input, &disabled) != 0 || disabled != 1) {
+    return 94;
+}
+if (dom_html_input_element_set_checked(input, 1) != 0 ||
+    dom_html_input_element_get_checked(input, &disabled) != 0 || disabled != 1) {
+    return 95;
+}
+if (dom_html_input_element_set_default_checked(input, 1) != 0 ||
+    dom_html_input_element_get_default_checked(input, &disabled) != 0 || disabled != 1) {
+    return 96;
+}
+input_size = 0;
+if (dom_html_input_element_set_size(input, 33) != 0 ||
+    dom_html_input_element_get_size(input, &input_size) != 0 || input_size != 33) {
+    return 97;
+}
+tab_index = 0;
+max_length = 0;
+if (dom_html_input_element_set_tab_index(input, 4) != 0 ||
+    dom_html_input_element_get_tab_index(input, &tab_index) != 0 || tab_index != 4 ||
+    dom_html_input_element_set_max_length(input, 12) != 0 ||
+    dom_html_input_element_get_max_length(input, &max_length) != 0 || max_length != 12) {
+    return 98;
+}
+if (dom_html_input_element_get_type(input, &input_attr) != 0 ||
+    input_attr == 0 || dom_string_byte_length(input_attr) != 4) {
+    return 99;
+}
+dom_string_unref(input_attr);
+if (dom_html_input_element_set_default_value(input, dom_a) != 0 ||
+    dom_html_input_element_get_default_value(input, &input_attr) != 0 ||
+    input_attr == 0 || dom_string_byte_length(input_attr) != 5) {
+    return 90;
+}
+dom_string_unref(input_attr);
+if (dom_html_input_element_set_value(input, dom_span) != 0 ||
+    dom_html_input_element_get_value(input, &input_attr) != 0 ||
+    input_attr == 0 || dom_string_byte_length(input_attr) != 4) {
+    return 91;
+}
+dom_string_unref(input_attr);
+if (_dom_html_input_element_set_form(input, doc_raw) != 0 ||
+    dom_html_input_element_get_form(input, &form_raw) != 0 || form_raw != doc_raw) {
+    return 92;
+}
+disabled = 0;
+if (dom_html_input_element_click(input) != 0 ||
+    dom_html_input_element_get_checked(input, &disabled) != 0 || disabled != 1) {
+    return 93;
+}
+select = (struct dom_html_select_element *)0;
+rc = _dom_html_select_element_create(null_bytes, &select);
+if (rc != 0 || select == 0) {
+    return 94;
+}
+if (dom_html_select_element_get_type(select, &select_attr) != 0 ||
+    select_attr == 0 || dom_string_byte_length(select_attr) != 10) {
+    return 95;
+}
+dom_string_unref(select_attr);
+disabled = 0;
+if (dom_html_select_element_set_multiple(select, 1) != 0 ||
+    dom_html_select_element_get_multiple(select, &disabled) != 0 || disabled != 1) {
+    return 96;
+}
+if (dom_html_select_element_get_type(select, &select_attr) != 0 ||
+    select_attr == 0 || dom_string_byte_length(select_attr) != 15) {
+    return 97;
+}
+dom_string_unref(select_attr);
+if (dom_html_select_element_set_disabled(select, 1) != 0 ||
+    dom_html_select_element_get_disabled(select, &disabled) != 0 || disabled != 1) {
+    return 98;
+}
+tab_index = 0;
+max_length = 0;
+if (dom_html_select_element_set_tab_index(select, 8) != 0 ||
+    dom_html_select_element_get_tab_index(select, &tab_index) != 0 || tab_index != 8 ||
+    dom_html_select_element_set_size(select, 9) != 0 ||
+    dom_html_select_element_get_size(select, &max_length) != 0 || max_length != 9) {
+    return 99;
+}
+max_length = 0;
+if (dom_html_select_element_get_selected_index(select, &max_length) != 0 || max_length != -1 ||
+    dom_html_select_element_set_selected_index(select, 2) != 0 ||
+    dom_html_select_element_get_selected_index(select, &max_length) != 0 || max_length != 2) {
+    return 90;
+}
+length = 99;
+if (dom_html_select_element_get_length(select, &length) != 0 || length != 0 ||
+    dom_html_select_element_set_length(select, 3) != 9) {
+    return 91;
+}
+if (dom__html_select_element_add(select, doc_raw, null_bytes) != 0 ||
+    dom_html_select_element_get_length(select, &length) != 0 || length != 1 ||
+    dom_html_select_element_remove(select, 0) != 0 ||
+    dom_html_select_element_get_length(select, &length) != 0 || length != 0) {
+    return 92;
+}
+if (dom_html_select_element_set_value(select, dom_span) != 0 ||
+    dom_html_select_element_get_value(select, &select_attr) != 0 ||
+    select_attr == 0 || dom_string_byte_length(select_attr) != 4) {
+    return 93;
+}
+dom_string_unref(select_attr);
+if (dom_html_select_element_set_name(select, dom_div) != 0 ||
+    dom_html_select_element_get_name(select, &select_attr) != 0 ||
+    select_attr == 0 || dom_string_byte_length(select_attr) != 3) {
+    return 94;
+}
+dom_string_unref(select_attr);
+if (_dom_html_select_element_set_form(select, doc_raw) != 0 ||
+    dom_html_select_element_get_form(select, &form_raw) != 0 || form_raw != doc_raw) {
+    return 95;
+}
+if (dom_html_select_element_blur(select) != 0 ||
+    dom_html_select_element_focus(select) != 0) {
+    return 96;
+}
+script = (struct dom_html_script_element *)0;
+rc = _dom_html_script_element_create(null_bytes, &script);
+if (rc != 0 || script == 0) {
+    return 97;
+}
+length = 0;
+if (dom_html_script_element_get_flags(script, &length) != 0 || length != 4 ||
+    dom_html_script_element_set_flags(script, 17) != 0 ||
+    dom_html_script_element_get_flags(script, &length) != 0 || length != 17) {
+    return 98;
+}
+disabled = 0;
+if (dom_html_script_element_set_defer(script, 1) != 0 ||
+    dom_html_script_element_get_defer(script, &disabled) != 0 || disabled != 1 ||
+    dom_html_script_element_set_async(script, 1) != 0 ||
+    dom_html_script_element_get_async(script, &disabled) != 0 || disabled != 1) {
+    return 99;
+}
+if (dom_html_script_element_set_text(script, dom_a) != 0 ||
+    dom_html_script_element_get_text(script, &script_attr) != 0 ||
+    script_attr == 0 || dom_string_byte_length(script_attr) != 5) {
+    return 90;
+}
+dom_string_unref(script_attr);
+if (dom_html_script_element_set_html_for(script, dom_div) != 0 ||
+    dom_html_script_element_get_html_for(script, &script_attr) != 0 ||
+    script_attr == 0 || dom_string_byte_length(script_attr) != 3) {
+    return 91;
+}
+dom_string_unref(script_attr);
+if (dom_html_script_element_set_event(script, dom_span) != 0 ||
+    dom_html_script_element_get_event(script, &script_attr) != 0 ||
+    script_attr == 0 || dom_string_byte_length(script_attr) != 4) {
+    return 92;
+}
+dom_string_unref(script_attr);
+if (dom_html_script_element_set_charset(script, dom_a) != 0 ||
+    dom_html_script_element_get_charset(script, &script_attr) != 0 ||
+    script_attr == 0 || dom_string_byte_length(script_attr) != 5) {
+    return 93;
+}
+dom_string_unref(script_attr);
+if (dom_html_script_element_set_src(script, dom_span) != 0 ||
+    dom_html_script_element_get_src(script, &script_attr) != 0 ||
+    script_attr == 0 || dom_string_byte_length(script_attr) != 4) {
+    return 94;
+}
+dom_string_unref(script_attr);
+if (dom_html_script_element_set_type(script, dom_div) != 0 ||
+    dom_html_script_element_get_type(script, &script_attr) != 0 ||
+    script_attr == 0 || dom_string_byte_length(script_attr) != 3) {
+    return 95;
+}
+dom_string_unref(script_attr);
+textarea = (struct dom_html_text_area_element *)0;
+rc = _dom_html_text_area_element_create(null_bytes, &textarea);
+if (rc != 0 || textarea == 0) {
+    return 97;
+}
+disabled = 0;
+if (dom_html_text_area_element_set_disabled(textarea, 1) != 0 ||
+    dom_html_text_area_element_get_disabled(textarea, &disabled) != 0 || disabled != 1) {
+    return 98;
+}
+if (dom_html_text_area_element_set_read_only(textarea, 1) != 0 ||
+    dom_html_text_area_element_get_read_only(textarea, &disabled) != 0 || disabled != 1) {
+    return 99;
+}
+tab_index = 0;
+max_length = 0;
+if (dom_html_text_area_element_set_tab_index(textarea, 6) != 0 ||
+    dom_html_text_area_element_get_tab_index(textarea, &tab_index) != 0 || tab_index != 6 ||
+    dom_html_text_area_element_set_cols(textarea, 44) != 0 ||
+    dom_html_text_area_element_get_cols(textarea, &max_length) != 0 || max_length != 44) {
+    return 97;
+}
+max_length = 0;
+if (dom_html_text_area_element_set_rows(textarea, 5) != 0 ||
+    dom_html_text_area_element_get_rows(textarea, &max_length) != 0 || max_length != 5) {
+    return 98;
+}
+if (dom_html_text_area_element_get_type(textarea, &textarea_attr) != 0 ||
+    textarea_attr == 0 || dom_string_byte_length(textarea_attr) != 8) {
+    return 99;
+}
+dom_string_unref(textarea_attr);
+if (dom_html_text_area_element_set_default_value(textarea, dom_a) != 0 ||
+    dom_html_text_area_element_get_default_value(textarea, &textarea_attr) != 0 ||
+    textarea_attr == 0 || dom_string_byte_length(textarea_attr) != 5) {
+    return 90;
+}
+dom_string_unref(textarea_attr);
+if (dom_html_text_area_element_set_value(textarea, dom_span) != 0 ||
+    dom_html_text_area_element_get_value(textarea, &textarea_attr) != 0 ||
+    textarea_attr == 0 || dom_string_byte_length(textarea_attr) != 4) {
+    return 91;
+}
+dom_string_unref(textarea_attr);
+if (dom_html_text_area_element_set_access_key(textarea, dom_a) != 0 ||
+    dom_html_text_area_element_get_access_key(textarea, &textarea_attr) != 0 ||
+    textarea_attr == 0 || dom_string_byte_length(textarea_attr) != 5) {
+    return 92;
+}
+dom_string_unref(textarea_attr);
+if (dom_html_text_area_element_set_name(textarea, dom_div) != 0 ||
+    dom_html_text_area_element_get_name(textarea, &textarea_attr) != 0 ||
+    textarea_attr == 0 || dom_string_byte_length(textarea_attr) != 3) {
+    return 93;
+}
+dom_string_unref(textarea_attr);
+if (_dom_html_text_area_element_set_form(textarea, doc_raw) != 0 ||
+    dom_html_text_area_element_get_form(textarea, &form_raw) != 0 || form_raw != doc_raw) {
+    return 94;
+}
+if (dom_html_text_area_element_select(textarea) != 0) {
+    return 95;
+}
+dom_nodelist_ref(doc_by_name);
+dom_nodelist_unref(doc_by_name);
+dom_nodelist_unref(doc_by_name);
+dom_nodelist_unref(doc_by_ns);
+_dom_html_button_element_destroy(button);
+_dom_html_input_element_destroy(input);
+_dom_html_select_element_destroy(select);
+_dom_html_script_element_destroy(script);
+_dom_html_text_area_element_destroy(textarea);
+_dom_document_destroy(doc_node);
+print("browser_c tier3: ok hubbub detect dom_string namespace implementation document nodelist html_button html_input html_select html_script html_textarea\n");
+return 0;

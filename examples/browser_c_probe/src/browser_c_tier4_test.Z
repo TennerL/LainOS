@@ -1,0 +1,844 @@
+struct bloom_filter {
+    uint32_t opaque;
+};
+extern struct bloom_filter *bloom_create(uint64_t size);
+extern void bloom_destroy(struct bloom_filter *b);
+extern void bloom_insert_str(struct bloom_filter *b, uint8_t *s, uint64_t z);
+extern void bloom_insert_hash(struct bloom_filter *b, uint32_t hash);
+extern uint8_t bloom_search_str(struct bloom_filter *b, uint8_t *s, uint64_t z);
+extern uint8_t bloom_search_hash(struct bloom_filter *b, uint32_t hash);
+extern uint32_t bloom_items(struct bloom_filter *b);
+extern int url_escape(uint8_t *unescaped, uint8_t sptoplus, uint8_t *escexceptions, uint8_t **result);
+extern int url_unescape(uint8_t *str, uint64_t length, uint64_t *length_out, uint8_t **result_out);
+extern uint8_t *squash_whitespace(uint8_t *s);
+extern uint8_t *cnv_space2nbsp(uint8_t *s);
+extern uint8_t *user_agent_string(void);
+extern void free_user_agent_string(void);
+extern void browser_mouse_state_dump(uint32_t mouse);
+extern int nscolour_update(void);
+extern int nscolour_get_stylesheet(uint8_t **stylesheet_out);
+extern uint32_t utf8_to_ucs4(const uint8_t *s, uint64_t l);
+extern uint64_t utf8_from_ucs4(uint32_t c, uint8_t *s);
+extern uint64_t utf8_length(const uint8_t *s);
+extern uint64_t utf8_bounded_length(const uint8_t *s, uint64_t l);
+extern uint64_t utf8_bounded_byte_length(const uint8_t *s, uint64_t l, uint64_t c);
+extern uint64_t utf8_char_byte_length(const uint8_t *s);
+extern uint64_t utf8_prev(const uint8_t *s, uint64_t o);
+extern uint64_t utf8_next(const uint8_t *s, uint64_t l, uint64_t o);
+extern int utf8_finalise(void);
+extern int punycode_encode(uint64_t input_length, const uint32_t *input, const uint8_t *case_flags, uint64_t *output_length, uint8_t *output);
+extern int punycode_decode(uint64_t input_length, const uint8_t *input, uint64_t *output_length, uint32_t *output, uint8_t *case_flags);
+struct hash_table {
+    uint32_t opaque;
+};
+struct lwc_string_s {
+    struct lwc_string_s *next;
+    uint64_t len;
+    uint32_t hash;
+    uint32_t refcnt;
+};
+extern struct hash_table *hash_create(uint32_t chains);
+extern void hash_destroy(struct hash_table *ht);
+extern int hash_add(struct hash_table *ht, const uint8_t *key, const uint8_t *value);
+extern const uint8_t *hash_get(struct hash_table *ht, const uint8_t *key);
+extern int hash_add_inline(struct hash_table *ht, const uint8_t *data, uint64_t size);
+struct hashmap_s {
+    uint32_t opaque;
+};
+struct hashmap_parameters {
+    uint8_t *(*key_clone)(uint8_t *key);
+    uint32_t (*key_hash)(uint8_t *key);
+    uint8_t (*key_eq)(uint8_t *a, uint8_t *b);
+    void (*key_destroy)(uint8_t *key);
+    uint8_t *(*value_alloc)(uint8_t *key);
+    void (*value_destroy)(uint8_t *value);
+};
+extern struct hashmap_s *hashmap_create(struct hashmap_parameters *params);
+extern void hashmap_destroy(struct hashmap_s *hashmap);
+extern uint8_t *hashmap_lookup(struct hashmap_s *hashmap, uint8_t *key);
+extern uint8_t *hashmap_insert(struct hashmap_s *hashmap, uint8_t *key);
+extern uint8_t hashmap_remove(struct hashmap_s *hashmap, uint8_t *key);
+extern uint64_t hashmap_count(struct hashmap_s *hashmap);
+extern uint8_t hashmap_iterate(struct hashmap_s *hashmap, uint8_t *cb, uint8_t *ctx);
+extern const uint8_t *rfc1123_date(int64_t t);
+extern int nsc_sntimet(uint8_t *str, uint64_t size, int64_t *timep);
+extern int nsc_snptimet(const uint8_t *str, uint64_t size, int64_t *timep);
+extern int nsc_strntimet(const uint8_t *str, uint64_t size, int64_t *timep);
+extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);
+extern uint8_t *lwc_string_data(struct lwc_string_s *str);
+extern uint64_t lwc_string_length(struct lwc_string_s *str);
+extern void lwc_string_unref(struct lwc_string_s *str);
+extern void http__skip_LWS(const uint8_t **input);
+extern int http__parse_token(const uint8_t **input, struct lwc_string_s **value);
+extern int http__parse_quoted_string(const uint8_t **input, struct lwc_string_s **value);
+struct http__item {
+    struct http__item *next;
+    void (*destroy)(uint8_t *self);
+};
+struct http_test_item {
+    struct http__item base;
+    uint8_t tag;
+};
+extern void http___item_list_destroy(struct http__item *list);
+extern int http___item_list_parse(const uint8_t **input, uint8_t *itemparser, struct http__item *first, struct http__item **items);
+struct http_parameter {
+    uint32_t opaque;
+};
+extern int http__parse_parameter(const uint8_t **input, struct http_parameter **parameter);
+extern int http_parameter_list_find_item(struct http_parameter *list, struct lwc_string_s *name, struct lwc_string_s **value);
+extern struct http_parameter *http_parameter_list_iterate(struct http_parameter *cur, struct lwc_string_s **name, struct lwc_string_s **value);
+extern void http_parameter_list_destroy(struct http_parameter *list);
+struct http_content_type {
+    struct lwc_string_s *media_type;
+    struct http_parameter *parameters;
+};
+extern int http_parse_content_type(const uint8_t *header_value, struct http_content_type **result);
+extern void http_content_type_destroy(struct http_content_type *victim);
+struct http_cd {
+    struct lwc_string_s *kind;
+    struct http_parameter *parameters;
+};
+extern int http_parse_content_disposition(const uint8_t *header_value, struct http_cd **result);
+extern void http_content_disposition_destroy(struct http_cd *victim);
+extern uint8_t *malloc(uint64_t size);
+extern void free(uint8_t *ptr);
+global uint32_t http_generic_destroy_count;
+uint64_t str_len(uint8_t *s) {
+    uint64_t len;
+    len = 0;
+    while (s[len] != 0) {
+        len = len + 1;
+    }
+    return len;
+}
+uint8_t str_eq(uint8_t *a, uint8_t *b) {
+    uint64_t i;
+    i = 0;
+    while (a[i] != 0 || b[i] != 0) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+uint8_t *hm_clone_string(uint8_t *key) {
+    uint64_t len;
+    uint64_t i;
+    uint8_t *copy;
+    len = str_len(key) + 1;
+    copy = malloc(len);
+    if (copy == 0) {
+        return (uint8_t *)0;
+    }
+    i = 0;
+    while (i < len) {
+        copy[i] = key[i];
+        i = i + 1;
+    }
+    return copy;
+}
+uint32_t hm_hash_string(uint8_t *key) {
+    uint32_t hash;
+    uint64_t i;
+    hash = 2166136261;
+    i = 0;
+    while (key[i] != 0) {
+        hash = hash * 16777619;
+        hash = hash ^ key[i];
+        i = i + 1;
+    }
+    return hash;
+}
+uint8_t hm_eq_string(uint8_t *a, uint8_t *b) {
+    return str_eq(a, b);
+}
+void hm_destroy_string(uint8_t *s) {
+    free(s);
+}
+uint8_t *hm_alloc_value(uint8_t *key) {
+    return hm_clone_string(key);
+}
+void hm_destroy_value(uint8_t *value) {
+    free(value);
+}
+uint8_t hm_iter_count(uint8_t *key, uint8_t *value, uint8_t *ctx) {
+    if (str_eq(key, value) != 1) {
+        ctx[1] = 1;
+    }
+    ctx[0] = ctx[0] + 1;
+    return 0;
+}
+uint8_t hm_iter_stop(uint8_t *key, uint8_t *value, uint8_t *ctx) {
+    ctx[0] = ctx[0] + 1;
+    if (str_eq(key, value) != 1) {
+        ctx[1] = 1;
+    }
+    return 1;
+}
+void http_test_item_free(uint8_t *base) {
+    http_generic_destroy_count = http_generic_destroy_count + 1;
+    free(base);
+}
+struct http_test_item *http_test_item_create(uint8_t tag) {
+    struct http_test_item *item;
+    item = (struct http_test_item *)malloc(sizeof(struct http_test_item));
+    if (item == 0) {
+        return (struct http_test_item *)0;
+    }
+    item->base.next = (struct http__item *)0;
+    item->base.destroy = http_test_item_free;
+    item->tag = tag;
+    return item;
+}
+int http_test_parse_item(const uint8_t **input, struct http__item **item) {
+    const uint8_t *pos;
+    struct http_test_item *parsed;
+    pos = *input;
+    if (pos[0] != 98 && pos[0] != 99) {
+        return 4;
+    }
+    parsed = http_test_item_create(pos[0]);
+    if (parsed == 0) {
+        return 2;
+    }
+    *item = (struct http__item *)parsed;
+    *input = pos + 1;
+    return 0;
+}
+uint8_t str_contains(uint8_t *haystack, uint8_t *needle) {
+    uint64_t i;
+    uint64_t j;
+    if (haystack == 0 || needle == 0) {
+        return 0;
+    }
+    if (needle[0] == 0) {
+        return 1;
+    }
+    i = 0;
+    while (haystack[i] != 0) {
+        j = 0;
+        while (needle[j] != 0 && haystack[i + j] == needle[j]) {
+            j = j + 1;
+        }
+        if (needle[j] == 0) {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+uint8_t alpha[6] = "alpha";
+uint8_t beta[5] = "beta";
+uint8_t empty[1];
+uint8_t slash_exception[2] = "/";
+uint8_t raw_url[8] = "a b/?:~";
+uint8_t escaped_url_expected[16] = "a%20b/%3F%3A%7E";
+uint8_t raw_plus[4] = "a b";
+uint8_t escaped_plus_expected[4] = "a+b";
+uint8_t encoded_url[10] = "a%20b/%3F";
+uint8_t unescaped_url_expected[6] = "a b/?";
+uint8_t bad_encoded[5] = "x%2z";
+uint8_t messy_space[10] = "a \t\n b  c";
+uint8_t squashed_expected[6] = "a b c";
+uint8_t nbsp_input[6] = "a b\tc";
+uint8_t nbsp_expected[8] = {97, 194, 160, 98, 194, 160, 99, 0};
+uint8_t user_agent_expected[35] = "Mozilla/5.0 (LainOS) NetSurf/3.12";
+uint8_t nscolour_odd_bg[11] = ".ns-odd-bg";
+uint8_t nscolour_even_fg[12] = ".ns-even-fg";
+uint8_t utf8_text[5] = {65, 195, 169, 66, 0};
+uint8_t utf8_encoded[8];
+uint32_t puny_input[6] = {98, 252, 99, 104, 101, 114};
+uint32_t puny_ascii_input[6] = {98, 117, 99, 104, 101, 114};
+uint8_t puny_expected[10] = "bcher-kva";
+uint8_t puny_ascii_expected[8] = "bucher-";
+uint8_t puny_bad_input[5] = "abc!";
+uint8_t puny_out[16];
+uint32_t puny_decoded[8];
+uint8_t hash_key_alpha[6] = "alpha";
+uint8_t hash_key_beta[5] = "beta";
+uint8_t hash_key_one[4] = "one";
+uint8_t hash_key_two[4] = "two";
+uint8_t hash_key_missing[8] = "missing";
+uint8_t hash_value_first[6] = "first";
+uint8_t hash_value_second[7] = "second";
+uint8_t hash_value_inline_one[4] = "uno";
+uint8_t hash_value_inline_two[4] = "dos";
+uint8_t hash_inline_data[27] = "one:uno\n#skip\ntwo:dos\n\n";
+uint8_t hash_bad_inline[8] = "broken\n";
+uint8_t hm_key_alpha[6] = "alpha";
+uint8_t hm_key_beta[5] = "beta";
+uint8_t hm_key_gamma[6] = "gamma";
+uint8_t hm_iter_ctx[2];
+uint8_t time_zero_expected[30] = "Thu, 01 Jan 1970 00:00:00 GMT";
+uint8_t time_http_expected[30] = "Sun, 06 Nov 1994 08:49:37 GMT";
+uint8_t time_numeric_input[7] = "123456";
+uint8_t time_bad_input[9] = "bad-date";
+uint8_t time_out[16];
+uint8_t http_lws_input[9] = " \tToken";
+uint8_t http_token_input[12] = "Token; rest";
+uint8_t http_token_expected[6] = "Token";
+uint8_t http_quote_input[19] = "\"hello world\" tail";
+uint8_t http_quote_expected[12] = "hello world";
+uint8_t http_bad_token[5] = "=bad";
+uint8_t http_bad_quote[8] = "\"broken";
+uint8_t http_generics_input[8] = ", b, c!";
+uint8_t http_generics_empty[6] = ", =x";
+uint8_t http_param_list_input[33] = "; charset=utf-8; boundary=\"abc\"!";
+uint8_t http_param_bad_input[8] = "broken!";
+uint8_t http_param_charset_name[8] = "charset";
+uint8_t http_param_boundary_upper[9] = "BOUNDARY";
+uint8_t http_param_boundary_name[9] = "boundary";
+uint8_t http_param_charset_value[6] = "utf-8";
+uint8_t http_param_boundary_value[4] = "abc";
+uint8_t http_content_type_input[27] = "text/html; charset=utf-8";
+uint8_t http_content_type_media[10] = "text/html";
+uint8_t http_content_type_bad[10] = "text html";
+uint8_t http_cd_input[23] = "attach; boundary=\"abc\"";
+uint8_t http_cd_bad[5] = "=bad";
+struct hashmap_parameters hm_params;
+struct bloom_filter *bloom;
+struct hash_table *hash_table1;
+struct hashmap_s *hashmap1;
+struct lwc_string_s *http_lwc;
+struct lwc_string_s *http_lwc2;
+struct http_test_item *http_first_item;
+struct http_test_item *http_item1;
+struct http_test_item *http_item2;
+struct http__item *http_items;
+struct http_parameter *http_params;
+struct http_parameter *http_param_iter;
+struct http_parameter *http_param_next;
+struct http_content_type *http_ct;
+struct http_cd *http_cd;
+uint8_t *escaped;
+uint8_t *unescaped;
+uint8_t *squashed;
+uint8_t *nbsp;
+uint8_t *ua1;
+uint8_t *ua2;
+uint8_t *stylesheet1;
+uint8_t *stylesheet2;
+uint64_t unescaped_len;
+uint64_t puny_len;
+int64_t time_value;
+uint8_t *http_pos;
+bloom = bloom_create(32);
+if (bloom == 0) {
+    print("browser_c tier4: bloom create failed\n");
+    return 100;
+}
+if (bloom_items(bloom) != 0) {
+    print("browser_c tier4: bloom initial count failed\n");
+    return 101;
+}
+if (bloom_search_str(bloom, alpha, 5) != 0) {
+    print("browser_c tier4: bloom false positive alpha failed\n");
+    return 102;
+}
+bloom_insert_str(bloom, alpha, 5);
+if (bloom_items(bloom) != 1) {
+    print("browser_c tier4: bloom string count failed\n");
+    return 103;
+}
+if (bloom_search_str(bloom, alpha, 5) != 1) {
+    print("browser_c tier4: bloom string search failed\n");
+    return 104;
+}
+if (bloom_search_str(bloom, beta, 4) != 0) {
+    print("browser_c tier4: bloom false positive beta failed\n");
+    return 105;
+}
+bloom_insert_hash(bloom, 12345);
+if (bloom_items(bloom) != 2) {
+    print("browser_c tier4: bloom hash count failed\n");
+    return 106;
+}
+if (bloom_search_hash(bloom, 12345) != 1) {
+    print("browser_c tier4: bloom hash search failed\n");
+    return 107;
+}
+if (bloom_search_hash(bloom, 54321) != 0) {
+    print("browser_c tier4: bloom false positive hash failed\n");
+    return 108;
+}
+bloom_insert_str(bloom, empty, 0);
+if (bloom_items(bloom) != 3 || bloom_search_str(bloom, empty, 0) != 1) {
+    print("browser_c tier4: bloom empty string failed\n");
+    return 109;
+}
+bloom_destroy(bloom);
+escaped = (uint8_t *)0;
+if (url_escape(raw_url, 0, slash_exception, &escaped) != 0) {
+    print("browser_c tier4: url escape status failed\n");
+    return 120;
+}
+if (escaped == 0 || str_eq(escaped, escaped_url_expected) != 1) {
+    print("browser_c tier4: url escape value failed\n");
+    return 121;
+}
+free(escaped);
+escaped = (uint8_t *)0;
+if (url_escape(raw_plus, 1, (uint8_t *)0, &escaped) != 0) {
+    print("browser_c tier4: url plus status failed\n");
+    return 122;
+}
+if (escaped == 0 || str_eq(escaped, escaped_plus_expected) != 1) {
+    print("browser_c tier4: url plus value failed\n");
+    return 123;
+}
+free(escaped);
+unescaped = (uint8_t *)0;
+unescaped_len = 0;
+if (url_unescape(encoded_url, 0, &unescaped_len, &unescaped) != 0) {
+    print("browser_c tier4: url unescape status failed\n");
+    return 124;
+}
+if (unescaped == 0 || unescaped_len != 5 || str_eq(unescaped, unescaped_url_expected) != 1) {
+    print("browser_c tier4: url unescape value failed\n");
+    return 125;
+}
+free(unescaped);
+unescaped = (uint8_t *)0;
+unescaped_len = 0;
+if (url_unescape(bad_encoded, 4, &unescaped_len, &unescaped) != 0) {
+    print("browser_c tier4: url malformed status failed\n");
+    return 126;
+}
+if (unescaped == 0 || unescaped_len != 4 || str_eq(unescaped, bad_encoded) != 1) {
+    print("browser_c tier4: url malformed value failed\n");
+    return 127;
+}
+free(unescaped);
+squashed = squash_whitespace(messy_space);
+if (squashed == 0 || str_eq(squashed, squashed_expected) != 1) {
+    print("browser_c tier4: squash whitespace failed\n");
+    return 130;
+}
+free(squashed);
+nbsp = cnv_space2nbsp(nbsp_input);
+if (nbsp == 0 || str_eq(nbsp, nbsp_expected) != 1) {
+    print("browser_c tier4: space to nbsp failed\n");
+    return 131;
+}
+free(nbsp);
+ua1 = user_agent_string();
+ua2 = user_agent_string();
+if (ua1 == 0 || ua2 != ua1 || str_eq(ua1, user_agent_expected) != 1) {
+    print("browser_c tier4: user agent value failed\n");
+    return 132;
+}
+free_user_agent_string();
+ua2 = user_agent_string();
+if (ua2 == 0 || str_eq(ua2, user_agent_expected) != 1) {
+    print("browser_c tier4: user agent rebuild failed\n");
+    return 133;
+}
+free_user_agent_string();
+browser_mouse_state_dump(0);
+browser_mouse_state_dump(1 | 32 | 131072);
+browser_mouse_state_dump(2097152);
+stylesheet1 = (uint8_t *)0;
+stylesheet2 = (uint8_t *)0;
+if (nscolour_update() != 0) {
+    print("browser_c tier4: nscolour update failed\n");
+    return 134;
+}
+if (nscolour_get_stylesheet(&stylesheet1) != 0) {
+    print("browser_c tier4: nscolour stylesheet status failed\n");
+    return 135;
+}
+if (stylesheet1 == 0 || str_eq(stylesheet1, nscolour_odd_bg) == 1) {
+    print("browser_c tier4: nscolour stylesheet value failed\n");
+    return 136;
+}
+if (str_contains(stylesheet1, nscolour_odd_bg) != 1 || str_contains(stylesheet1, nscolour_even_fg) != 1) {
+    print("browser_c tier4: nscolour stylesheet selectors failed\n");
+    return 137;
+}
+if (nscolour_get_stylesheet(&stylesheet2) != 0 || stylesheet2 != stylesheet1) {
+    print("browser_c tier4: nscolour stylesheet cache failed\n");
+    return 138;
+}
+if (utf8_length(utf8_text) != 3 || utf8_bounded_length(utf8_text, 4) != 3) {
+    print("browser_c tier4: utf8 length failed\n");
+    return 139;
+}
+if (utf8_char_byte_length(utf8_text + 1) != 2) {
+    print("browser_c tier4: utf8 char byte length failed\n");
+    return 140;
+}
+if (utf8_next(utf8_text, 4, 0) != 1 || utf8_next(utf8_text, 4, 1) != 3 || utf8_prev(utf8_text, 3) != 1) {
+    print("browser_c tier4: utf8 navigation failed\n");
+    return 141;
+}
+if (utf8_bounded_byte_length(utf8_text, 4, 2) != 3) {
+    print("browser_c tier4: utf8 bounded byte length failed\n");
+    return 142;
+}
+if (utf8_to_ucs4(utf8_text + 1, 3) != 233) {
+    print("browser_c tier4: utf8 to ucs4 failed\n");
+    return 143;
+}
+if (utf8_from_ucs4(233, utf8_encoded) != 2 || utf8_encoded[0] != 195 || utf8_encoded[1] != 169) {
+    print("browser_c tier4: utf8 from ucs4 failed\n");
+    return 144;
+}
+if (utf8_finalise() != 0) {
+    print("browser_c tier4: utf8 finalise failed\n");
+    return 145;
+}
+puny_len = 15;
+if (punycode_encode(6, puny_input, (uint8_t *)0, &puny_len, puny_out) != 0 || puny_len != 9) {
+    print("browser_c tier4: punycode encode status failed\n");
+    return 146;
+}
+puny_out[puny_len] = 0;
+if (str_eq(puny_out, puny_expected) != 1) {
+    print("browser_c tier4: punycode encode value failed\n");
+    return 147;
+}
+puny_len = 15;
+if (punycode_encode(6, puny_ascii_input, (uint8_t *)0, &puny_len, puny_out) != 0 || puny_len != 7) {
+    print("browser_c tier4: punycode ascii encode status failed\n");
+    return 148;
+}
+puny_out[puny_len] = 0;
+if (str_eq(puny_out, puny_ascii_expected) != 1) {
+    print("browser_c tier4: punycode ascii encode value failed\n");
+    return 149;
+}
+puny_len = 8;
+if (punycode_decode(9, puny_expected, &puny_len, puny_decoded, (uint8_t *)0) != 0 || puny_len != 6) {
+    print("browser_c tier4: punycode decode status failed\n");
+    return 150;
+}
+if (puny_decoded[0] != 98 || puny_decoded[1] != 252 || puny_decoded[2] != 99 || puny_decoded[3] != 104 || puny_decoded[4] != 101 || puny_decoded[5] != 114) {
+    print("browser_c tier4: punycode decode value failed\n");
+    return 151;
+}
+puny_len = 3;
+if (punycode_encode(6, puny_input, (uint8_t *)0, &puny_len, puny_out) != 2) {
+    print("browser_c tier4: punycode big output failed\n");
+    return 152;
+}
+puny_len = 8;
+if (punycode_decode(4, puny_bad_input, &puny_len, puny_decoded, (uint8_t *)0) != 1) {
+    print("browser_c tier4: punycode bad input failed\n");
+    return 153;
+}
+hash_table1 = hash_create(17);
+if (hash_table1 == 0) {
+    print("browser_c tier4: hashtable create failed\n");
+    return 154;
+}
+if (hash_add(hash_table1, hash_key_alpha, hash_value_first) != 0) {
+    print("browser_c tier4: hashtable add failed\n");
+    return 155;
+}
+if (hash_get(hash_table1, hash_key_alpha) == 0 || str_eq((uint8_t *)hash_get(hash_table1, hash_key_alpha), hash_value_first) != 1) {
+    print("browser_c tier4: hashtable get failed\n");
+    return 156;
+}
+if (hash_get(hash_table1, hash_key_missing) != 0) {
+    print("browser_c tier4: hashtable missing failed\n");
+    return 157;
+}
+if (hash_add(hash_table1, hash_key_alpha, hash_value_second) != 0) {
+    print("browser_c tier4: hashtable duplicate add failed\n");
+    return 158;
+}
+if (hash_get(hash_table1, hash_key_alpha) == 0 || str_eq((uint8_t *)hash_get(hash_table1, hash_key_alpha), hash_value_second) != 1) {
+    print("browser_c tier4: hashtable duplicate precedence failed\n");
+    return 159;
+}
+if (hash_add_inline(hash_table1, hash_inline_data, 23) != 0) {
+    print("browser_c tier4: hashtable inline failed\n");
+    return 160;
+}
+if (hash_get(hash_table1, hash_key_one) == 0 || str_eq((uint8_t *)hash_get(hash_table1, hash_key_one), hash_value_inline_one) != 1) {
+    print("browser_c tier4: hashtable inline one failed\n");
+    return 161;
+}
+if (hash_get(hash_table1, hash_key_two) == 0 || str_eq((uint8_t *)hash_get(hash_table1, hash_key_two), hash_value_inline_two) != 1) {
+    print("browser_c tier4: hashtable inline two failed\n");
+    return 162;
+}
+if (hash_add_inline(hash_table1, hash_bad_inline, 7) != 19) {
+    print("browser_c tier4: hashtable invalid inline failed\n");
+    return 163;
+}
+if (hash_add((struct hash_table *)0, hash_key_beta, hash_value_first) != 18) {
+    print("browser_c tier4: hashtable bad parameter failed\n");
+    return 164;
+}
+hash_destroy(hash_table1);
+hm_params.key_clone = hm_clone_string;
+hm_params.key_hash = hm_hash_string;
+hm_params.key_eq = hm_eq_string;
+hm_params.key_destroy = hm_destroy_string;
+hm_params.value_alloc = hm_alloc_value;
+hm_params.value_destroy = hm_destroy_value;
+hashmap1 = hashmap_create(&hm_params);
+if (hashmap1 == 0) {
+    print("browser_c tier4: hashmap create failed\n");
+    return 165;
+}
+if (hashmap_count(hashmap1) != 0) {
+    print("browser_c tier4: hashmap initial count failed\n");
+    return 166;
+}
+if (hashmap_insert(hashmap1, hm_key_alpha) == 0) {
+    print("browser_c tier4: hashmap insert alpha failed\n");
+    return 167;
+}
+if (hashmap_lookup(hashmap1, hm_key_alpha) == 0 || str_eq(hashmap_lookup(hashmap1, hm_key_alpha), hm_key_alpha) != 1) {
+    print("browser_c tier4: hashmap lookup alpha failed\n");
+    return 168;
+}
+if (hashmap_count(hashmap1) != 1) {
+    print("browser_c tier4: hashmap count alpha failed\n");
+    return 169;
+}
+if (hashmap_lookup(hashmap1, hm_key_gamma) != 0) {
+    print("browser_c tier4: hashmap missing failed\n");
+    return 170;
+}
+if (hashmap_insert(hashmap1, hm_key_beta) == 0 || hashmap_count(hashmap1) != 2) {
+    print("browser_c tier4: hashmap insert beta failed\n");
+    return 171;
+}
+if (hashmap_insert(hashmap1, hm_key_alpha) == 0 || hashmap_count(hashmap1) != 2) {
+    print("browser_c tier4: hashmap duplicate failed\n");
+    return 172;
+}
+hm_iter_ctx[0] = 0;
+hm_iter_ctx[1] = 0;
+if (hashmap_iterate(hashmap1, (uint8_t *)hm_iter_count, hm_iter_ctx) != 0 || hm_iter_ctx[0] != 2 || hm_iter_ctx[1] != 0) {
+    print("browser_c tier4: hashmap iterate count failed\n");
+    return 173;
+}
+if (hashmap_remove(hashmap1, hm_key_beta) != 1 || hashmap_count(hashmap1) != 1) {
+    print("browser_c tier4: hashmap remove beta failed\n");
+    return 174;
+}
+if (hashmap_lookup(hashmap1, hm_key_beta) != 0 || hashmap_remove(hashmap1, hm_key_gamma) != 0) {
+    print("browser_c tier4: hashmap remove missing failed\n");
+    return 175;
+}
+hm_iter_ctx[0] = 0;
+hm_iter_ctx[1] = 0;
+if (hashmap_iterate(hashmap1, (uint8_t *)hm_iter_stop, hm_iter_ctx) != 1 || hm_iter_ctx[0] != 1 || hm_iter_ctx[1] != 0) {
+    print("browser_c tier4: hashmap iterate stop failed\n");
+    return 176;
+}
+hashmap_destroy(hashmap1);
+if (str_eq((uint8_t *)rfc1123_date(0), time_zero_expected) != 1) {
+    print("browser_c tier4: time epoch date failed\n");
+    return 177;
+}
+if (str_eq((uint8_t *)rfc1123_date(784111777), time_http_expected) != 1) {
+    print("browser_c tier4: time http date failed\n");
+    return 178;
+}
+time_value = 123456;
+if (nsc_sntimet(time_out, 16, &time_value) != 6 || str_eq(time_out, time_numeric_input) != 1) {
+    print("browser_c tier4: time numeric format failed\n");
+    return 179;
+}
+time_value = 0;
+if (nsc_snptimet(time_numeric_input, 6, &time_value) != 0 || time_value != 123456) {
+    print("browser_c tier4: time numeric parse failed\n");
+    return 180;
+}
+time_value = 0;
+if (nsc_strntimet(time_http_expected, 29, &time_value) != 0 || time_value != 784111777) {
+    print("browser_c tier4: time rfc parse failed\n");
+    return 181;
+}
+if (nsc_strntimet(time_bad_input, 8, &time_value) != 19) {
+    print("browser_c tier4: time invalid parse failed\n");
+    return 182;
+}
+http_pos = http_lws_input;
+http__skip_LWS(&http_pos);
+if (http_pos[0] != 84) {
+    print("browser_c tier4: http skip LWS failed\n");
+    return 183;
+}
+http_pos = http_token_input;
+http_lwc = (struct lwc_string_s *)0;
+if (http__parse_token(&http_pos, &http_lwc) != 0 || http_lwc == 0 || http_pos[0] != 59) {
+    print("browser_c tier4: http token parse failed\n");
+    return 184;
+}
+if (lwc_string_length(http_lwc) != 5 || str_eq(lwc_string_data(http_lwc), http_token_expected) != 1) {
+    print("browser_c tier4: http token value failed\n");
+    return 185;
+}
+lwc_string_unref(http_lwc);
+http_pos = http_quote_input;
+http_lwc = (struct lwc_string_s *)0;
+if (http__parse_quoted_string(&http_pos, &http_lwc) != 0 || http_lwc == 0 || http_pos[0] != 32) {
+    print("browser_c tier4: http quoted parse failed\n");
+    return 186;
+}
+if (lwc_string_length(http_lwc) != 11 || str_eq(lwc_string_data(http_lwc), http_quote_expected) != 1) {
+    print("browser_c tier4: http quoted value failed\n");
+    return 187;
+}
+lwc_string_unref(http_lwc);
+http_pos = http_bad_token;
+if (http__parse_token(&http_pos, &http_lwc) != 4) {
+    print("browser_c tier4: http bad token failed\n");
+    return 188;
+}
+http_pos = http_bad_quote;
+if (http__parse_quoted_string(&http_pos, &http_lwc) != 4) {
+    print("browser_c tier4: http bad quote failed\n");
+    return 189;
+}
+http_generic_destroy_count = 0;
+http_first_item = http_test_item_create(97);
+if (http_first_item == 0) {
+    print("browser_c tier4: http generics first item failed\n");
+    return 190;
+}
+http_pos = http_generics_input;
+http_items = (struct http__item *)0;
+if (http___item_list_parse(&http_pos, (uint8_t *)http_test_parse_item, (struct http__item *)http_first_item, &http_items) != 0 || http_items == 0 || http_pos[0] != 33) {
+    print("browser_c tier4: http generics parse failed\n");
+    return 191;
+}
+http_item1 = (struct http_test_item *)http_items;
+http_item2 = (struct http_test_item *)http_items->next;
+if (http_item1->tag != 99 || http_item2 == 0 || http_item2->tag != 98 || http_item2->base.next != (struct http__item *)http_first_item || http_first_item->tag != 97) {
+    print("browser_c tier4: http generics list order failed\n");
+    return 192;
+}
+http___item_list_destroy(http_items);
+if (http_generic_destroy_count != 3) {
+    print("browser_c tier4: http generics destroy failed\n");
+    return 193;
+}
+http_pos = http_generics_empty;
+http_items = (struct http__item *)0;
+if (http___item_list_parse(&http_pos, (uint8_t *)http_test_parse_item, (struct http__item *)0, &http_items) != 4 || http_items != 0 || http_pos != http_generics_empty) {
+    print("browser_c tier4: http generics empty failed\n");
+    return 194;
+}
+http_pos = http_param_list_input;
+http_items = (struct http__item *)0;
+if (http___item_list_parse(&http_pos, (uint8_t *)http__parse_parameter, (struct http__item *)0, &http_items) != 0 || http_items == 0 || http_pos[0] != 33) {
+    print("browser_c tier4: http parameter list parse failed\n");
+    return 195;
+}
+http_params = (struct http_parameter *)http_items;
+if (lwc_intern_string(http_param_charset_name, 7, &http_lwc) != 0) {
+    print("browser_c tier4: http parameter charset intern failed\n");
+    return 196;
+}
+http_lwc2 = (struct lwc_string_s *)0;
+if (http_parameter_list_find_item(http_params, http_lwc, &http_lwc2) != 0 || http_lwc2 == 0) {
+    print("browser_c tier4: http parameter charset find failed\n");
+    return 197;
+}
+if (lwc_string_length(http_lwc2) != 5 || str_eq(lwc_string_data(http_lwc2), http_param_charset_value) != 1) {
+    print("browser_c tier4: http parameter charset value failed\n");
+    return 198;
+}
+lwc_string_unref(http_lwc);
+lwc_string_unref(http_lwc2);
+if (lwc_intern_string(http_param_boundary_upper, 8, &http_lwc) != 0) {
+    print("browser_c tier4: http parameter boundary intern failed\n");
+    return 199;
+}
+http_lwc2 = (struct lwc_string_s *)0;
+if (http_parameter_list_find_item(http_params, http_lwc, &http_lwc2) != 0 || http_lwc2 == 0) {
+    print("browser_c tier4: http parameter boundary find failed\n");
+    return 200;
+}
+if (lwc_string_length(http_lwc2) != 3 || str_eq(lwc_string_data(http_lwc2), http_param_boundary_value) != 1) {
+    print("browser_c tier4: http parameter boundary value failed\n");
+    return 201;
+}
+lwc_string_unref(http_lwc);
+lwc_string_unref(http_lwc2);
+http_param_iter = http_params;
+http_param_next = http_parameter_list_iterate(http_param_iter, &http_lwc, &http_lwc2);
+if (http_param_next == 0 || lwc_string_length(http_lwc) != 8 || str_eq(lwc_string_data(http_lwc), http_param_boundary_name) != 1 || str_eq(lwc_string_data(http_lwc2), http_param_boundary_value) != 1) {
+    print("browser_c tier4: http parameter iterate boundary failed\n");
+    return 202;
+}
+lwc_string_unref(http_lwc);
+lwc_string_unref(http_lwc2);
+http_param_iter = http_param_next;
+http_param_next = http_parameter_list_iterate(http_param_iter, &http_lwc, &http_lwc2);
+if (http_param_next != 0 || lwc_string_length(http_lwc) != 7 || str_eq(lwc_string_data(http_lwc), http_param_charset_name) != 1 || str_eq(lwc_string_data(http_lwc2), http_param_charset_value) != 1) {
+    print("browser_c tier4: http parameter iterate charset failed\n");
+    return 203;
+}
+lwc_string_unref(http_lwc);
+lwc_string_unref(http_lwc2);
+http_parameter_list_destroy(http_params);
+http_pos = http_param_bad_input;
+http_params = (struct http_parameter *)0;
+if (http__parse_parameter(&http_pos, &http_params) != 4 || http_params != 0 || http_pos != http_param_bad_input) {
+    print("browser_c tier4: http parameter bad parse failed\n");
+    return 204;
+}
+http_ct = (struct http_content_type *)0;
+if (http_parse_content_type(http_content_type_input, &http_ct) != 0 || http_ct == 0 || http_ct->media_type == 0) {
+    print("browser_c tier4: http content type parse failed\n");
+    return 205;
+}
+if (lwc_string_length(http_ct->media_type) != 9 || str_eq(lwc_string_data(http_ct->media_type), http_content_type_media) != 1) {
+    print("browser_c tier4: http content type media failed\n");
+    return 206;
+}
+if (lwc_intern_string(http_param_charset_name, 7, &http_lwc) != 0) {
+    print("browser_c tier4: http content type charset intern failed\n");
+    return 207;
+}
+http_lwc2 = (struct lwc_string_s *)0;
+if (http_parameter_list_find_item(http_ct->parameters, http_lwc, &http_lwc2) != 0 || http_lwc2 == 0 || str_eq(lwc_string_data(http_lwc2), http_param_charset_value) != 1) {
+    print("browser_c tier4: http content type charset failed\n");
+    return 208;
+}
+lwc_string_unref(http_lwc);
+lwc_string_unref(http_lwc2);
+http_content_type_destroy(http_ct);
+http_ct = (struct http_content_type *)0;
+if (http_parse_content_type(http_content_type_bad, &http_ct) != 4 || http_ct != 0) {
+    print("browser_c tier4: http content type bad failed\n");
+    return 209;
+}
+http_cd = (struct http_cd *)0;
+if (http_parse_content_disposition(http_cd_input, &http_cd) != 0 || http_cd == 0 || http_cd->kind == 0) {
+    print("browser_c tier4: http content disposition parse failed\n");
+    return 210;
+}
+escaped = lwc_string_data(http_cd->kind);
+if (lwc_string_length(http_cd->kind) != 6 || escaped[0] != 97 || escaped[1] != 116 || escaped[2] != 116 || escaped[3] != 97 || escaped[4] != 99 || escaped[5] != 104) {
+    print("browser_c tier4: http content disposition type failed\n");
+    return 211;
+}
+if (lwc_intern_string(http_param_boundary_name, 8, &http_lwc) != 0) {
+    print("browser_c tier4: http content disposition boundary intern failed\n");
+    return 212;
+}
+http_lwc2 = (struct lwc_string_s *)0;
+if (http_parameter_list_find_item(http_cd->parameters, http_lwc, &http_lwc2) != 0 || http_lwc2 == 0 || str_eq(lwc_string_data(http_lwc2), http_param_boundary_value) != 1) {
+    print("browser_c tier4: http content disposition boundary failed\n");
+    return 213;
+}
+lwc_string_unref(http_lwc);
+lwc_string_unref(http_lwc2);
+http_content_disposition_destroy(http_cd);
+http_cd = (struct http_cd *)0;
+if (http_parse_content_disposition(http_cd_bad, &http_cd) != 4 || http_cd != 0) {
+    print("browser_c tier4: http content disposition bad failed\n");
+    return 214;
+}
+print("browser_c tier4: ok bloom url utils useragent mouse nscolour utf8 punycode hashtable hashmap time http generics parameter content_type content_disposition challenge www_authenticate cache_control strict_transport_security log\n");
+return 0;

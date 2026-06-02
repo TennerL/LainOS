@@ -165,6 +165,7 @@ static const uint8_t zbrowser_engine_status_content_not_ready[] =
 static const uint8_t zbrowser_engine_status_content_unavailable[] =
     "NetSurf content pipeline unavailable";
 static uint8_t zbrowser_engine_status_detail[768];
+static char zbrowser_engine_normalized_url[1024];
 static char zbrowser_engine_content_error_detail[128];
 static unsigned int zbrowser_engine_content_data_complete_called;
 static unsigned int zbrowser_engine_content_data_complete_ok;
@@ -224,6 +225,7 @@ static uint32_t zbrowser_engine_content_viewport_height;
 static int zbrowser_engine_content_opened;
 static int zbrowser_engine_content_needs_reformat;
 static int zbrowser_engine_content_needs_redraw;
+static int zbrowser_engine_content_needs_chrome;
 static int zbrowser_engine_content_prepare_pending;
 static int zbrowser_engine_content_browser_window_cookie;
 static jsheap *zbrowser_engine_content_jsheap;
@@ -1582,6 +1584,34 @@ struct nsurl *zbrowser_engine_current_base_url(void) {
     return zbrowser_engine_base_url;
 }
 
+static const char *zbrowser_engine_url_for_nsurl(const uint8_t *url) {
+    const char *text;
+    size_t pos;
+    size_t out;
+
+    if (url == 0 || url[0] == 0) {
+        return "about:blank";
+    }
+
+    text = (const char *)url;
+    for (pos = 0; text[pos] != 0; ++pos) {
+        if (text[pos] == ':') {
+            return text;
+        }
+        if (text[pos] == '/' || text[pos] == '?' || text[pos] == '#') {
+            break;
+        }
+    }
+
+    memcpy(zbrowser_engine_normalized_url, "file:///", 8u);
+    out = 8u;
+    for (pos = 0; text[pos] != 0 && out + 1u < sizeof(zbrowser_engine_normalized_url); ++pos) {
+        zbrowser_engine_normalized_url[out++] = text[pos] == '\\' ? '/' : text[pos];
+    }
+    zbrowser_engine_normalized_url[out] = 0;
+    return zbrowser_engine_normalized_url;
+}
+
 typedef struct {
     struct rect clip;
     unsigned int rectangles;
@@ -1703,10 +1733,13 @@ static void zbrowser_engine_content_user(struct content *content,
         return;
     }
     if (msg == CONTENT_MSG_REDRAW ||
-        msg == CONTENT_MSG_CARET ||
-        msg == CONTENT_MSG_STATUS ||
-        msg == CONTENT_MSG_POINTER) {
+        msg == CONTENT_MSG_CARET) {
         zbrowser_engine_content_needs_redraw = 1;
+        return;
+    }
+    if (msg == CONTENT_MSG_STATUS ||
+        msg == CONTENT_MSG_POINTER) {
+        zbrowser_engine_content_needs_chrome = 1;
         return;
     }
     if (msg == CONTENT_MSG_ERROR) {
@@ -1830,6 +1863,7 @@ static void zbrowser_engine_release_content(void) {
     zbrowser_engine_content_opened = 0;
     zbrowser_engine_content_needs_reformat = 0;
     zbrowser_engine_content_needs_redraw = 0;
+    zbrowser_engine_content_needs_chrome = 0;
     zbrowser_engine_content_prepare_pending = 0;
     zbrowser_engine_content_error_detail[0] = 0;
     zbrowser_lainos_schedule_clear();
@@ -2382,7 +2416,7 @@ static int zbrowser_engine_prepare_content_pipeline(const uint8_t *url,
     zbrowser_lainos_net_stats_reset();
     zbrowser_engine_content_viewport_width = viewport_width;
     zbrowser_engine_content_viewport_height = viewport_height;
-    error = nsurl_create(url != 0 ? (const char *)url : "about:blank",
+    error = nsurl_create(zbrowser_engine_url_for_nsurl(url),
                          &zbrowser_engine_content_url);
     if (error != NSERROR_OK || zbrowser_engine_content_url == 0) {
         zbrowser_engine_status_text = zbrowser_engine_status_html_layout_base_url_failed;
@@ -2625,7 +2659,7 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
         zbrowser_engine_viewport_box_stats((int)x, y_offset, &clip, &box_stats);
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS blank box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u hit%u ce%u/%u/%u st%u",
+                 "NS blank box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u rect%u line%u path%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u hit%u ce%u/%u/%u st%u",
                  box_stats.boxes,
                  box_stats.grid_boxes,
                  box_stats.largest_grid_x,
@@ -2649,6 +2683,11 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  box_stats.viewport_visible_text_bytes,
                  box_stats.viewport_hidden_text_boxes,
                  box_stats.viewport_zero_text_boxes,
+                 plot_ctx.rectangles,
+                 plot_ctx.lines,
+                 plot_ctx.paths,
+                 plot_ctx.visible_bitmaps,
+                 plot_ctx.bitmaps,
                  box_stats.max_right,
                  box_stats.max_bottom,
                  zbrowser_engine_content->width,
@@ -2673,7 +2712,7 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
         zbrowser_engine_viewport_box_stats((int)x, y_offset, &clip, &box_stats);
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS rendered box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txt%u/%u txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u ty%d..%d ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u hit%u ce%u/%u/%u st%u",
+                 "NS rendered box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txt%u/%u txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u ty%d..%d rect%u line%u path%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u hit%u ce%u/%u/%u st%u",
                  box_stats.boxes,
                  box_stats.grid_boxes,
                  box_stats.largest_grid_x,
@@ -2701,6 +2740,11 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  box_stats.viewport_zero_text_boxes,
                  box_stats.text_min_y,
                  box_stats.text_max_y,
+                 plot_ctx.rectangles,
+                 plot_ctx.lines,
+                 plot_ctx.paths,
+                 plot_ctx.visible_bitmaps,
+                 plot_ctx.bitmaps,
                  box_stats.max_right,
                  box_stats.max_bottom,
                  zbrowser_engine_content->width,
@@ -2740,6 +2784,7 @@ static int zbrowser_engine_redraw_content_pipeline(uint32_t scroll_line,
 int zbrowser_engine_poll_c(void) {
     unsigned int pending;
     unsigned int ran;
+    unsigned int pending_after;
     int needs_document_redraw;
 
     if (zbrowser_engine_content == 0) {
@@ -2750,7 +2795,8 @@ int zbrowser_engine_poll_c(void) {
               zbrowser_engine_content->active +
               (zbrowser_engine_content_prepare_pending != 0 ? 1u : 0u) +
               (zbrowser_engine_content_needs_reformat != 0 ? 1u : 0u) +
-              (zbrowser_engine_content_needs_redraw != 0 ? 1u : 0u);
+              (zbrowser_engine_content_needs_redraw != 0 ? 1u : 0u) +
+              (zbrowser_engine_content_needs_chrome != 0 ? 1u : 0u);
     if (pending == 0u) {
         return 0;
     }
@@ -2774,6 +2820,19 @@ int zbrowser_engine_poll_c(void) {
                           (int)zbrowser_engine_content_viewport_height);
         zbrowser_engine_content_needs_redraw = 1;
     }
+    pending_after = zbrowser_lainos_schedule_count() +
+                    zbrowser_lainos_fetch_pending_count() +
+                    zbrowser_engine_content->active +
+                    (zbrowser_engine_content_prepare_pending != 0 ? 1u : 0u) +
+                    (zbrowser_engine_content_needs_reformat != 0 ? 1u : 0u) +
+                    (zbrowser_engine_content_needs_chrome != 0 ? 1u : 0u);
+    if (ran == 0u &&
+        pending_after == 0u &&
+        zbrowser_engine_content_needs_redraw != 0 &&
+        (zbrowser_engine_content->status == CONTENT_STATUS_READY ||
+         zbrowser_engine_content->status == CONTENT_STATUS_DONE)) {
+        zbrowser_engine_content_needs_redraw = 0;
+    }
     needs_document_redraw =
         zbrowser_engine_content_needs_reformat != 0 ||
         zbrowser_engine_content_needs_redraw != 0 ||
@@ -2788,6 +2847,10 @@ int zbrowser_engine_poll_c(void) {
     }
     if (needs_document_redraw != 0) {
         return 2;
+    }
+    if (zbrowser_engine_content_needs_chrome != 0) {
+        zbrowser_engine_content_needs_chrome = 0;
+        return 1;
     }
     return ran != 0u || zbrowser_engine_content_prepare_pending != 0 ? 1 : 0;
 }
@@ -2832,7 +2895,7 @@ static int zbrowser_engine_prepare_html_layout(const uint8_t *url,
         dom_node_unref(root);
         return -1;
     }
-    ns_error = nsurl_create(url != 0 ? (const char *)url : "about:blank",
+    ns_error = nsurl_create(zbrowser_engine_url_for_nsurl(url),
                             &zbrowser_engine_base_url);
     if (ns_error != NSERROR_OK || zbrowser_engine_base_url == 0) {
         zbrowser_engine_status_text = zbrowser_engine_status_html_layout_base_url_failed;
@@ -3812,6 +3875,7 @@ static int zbrowser_engine_redraw_html(uint32_t scroll_line,
     clip.y0 = 58;
     clip.x1 = (int)viewport_width;
     clip.y1 = (int)viewport_height;
+    memset(&plot_ctx, 0, sizeof(plot_ctx));
     plot_ctx.clip = clip;
     redraw.interactive = true;
     redraw.background_images = true;
@@ -3834,7 +3898,29 @@ static int zbrowser_engine_redraw_html(uint32_t scroll_line,
                   viewport_width,
                   viewport_height > 82u ? viewport_height - 82u : 0u,
                   zbrowser_engine_root_background & 0x00ffffffu);
-    return html_redraw((struct content *)&zbrowser_engine_html, &data, &clip, &redraw) ? 0 : -1;
+    if (!html_redraw((struct content *)&zbrowser_engine_html, &data, &clip, &redraw)) {
+        zbrowser_engine_status_text = (const uint8_t *)"NS html redraw failed; DOM painter fallback";
+        return -1;
+    }
+    snprintf((char *)zbrowser_engine_status_detail,
+             sizeof(zbrowser_engine_status_detail),
+             "NS html redraw txt%u/%u bmp%u/%u rect%u line%u path%u bytes%u width%u wh%dx%d css%u/%u",
+             plot_ctx.visible_texts,
+             plot_ctx.texts,
+             plot_ctx.visible_bitmaps,
+             plot_ctx.bitmaps,
+             plot_ctx.rectangles,
+             plot_ctx.lines,
+             plot_ctx.paths,
+             plot_ctx.text_bytes,
+             plot_ctx.text_width,
+             zbrowser_engine_html.base.width,
+             zbrowser_engine_html.base.height,
+             zbrowser_engine_css_blocks,
+             zbrowser_engine_sheet_count);
+    zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
+    zbrowser_engine_status_text = zbrowser_engine_status_detail;
+    return 0;
 }
 
 static int zbrowser_engine_prepare_dom(const uint8_t *url, const uint8_t *html, uint32_t size) {
@@ -4692,6 +4778,16 @@ static int zbrowser_engine_paint_dom(uint32_t scroll_line,
     zbrowser_engine_paint_node(&paint, (dom_node *)root, root_style);
     zbrowser_engine_paint_flush(&paint, &root_style);
     dom_node_unref(root);
+    snprintf((char *)zbrowser_engine_status_detail,
+             sizeof(zbrowser_engine_status_detail),
+             "NS dom fallback css%u/%u selected%u lines%u root %s",
+             zbrowser_engine_css_blocks,
+             zbrowser_engine_sheet_count,
+             zbrowser_engine_css_selected,
+             paint.line_index,
+             zbrowser_engine_root_name);
+    zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
+    zbrowser_engine_status_text = zbrowser_engine_status_detail;
     return 0;
 }
 #endif
@@ -4921,20 +5017,10 @@ int zbrowser_engine_draw_c(const uint8_t *html,
     }
 #endif
     if (zbrowser_engine_redraw_html(scroll_line, viewport_width, viewport_height) == 0) {
-#ifdef ZBROWSER_ENGINE_USE_NETSURF_CONTENT
-        if (content_attempted) {
-            zbrowser_engine_status_text = zbrowser_engine_content_detail_status("fallback");
-        }
-#endif
         return 0;
     }
 
     if (zbrowser_engine_paint_dom(scroll_line, viewport_width, viewport_height) == 0) {
-#ifdef ZBROWSER_ENGINE_USE_NETSURF_CONTENT
-        if (content_attempted) {
-            zbrowser_engine_status_text = zbrowser_engine_content_detail_status("fallback");
-        }
-#endif
         return 0;
     }
 
@@ -4945,7 +5031,7 @@ int zbrowser_engine_draw_c(const uint8_t *html,
                                        viewport_height) == 0) {
 #ifdef ZBROWSER_ENGINE_USE_NETSURF_CONTENT
         if (content_attempted) {
-            zbrowser_engine_status_text = zbrowser_engine_content_detail_status("fallback");
+            zbrowser_engine_status_text = zbrowser_engine_content_detail_status("raw-fallback");
         }
 #endif
         return 0;

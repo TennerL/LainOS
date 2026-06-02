@@ -1,0 +1,8 @@
+output http_cc.bin
+test-return 0
+src src
+selfhost_lwc.zo selfhost_lwc.zo
+selfhost_http_primitives.zo selfhost_http_primitives.zo
+selfhost_http_generics.zo selfhost_http_generics.zo
+selfhost_http_cc.zo selfhost_http_cc.zo
+http_cc_test.Z http_cc_test.zo

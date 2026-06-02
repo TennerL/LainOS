@@ -48,6 +48,14 @@ typedef struct {
 } zbrowser_engine_doc_t;
 
 typedef struct {
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t scroll;
+} zbrowser_engine_view_t;
+
+typedef struct {
     uint8_t text[ZBROWSER_ENGINE_LINE_CAPACITY];
     uint32_t len;
     uint32_t y;
@@ -1564,4 +1572,87 @@ int zbrowser_engine_draw(const uint8_t *html,
     }
     zbrowser_render_flush(&r);
     return 0;
+}
+
+int netsurf_browser_prepare_html_view(const uint8_t *url,
+                                      const uint8_t *html,
+                                      uint32_t size,
+                                      const zbrowser_engine_view_t *view) {
+    (void)view;
+    return zbrowser_engine_prepare(url, html, size);
+}
+
+int netsurf_browser_render_html_view(const uint8_t *url,
+                                     const uint8_t *html,
+                                     uint32_t size,
+                                     const zbrowser_engine_view_t *view) {
+    uint32_t scroll = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    (void)url;
+    if (view != 0) {
+        scroll = view->scroll;
+        width = view->width;
+        height = view->height;
+    }
+    return zbrowser_engine_draw(html, size, scroll, width, height);
+}
+
+uint8_t *netsurf_browser_status(void) {
+    return zbrowser_engine_status();
+}
+
+void netsurf_browser_invalidate_cache(void) {
+}
+
+int netsurf_browser_poll(void) {
+    return 0;
+}
+
+int netsurf_browser_key_event(uint32_t key) {
+    (void)key;
+    return 0;
+}
+
+int netsurf_browser_mouse_html_view(const zbrowser_engine_view_t *view,
+                                    uint32_t x,
+                                    uint32_t y,
+                                    uint32_t mouse_state) {
+    (void)view;
+    (void)x;
+    (void)y;
+    (void)mouse_state;
+    return 0;
+}
+
+int netsurf_browser_consume_navigation(uint8_t *out, uint32_t capacity) {
+    if (out != 0 && capacity != 0u) {
+        out[0] = 0u;
+    }
+    return 0;
+}
+
+uint32_t netsurf_port_dom_status(void) {
+    uint32_t status = 0;
+
+    if (zbrowser_doc.html != 0 && zbrowser_doc.size != 0u) {
+        status |= 1u;
+    }
+    if (zbrowser_doc.style_rules != 0u || zbrowser_doc.rule_count != 0u) {
+        status |= 2u;
+    }
+    return status;
+}
+
+uint8_t *netsurf_port_status(void) {
+    return zbrowser_engine_status();
+}
+
+uint32_t netsurf_kernel_frontend_smoke(void) {
+    return 0x0fu;
+}
+
+uint8_t *netsurf_kernel_frontend_status(void) {
+    return (uint8_t *)"Interim C browser engine frontend ready";
 }

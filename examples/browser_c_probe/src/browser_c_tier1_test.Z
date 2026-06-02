@@ -1,0 +1,68 @@
+extern int nsu_base64_encode(const uint8_t *input,
+                             uint64_t input_length,
+                             uint8_t *output,
+                             uint64_t *output_length);
+extern int nsu_getmonotonic_ms(uint64_t *current_out);
+extern int nsu_pwrite(int fd, const uint8_t *buf, uint64_t count, uint64_t offset);
+extern int nsu_pread(int fd, uint8_t *buf, uint64_t count, uint64_t offset);
+
+uint8_t input[4] = "Ma";
+uint8_t output[8];
+uint64_t output_length;
+uint64_t first_tick;
+uint64_t second_tick;
+int rc;
+
+output_length = 8;
+rc = nsu_base64_encode(input, 2, output, &output_length);
+if (rc != 0) {
+    print("browser_c tier1: base64 rc=");
+    print(rc);
+    print("\n");
+    return 20;
+}
+if (output_length != 4) {
+    print("browser_c tier1: bad base64 length\n");
+    return 21;
+}
+if (output[0] != 84 || output[1] != 87 || output[2] != 69 || output[3] != 61) {
+    print("browser_c tier1: bad base64 output\n");
+    return 22;
+}
+
+rc = nsu_getmonotonic_ms(&first_tick);
+if (rc != 0) {
+    print("browser_c tier1: time rc=");
+    print(rc);
+    print("\n");
+    return 23;
+}
+rc = nsu_getmonotonic_ms(&second_tick);
+if (rc != 0) {
+    print("browser_c tier1: time rc2=");
+    print(rc);
+    print("\n");
+    return 24;
+}
+if (second_tick < first_tick) {
+    print("browser_c tier1: time moved backward\n");
+    return 25;
+}
+
+rc = nsu_pread(-1, output, 1, 0);
+if (rc != -1) {
+    print("browser_c tier1: pread rc=");
+    print(rc);
+    print("\n");
+    return 26;
+}
+rc = nsu_pwrite(-1, input, 1, 0);
+if (rc != -1) {
+    print("browser_c tier1: pwrite rc=");
+    print(rc);
+    print("\n");
+    return 27;
+}
+
+print("browser_c tier1: ok base64 time unistd\n");
+return 0;

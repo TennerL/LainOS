@@ -1,0 +1,81 @@
+struct lwc_string_s {
+    uint32_t opaque;
+};
+struct http_parameter {
+    uint32_t opaque;
+};
+struct http_chal {
+    uint32_t opaque;
+};
+struct http_wa {
+    struct http_chal *challenges;
+};
+extern int http_parse_www_authenticate(const uint8_t *header_value, struct http_wa **result);
+extern void http_www_authenticate_destroy(struct http_wa *victim);
+extern struct http_chal *http_challenge_list_iterate(struct http_chal *cur, struct lwc_string_s **scheme, struct http_parameter **parameters);
+extern int http_parameter_list_find_item(struct http_parameter *list, struct lwc_string_s *name, struct lwc_string_s **value);
+extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);
+extern uint8_t *lwc_string_data(struct lwc_string_s *str);
+extern uint64_t lwc_string_length(struct lwc_string_s *str);
+extern void lwc_string_unref(struct lwc_string_s *str);
+
+uint8_t str_eq(uint8_t *a, uint8_t *b) {
+    uint64_t i;
+    i = 0;
+    while (a[i] != 0 || b[i] != 0) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+uint8_t wa_input[20] = "Basic charset=utf-8";
+uint8_t wa_bad[5] = "=bad";
+uint8_t charset_name[8] = "charset";
+uint8_t charset_value[6] = "utf-8";
+uint8_t *scheme_data;
+struct http_wa *wa;
+struct http_chal *next_chal;
+struct http_parameter *params;
+struct lwc_string_s *name;
+struct lwc_string_s *value;
+
+wa = (struct http_wa *)0;
+if (http_parse_www_authenticate(wa_input, &wa) != 0 || wa == 0 || wa->challenges == 0) {
+    print("browser_c http wa: parse failed\n");
+    return 10;
+}
+name = (struct lwc_string_s *)0;
+params = (struct http_parameter *)0;
+next_chal = http_challenge_list_iterate(wa->challenges, &name, &params);
+if (next_chal != 0 || name == 0 || params == 0) {
+    print("browser_c http wa: iterate failed\n");
+    return 11;
+}
+scheme_data = lwc_string_data(name);
+if (lwc_string_length(name) != 5 || scheme_data[0] != 66 || scheme_data[1] != 97 || scheme_data[2] != 115 || scheme_data[3] != 105 || scheme_data[4] != 99) {
+    print("browser_c http wa: scheme failed\n");
+    return 12;
+}
+lwc_string_unref(name);
+if (lwc_intern_string(charset_name, 7, &name) != 0) {
+    print("browser_c http wa: charset intern failed\n");
+    return 13;
+}
+value = (struct lwc_string_s *)0;
+if (http_parameter_list_find_item(params, name, &value) != 0 || value == 0 || str_eq(lwc_string_data(value), charset_value) != 1) {
+    print("browser_c http wa: charset failed\n");
+    return 14;
+}
+lwc_string_unref(name);
+lwc_string_unref(value);
+http_www_authenticate_destroy(wa);
+wa = (struct http_wa *)0;
+if (http_parse_www_authenticate(wa_bad, &wa) != 4 || wa != 0) {
+    print("browser_c http wa: bad failed\n");
+    return 15;
+}
+print("browser_c http wa: ok\n");
+return 0;

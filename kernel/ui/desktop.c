@@ -333,6 +333,7 @@ static void desktop_terminal_erase_caret(void);
 static int desktop_terminal_caret_tick_due(void);
 static void desktop_open_module_app(uint32_t index);
 static int desktop_open_module_app_by_name(const char *name, int load_from_mods);
+static int desktop_tick_module_app(desktop_module_window_t *slot, int force);
 static uint32_t desktop_app_catalog_count(void);
 static int desktop_app_catalog_name_at(uint32_t app_index, char *out, uint32_t out_size);
 static int desktop_any_module_app_open(void);
@@ -2002,6 +2003,7 @@ static void desktop_open_module_app(uint32_t index) {
     desktop_focus_module_app(slot);
     editor_focused = 0;
     desktop_terminal_blur();
+    (void)desktop_tick_module_app(slot, 1);
     desktop_damage_full();
 }
 
@@ -4671,7 +4673,7 @@ void desktop_run(const boot_info_t *info) {
     console_clear();
 }
 static void desktop_try_zbrowser_autostart(void) {
-    char flag[8];
+    char flag[64];
     int flag_size;
     const char *browser_name = "zbrowser_netsurf.zo";
 
@@ -4681,7 +4683,20 @@ static void desktop_try_zbrowser_autostart(void) {
     desktop_zbrowser_autostart_done = 1;
     flag_size = shell_api_read_file("/mods/zbrowser.autostart", flag, sizeof(flag) - 1u);
     if (flag_size < 0) {
-        return;
+        flag_size = shell_api_read_file("R:/mods/zbrowser.autostart", flag, sizeof(flag) - 1u);
+    }
+    if (flag_size < 0) {
+        flag_size = shell_api_read_file("zbrowser.autostart", flag, sizeof(flag) - 1u);
+    }
+    if (flag_size < 0) {
+        flag_size = shell_api_read_file("browser.url", flag, sizeof(flag) - 1u);
+        if (flag_size < 0) {
+            flag_size = shell_api_read_file("R:/mods/browser.url", flag, sizeof(flag) - 1u);
+        }
+        if (flag_size < 0) {
+            return;
+        }
+        text_copy_limited(flag, sizeof(flag), "netsurf");
     }
     flag[flag_size] = '\0';
     if (text_contains(flag, "legacy")) {

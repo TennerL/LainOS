@@ -1,0 +1,36 @@
+extern int nsu_base64_encode(const uint8_t *input,
+                             uint64_t input_length,
+                             uint8_t *output,
+                             uint64_t *output_length);
+
+uint8_t input[4] = "Man";
+uint8_t output[8];
+uint64_t output_length;
+int rc;
+
+output_length = 8;
+rc = nsu_base64_encode(input, 3, output, &output_length);
+if (rc != 0) {
+    print("browser_c first unit: encode rc=");
+    print(rc);
+    print("\n");
+    return 20;
+}
+if (output_length != 4) {
+    print("browser_c first unit: bad length\n");
+    return 21;
+}
+if (output[0] != 84 || output[1] != 87 || output[2] != 70 || output[3] != 117) {
+    print("browser_c first unit: bad output\n");
+    return 22;
+}
+
+output_length = 3;
+rc = nsu_base64_encode(input, 3, output, &output_length);
+if (rc != 24) {
+    print("browser_c first unit: expected nospace\n");
+    return 23;
+}
+
+print("browser_c first unit: ok base64\n");
+return 0;
