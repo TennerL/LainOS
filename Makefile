@@ -121,7 +121,6 @@ KERNEL_C_SOURCES := \
 	kernel/core/cpu.c \
 	kernel/core/dma.c \
 	kernel/core/kmem.c \
-	kernel/core/js_runtime.c \
 	kernel/core/registry.c \
 	kernel/core/libc.c \
 	kernel/core/power.c \
