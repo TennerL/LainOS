@@ -14,10 +14,18 @@
 
 .status-grid {
   margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .status-card {
+  flex: 1 1 180px;
   padding: 10px 12px;
   margin-bottom: 10px;
   border: 2px solid #293241;
+}
+
+.status-card:nth-child(2) {
+  border-style: dashed;
 }

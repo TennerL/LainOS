@@ -7,7 +7,8 @@
 <body>
 <main class="page-shell">
 <h1>Z Browser HTTP Smoke</h1>
-<p class="summary">This page is served over HTTP from the host and should render through NetSurf.</p>
+<p class="summary" data-css="cascade">This page is served over HTTP from the host and should render through NetSurf.</p>
+<p class="specificity-target">Specificity should still apply over HTTP.</p>
 <section class="import-panel">
 <h2>HTTP Subresource CSS</h2>
 <p class="import-note">The imported stylesheet should arrive through the NetSurf HTTP fetcher.</p>
@@ -16,6 +17,7 @@
 <div class="status-card primary-card">Top-level CSS over HTTP.</div>
 <div class="status-card accent-card">Nested imported CSS over HTTP.</div>
 </div>
+<p class="media-query-proof">The media query should also apply over HTTP.</p>
 <p class="palette-chip">Second-level import color over HTTP.</p>
 </main>
 </body>

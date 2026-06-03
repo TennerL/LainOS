@@ -196,11 +196,66 @@ global uint8_t zbrowser_ns_pending_url[1024];
 global uint8_t zbrowser_ns_status[384];
 global uint8_t zbrowser_ns_line[512];
 global uint8_t zbrowser_ns_last_renderer_status[512];
+global uint8_t zbrowser_ns_replay_clicks[256];
+global uint8_t zbrowser_ns_replay_keys[256];
+global uint32_t zbrowser_ns_replay_done;
 global struct NetHttpInfo zbrowser_ns_http_info;
 global struct NetSurfBrowserView zbrowser_ns_view;
 
 uint8_t *zbrowser_ns_doc_buffer(void) {
     return (uint8_t *)zbrowser_ns_doc_addr;
+}
+
+int zbrowser_ns_ascii_eq_ci(uint8_t a, uint8_t b) {
+    if (a >= 65 && a <= 90) {
+        a = (uint8_t)(a + 32);
+    }
+    if (b >= 65 && b <= 90) {
+        b = (uint8_t)(b + 32);
+    }
+    if (a == b) {
+        return 1;
+    }
+    return 0;
+}
+
+uint32_t zbrowser_ns_count_doc_token(const uint8_t *needle) {
+    uint8_t *doc;
+    uint32_t needle_len;
+    uint32_t count;
+    uint32_t i;
+    uint32_t j;
+    int match;
+
+    doc = zbrowser_ns_doc_buffer();
+    needle_len = (uint32_t)os_strlen(needle);
+    if (doc == 0 || needle_len == 0 || zbrowser_ns_doc_size <= 0) {
+        return 0;
+    }
+    if ((uint32_t)zbrowser_ns_doc_size < needle_len) {
+        return 0;
+    }
+
+    count = 0;
+    i = 0;
+    while (i + needle_len <= (uint32_t)zbrowser_ns_doc_size) {
+        match = 1;
+        j = 0;
+        while (j < needle_len) {
+            if (zbrowser_ns_ascii_eq_ci(doc[i + j], needle[j]) == 0) {
+                match = 0;
+                break;
+            }
+            j = j + 1;
+        }
+        if (match != 0) {
+            count = count + 1;
+            i = i + needle_len;
+        } else {
+            i = i + 1;
+        }
+    }
+    return count;
 }
 
 uint8_t *zbrowser_ns_history_slot(uint32_t index) {
@@ -313,6 +368,45 @@ int zbrowser_ns_starts_http(const uint8_t *url) {
     return 0;
 }
 
+int zbrowser_ns_starts_file_root(const uint8_t *url) {
+    if (url[0] == 102 && url[1] == 105 && url[2] == 108 && url[3] == 101 &&
+        url[4] == 58 && url[5] == 47 && url[6] == 47 && url[7] == 47) {
+        return 1;
+    }
+    return 0;
+}
+
+void zbrowser_ns_strip_file_root(uint8_t *url) {
+    uint32_t read_pos;
+    uint32_t write_pos;
+
+    if (zbrowser_ns_starts_file_root(url) == 0) {
+        return;
+    }
+    read_pos = 8;
+    write_pos = 0;
+    while (url[read_pos] != 0) {
+        url[write_pos] = url[read_pos];
+        write_pos = write_pos + 1;
+        read_pos = read_pos + 1;
+    }
+    url[write_pos] = 0;
+}
+
+void zbrowser_ns_copy_local_path(uint8_t *dst, uint32_t capacity, const uint8_t *url) {
+    uint32_t i;
+
+    if (capacity == 0) {
+        return;
+    }
+    i = 0;
+    while (url[i] != 0 && url[i] != 63 && url[i] != 35 && i + 1 < capacity) {
+        dst[i] = url[i];
+        i = i + 1;
+    }
+    dst[i] = 0;
+}
+
 void zbrowser_ns_trim_text_end(uint8_t *text) {
     uint32_t len;
 
@@ -407,6 +501,42 @@ void zbrowser_ns_log_stage(const uint8_t *phase) {
     debug_puts("\n");
 }
 
+void zbrowser_ns_log_doc_probe(const uint8_t *phase) {
+    debug_puts("zbrowser doc-probe ");
+    debug_puts(phase);
+    debug_puts(" bytes ");
+    if (zbrowser_ns_doc_size < 0) {
+        debug_puts("0");
+    } else {
+        debug_put_dec64((uint64_t)(uint32_t)zbrowser_ns_doc_size);
+    }
+    debug_puts(" html ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<html"));
+    debug_puts(" body ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<body"));
+    debug_puts(" title ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<title"));
+    debug_puts(" form ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<form"));
+    debug_puts(" input ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<input"));
+    debug_puts(" textarea ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<textarea"));
+    debug_puts(" select ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<select"));
+    debug_puts(" script ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<script"));
+    debug_puts(" noscript ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<noscript"));
+    debug_puts(" link ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("<a "));
+    debug_puts(" result ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("result"));
+    debug_puts(" search ");
+    debug_put_dec64((uint64_t)zbrowser_ns_count_doc_token("search"));
+    debug_puts("\n");
+}
+
 void zbrowser_ns_log_frontend_status(const uint8_t *phase) {
     debug_puts("zbrowser frontend-status\nphase ");
     debug_puts(phase);
@@ -489,6 +619,7 @@ void zbrowser_ns_update_view(void) {
 
 void zbrowser_ns_load_task(uint8_t *arg) {
     uint8_t *doc;
+    uint8_t local_path[1024];
     int size;
 
     doc = zbrowser_ns_doc_buffer();
@@ -504,7 +635,8 @@ void zbrowser_ns_load_task(uint8_t *arg) {
         size = os_http_get_ex(zbrowser_ns_url, doc, ZBROWSER_NS_HTTP_CAPACITY - 1, &zbrowser_ns_http_info);
         zbrowser_ns_http_status = zbrowser_ns_http_info.status_code;
     } else {
-        size = os_read_file(zbrowser_ns_url, doc, ZBROWSER_NS_HTTP_CAPACITY - 1);
+        zbrowser_ns_copy_local_path(local_path, ZBROWSER_NS_URL_CAPACITY, zbrowser_ns_url);
+        size = os_read_file(local_path, doc, ZBROWSER_NS_HTTP_CAPACITY - 1);
     }
 
     if (size <= 0) {
@@ -752,6 +884,7 @@ void zbrowser_ns_poll_load(void) {
     zbrowser_ns_load_in_progress = 0;
     if (zbrowser_ns_has_doc != 0) {
         zbrowser_ns_log_stage("load-done");
+        zbrowser_ns_log_doc_probe("load-done");
         zbrowser_ns_start_prepare();
     } else {
         zbrowser_ns_log_stage("load-failed");
@@ -808,6 +941,7 @@ void zbrowser_ns_start_load(void) {
         zbrowser_ns_load_in_progress = 0;
         if (zbrowser_ns_has_doc != 0) {
             zbrowser_ns_log_stage("load-done");
+            zbrowser_ns_log_doc_probe("load-done");
             zbrowser_ns_start_prepare();
         } else {
             zbrowser_ns_log_stage("load-failed");
@@ -943,7 +1077,127 @@ void zbrowser_ns_follow_navigation(void) {
         debug_puts("zbrowser pending-navigation ");
         debug_puts(zbrowser_ns_pending_url);
         debug_puts("\n");
+        zbrowser_ns_log_renderer_status("pending");
+        zbrowser_ns_log_redraw_summary("pending");
+        zbrowser_ns_strip_file_root(zbrowser_ns_pending_url);
         zbrowser_ns_navigate_to(zbrowser_ns_pending_url, 1);
+    }
+}
+
+uint32_t zbrowser_ns_parse_uint_token(const uint8_t *text, uint32_t *pos) {
+    uint32_t value;
+
+    value = 0;
+    while (text[*pos] >= 48 && text[*pos] <= 57) {
+        value = value * 10 + (uint32_t)(text[*pos] - 48);
+        *pos = *pos + 1;
+    }
+    return value;
+}
+
+uint32_t zbrowser_ns_token_eq(const uint8_t *text,
+                              uint32_t start,
+                              uint32_t end,
+                              const uint8_t *needle) {
+    uint32_t i;
+
+    i = 0;
+    while (start + i < end && needle[i] != 0) {
+        if (text[start + i] != needle[i]) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    if (start + i != end || needle[i] != 0) {
+        return 0;
+    }
+    return 1;
+}
+
+void zbrowser_ns_replay_key_token(const uint8_t *text, uint32_t start, uint32_t end) {
+    if (end <= start) {
+        return;
+    }
+    if (end == start + 1) {
+        zmodule_key(KEY_CHAR, text[start]);
+        return;
+    }
+    if (zbrowser_ns_token_eq(text, start, end, "ret") != 0 ||
+        zbrowser_ns_token_eq(text, start, end, "enter") != 0) {
+        zmodule_key(KEY_ENTER, 0);
+    } else if (zbrowser_ns_token_eq(text, start, end, "tab") != 0) {
+        zmodule_key(KEY_TAB, 0);
+    } else if (zbrowser_ns_token_eq(text, start, end, "backspace") != 0) {
+        zmodule_key(KEY_BACKSPACE, 0);
+    } else if (zbrowser_ns_token_eq(text, start, end, "esc") != 0) {
+        zmodule_key(KEY_ESC, 0);
+    } else if (zbrowser_ns_token_eq(text, start, end, "left") != 0) {
+        zmodule_key(KEY_LEFT, 0);
+    } else if (zbrowser_ns_token_eq(text, start, end, "right") != 0) {
+        zmodule_key(KEY_RIGHT, 0);
+    } else if (zbrowser_ns_token_eq(text, start, end, "up") != 0) {
+        zmodule_key(KEY_UP, 0);
+    } else if (zbrowser_ns_token_eq(text, start, end, "down") != 0) {
+        zmodule_key(KEY_DOWN, 0);
+    }
+}
+
+void zbrowser_ns_replay_launch_input(void) {
+    uint32_t pos;
+    uint32_t start;
+    uint32_t click_x;
+    uint32_t click_y;
+
+    if (zbrowser_ns_replay_done != 0 ||
+        zbrowser_ns_render_ready == 0 ||
+        zbrowser_ns_page_redraw_count == 0) {
+        return;
+    }
+    zbrowser_ns_replay_done = 1;
+
+    pos = 0;
+    while (zbrowser_ns_replay_clicks[pos] != 0) {
+        while (zbrowser_ns_replay_clicks[pos] == 32 ||
+               zbrowser_ns_replay_clicks[pos] == 9 ||
+               zbrowser_ns_replay_clicks[pos] == 10 ||
+               zbrowser_ns_replay_clicks[pos] == 13 ||
+               zbrowser_ns_replay_clicks[pos] == 59) {
+            pos = pos + 1;
+        }
+        if (zbrowser_ns_replay_clicks[pos] == 0) {
+            break;
+        }
+        click_x = zbrowser_ns_parse_uint_token(zbrowser_ns_replay_clicks, &pos);
+        if (zbrowser_ns_replay_clicks[pos] == 44) {
+            pos = pos + 1;
+        }
+        click_y = zbrowser_ns_parse_uint_token(zbrowser_ns_replay_clicks, &pos);
+        debug_puts("zbrowser replay-click ");
+        debug_put_dec64((uint64_t)click_x);
+        debug_puts(",");
+        debug_put_dec64((uint64_t)click_y);
+        debug_puts("\n");
+        zmodule_mouse(click_x, click_y, 1, 0);
+    }
+
+    pos = 0;
+    while (zbrowser_ns_replay_keys[pos] != 0) {
+        while (zbrowser_ns_replay_keys[pos] == 32 ||
+               zbrowser_ns_replay_keys[pos] == 9 ||
+               zbrowser_ns_replay_keys[pos] == 10 ||
+               zbrowser_ns_replay_keys[pos] == 13 ||
+               zbrowser_ns_replay_keys[pos] == 44) {
+            pos = pos + 1;
+        }
+        start = pos;
+        while (zbrowser_ns_replay_keys[pos] != 0 &&
+               zbrowser_ns_replay_keys[pos] != 44 &&
+               zbrowser_ns_replay_keys[pos] != 10 &&
+               zbrowser_ns_replay_keys[pos] != 13) {
+            pos = pos + 1;
+        }
+        debug_puts("zbrowser replay-key\n");
+        zbrowser_ns_replay_key_token(zbrowser_ns_replay_keys, start, pos);
     }
 }
 
@@ -1223,6 +1477,7 @@ export void zmodule_tick(void) {
             zbrowser_ns_start_core_poll();
         }
     }
+    zbrowser_ns_replay_launch_input();
     if (zbrowser_ns_needs_redraw != 0) {
         zbrowser_ns_needs_redraw = 0;
         zbrowser_ns_needs_chrome_redraw = 0;
@@ -1281,6 +1536,14 @@ export void zmodule_key(uint32_t key_type, uint32_t ch) {
         ns_key = 13;
     } else if (key_type == KEY_ESC) {
         ns_key = 27;
+    } else if (key_type == KEY_LEFT) {
+        ns_key = 28;
+    } else if (key_type == KEY_RIGHT) {
+        ns_key = 29;
+    } else if (key_type == KEY_UP) {
+        ns_key = 30;
+    } else if (key_type == KEY_DOWN) {
+        ns_key = 31;
     }
     if (ns_key != 0 && zbrowser_ns_render_ready != 0) {
         ns_result = netsurf_browser_key_event(ns_key);
@@ -1389,9 +1652,21 @@ export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t whee
             x < zbrowser_ns_view.x + zbrowser_ns_view.width &&
             y < zbrowser_ns_view.y + zbrowser_ns_view.height) {
             zbrowser_ns_editing = 0;
+            debug_puts("zbrowser mouse-html ");
+            debug_put_dec64((uint64_t)x);
+            debug_puts(",");
+            debug_put_dec64((uint64_t)y);
+            debug_puts(" view ");
+            debug_put_dec64((uint64_t)zbrowser_ns_view.x);
+            debug_puts(",");
+            debug_put_dec64((uint64_t)zbrowser_ns_view.y);
+            debug_puts("\n");
             ns_result = netsurf_browser_mouse_html_view(&zbrowser_ns_view, x, y, 1);
-            ns_result = ns_result + netsurf_browser_mouse_html_view(&zbrowser_ns_view, x, y, 0);
             ns_result = ns_result + netsurf_browser_mouse_html_view(&zbrowser_ns_view, x, y, 32);
+            ns_result = ns_result + netsurf_browser_mouse_html_view(&zbrowser_ns_view, x, y, 0);
+            debug_puts("zbrowser mouse-html-result ");
+            debug_put_dec64((uint64_t)ns_result);
+            debug_puts("\n");
             zbrowser_ns_follow_navigation();
             if (ns_result != 0) {
                 zbrowser_ns_needs_redraw = 1;
@@ -1447,6 +1722,19 @@ zbrowser_ns_copy(zbrowser_ns_edit_original, ZBROWSER_NS_URL_CAPACITY, zbrowser_n
 zbrowser_ns_pending_url[0] = 0;
 zbrowser_ns_copy(zbrowser_ns_status, ZBROWSER_NS_STATUS_CAPACITY, "ready");
 zbrowser_ns_last_renderer_status[0] = 0;
+zbrowser_ns_replay_clicks[0] = 0;
+zbrowser_ns_replay_keys[0] = 0;
+zbrowser_ns_replay_done = 0;
+if (os_read_file("browser.clicks", zbrowser_ns_replay_clicks, 255) > 0) {
+    zbrowser_ns_replay_clicks[255] = 0;
+} else {
+    zbrowser_ns_replay_clicks[0] = 0;
+}
+if (os_read_file("browser.keys", zbrowser_ns_replay_keys, 255) > 0) {
+    zbrowser_ns_replay_keys[255] = 0;
+} else {
+    zbrowser_ns_replay_keys[0] = 0;
+}
 zbrowser_ns_loaded_once = 0;
 zbrowser_ns_has_doc = 0;
 zbrowser_ns_needs_redraw = 1;

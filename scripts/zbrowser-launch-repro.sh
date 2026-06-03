@@ -47,6 +47,10 @@ serve_http_port="${ZBROWSER_LAUNCH_REPRO_HTTP_PORT:-28080}"
 launch_url="${ZBROWSER_LAUNCH_REPRO_URL:-}"
 send_keys="${ZBROWSER_LAUNCH_REPRO_SENDKEYS:-}"
 mouse_clicks="${ZBROWSER_LAUNCH_REPRO_MOUSE_CLICKS:-}"
+replay_input=0
+if [ -n "$send_keys" ] || [ -n "$mouse_clicks" ]; then
+  replay_input=1
+fi
 send_keys_delay="${ZBROWSER_LAUNCH_REPRO_SENDKEYS_DELAY_SECONDS:-1}"
 mouse_clicks_delay="${ZBROWSER_LAUNCH_REPRO_MOUSE_CLICKS_DELAY_SECONDS:-1}"
 post_keys_capture_delay="${ZBROWSER_LAUNCH_REPRO_POST_KEYS_CAPTURE_DELAY_SECONDS:-2}"
@@ -65,9 +69,13 @@ idle_max_page="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_PAGE:-2}"
 idle_max_poll_full="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_POLL_FULL:-1}"
 idle_max_poll_chrome="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_POLL_CHROME:-4}"
 idle_max_render_fail="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_RENDER_FAIL:-0}"
+if [ "$replay_input" = "1" ] && [ -z "${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_FULL+x}" ]; then
+  idle_max_full=4
+fi
 min_rendered_bitmaps="${ZBROWSER_LAUNCH_REPRO_MIN_BITMAPS:-0}"
 min_rendered_objects="${ZBROWSER_LAUNCH_REPRO_MIN_OBJECTS:-0}"
 min_rendered_css="${ZBROWSER_LAUNCH_REPRO_MIN_CSS:-}"
+min_styled_boxes="${ZBROWSER_LAUNCH_REPRO_MIN_STYLED_BOXES:-}"
 min_rendered_rects="${ZBROWSER_LAUNCH_REPRO_MIN_RECTS:-}"
 min_rendered_lines="${ZBROWSER_LAUNCH_REPRO_MIN_LINES:-}"
 min_rendered_text="${ZBROWSER_LAUNCH_REPRO_MIN_TEXT:-}"
@@ -96,9 +104,35 @@ require_serial_fragment="${ZBROWSER_LAUNCH_REPRO_REQUIRE_SERIAL_FRAGMENT:-}"
 require_pending_url_fragment="${ZBROWSER_LAUNCH_REPRO_REQUIRE_PENDING_URL_FRAGMENT:-}"
 require_http_status="${ZBROWSER_LAUNCH_REPRO_REQUIRE_HTTP_STATUS:-}"
 require_style_sample="${ZBROWSER_LAUNCH_REPRO_REQUIRE_STYLE_SAMPLE:-}"
+google_search_smoke="${ZBROWSER_LAUNCH_REPRO_GOOGLE_SEARCH_SMOKE:-0}"
+google_search_query="${ZBROWSER_LAUNCH_REPRO_GOOGLE_QUERY:-lain}"
 if [ "$serve_http" = "1" ] && [ -z "$launch_url" ]; then
   launch_page="${ZBROWSER_LAUNCH_REPRO_PAGE:-zbrowser_http_smoke.html}"
   launch_url="http://10.0.2.2:${serve_http_port}/${launch_page}"
+fi
+if [ "$google_search_smoke" = "1" ]; then
+  mouse_clicks="${ZBROWSER_LAUNCH_REPRO_MOUSE_CLICKS:-640,360}"
+  idle_max_full="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_FULL:-6}"
+  idle_max_page="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_PAGE:-3}"
+  idle_max_poll_full="${ZBROWSER_LAUNCH_REPRO_IDLE_MAX_POLL_FULL:-2}"
+  if [ -z "${ZBROWSER_LAUNCH_REPRO_SENDKEYS:-}" ]; then
+    send_keys=""
+    google_index=0
+    while [ "$google_index" -lt "${#google_search_query}" ]; do
+      if [ -n "$send_keys" ]; then
+        send_keys="${send_keys},"
+      fi
+      send_keys="${send_keys}${google_search_query:$google_index:1}"
+      google_index=$((google_index + 1))
+    done
+    send_keys="${send_keys},ret"
+  fi
+  min_form_mouse="${ZBROWSER_LAUNCH_REPRO_MIN_FORM_MOUSE:-1}"
+  min_form_keys="${ZBROWSER_LAUNCH_REPRO_MIN_FORM_KEYS:-1}"
+  min_form_nav_creates="${ZBROWSER_LAUNCH_REPRO_MIN_FORM_NAV_CREATES:-1}"
+  min_form_nav_consumes="${ZBROWSER_LAUNCH_REPRO_MIN_FORM_NAV_CONSUMES:-1}"
+  require_pending_url_fragment="${ZBROWSER_LAUNCH_REPRO_REQUIRE_PENDING_URL_FRAGMENT:-q=${google_search_query}}"
+  replay_input=1
 fi
 if [ -z "$require_frontend_smoke" ]; then
   if [ "$browser_mode" = "netsurf" ]; then
@@ -116,6 +150,7 @@ if [ -z "$require_style_sample" ]; then
 fi
 if [ "$launch_page" = "zbrowser_css_external.html" ]; then
   min_rendered_css="${min_rendered_css:-3}"
+  min_styled_boxes="${min_styled_boxes:-12}"
   min_rendered_rects="${min_rendered_rects:-10}"
   min_rendered_lines="${min_rendered_lines:-1}"
   min_rendered_text="${min_rendered_text:-7}"
@@ -164,6 +199,7 @@ if [ "$launch_page" = "zbrowser_bad_image.html" ]; then
 fi
 if [ "$launch_page" = "zbrowser_http_smoke.html" ]; then
   min_rendered_css="${min_rendered_css:-3}"
+  min_styled_boxes="${min_styled_boxes:-10}"
   min_rendered_rects="${min_rendered_rects:-10}"
   min_rendered_lines="${min_rendered_lines:-1}"
   min_rendered_text="${min_rendered_text:-7}"
@@ -196,6 +232,11 @@ if [ "$launch_page" = "zbrowser_form_smoke.html" ]; then
   min_rendered_rects="${min_rendered_rects:-10}"
   min_rendered_text="${min_rendered_text:-5}"
 fi
+if [ "$launch_page" = "zbrowser_google_lite.html" ]; then
+  min_rendered_css="${min_rendered_css:-1}"
+  min_rendered_rects="${min_rendered_rects:-4}"
+  min_rendered_text="${min_rendered_text:-3}"
+fi
 if [ "$launch_page" = "zbrowser_js_baseline.html" ]; then
   min_rendered_css="${min_rendered_css:-1}"
   min_rendered_rects="${min_rendered_rects:-4}"
@@ -204,6 +245,7 @@ if [ "$launch_page" = "zbrowser_js_baseline.html" ]; then
   min_js_successes="${ZBROWSER_LAUNCH_REPRO_MIN_JS_SUCCESSES:-1}"
 fi
 min_rendered_css="${min_rendered_css:-0}"
+min_styled_boxes="${min_styled_boxes:-0}"
 min_rendered_rects="${min_rendered_rects:-0}"
 min_rendered_lines="${min_rendered_lines:-0}"
 min_rendered_text="${min_rendered_text:-0}"
@@ -318,6 +360,17 @@ trap cleanup_repro EXIT
 mkdir -p "$host_build_root"
 make build/tools/lainfs_check_host build/tools/lainfs_seed build/tools/ramdisk_seed_gen build/tools/zmod_link_host build/zbrowser-netsurf-full/.stamp
 
+if [ "$browser_mode" = "netsurf" ]; then
+  if [ ! -f build/zbrowser-netsurf-full/zbrowser_netsurf.zo ]; then
+    printf 'zbrowser launch repro: missing build/zbrowser-netsurf-full/zbrowser_netsurf.zo; rebuild build/zbrowser-netsurf-full/.stamp.\n' >&2
+    exit 1
+  fi
+  if ! ls build/zbrowser-netsurf-full/zbrowser_netsurf.zp[0-9][0-9] >/dev/null 2>&1; then
+    printf 'zbrowser launch repro: missing zbrowser_netsurf.zp chunks; rebuild build/zbrowser-netsurf-full/.stamp.\n' >&2
+    exit 1
+  fi
+fi
+
 if [ ! -f build/data.img ]; then
   printf 'zbrowser launch repro: missing build/data.img; run a normal build first.\n' >&2
   exit 1
@@ -351,7 +404,8 @@ find build/zbrowser-netsurf-full -maxdepth 1 \( -name '*.zo' -o -name '*.Z' -o -
 mkdir -p "$(dirname "$seed_root/mods/$launch_page")"
 cp "$page_source" "$seed_root/mods/$launch_page"
 if [ "$launch_page" = "zbrowser_form_smoke.html" ] ||
-   [ "$launch_page" = "zbrowser_form_empty.html" ]; then
+   [ "$launch_page" = "zbrowser_form_empty.html" ] ||
+   [ "$launch_page" = "zbrowser_google_lite.html" ]; then
   cp examples/zbrowser_form_*.html "$seed_root/mods/"
 fi
 if [ -d examples/styles ]; then
@@ -366,7 +420,8 @@ if [ "$serve_http" = "1" ]; then
   mkdir -p "$http_root"
   cp "$page_source" "$http_root/$launch_page"
   if [ "$launch_page" = "zbrowser_form_smoke.html" ] ||
-     [ "$launch_page" = "zbrowser_form_empty.html" ]; then
+     [ "$launch_page" = "zbrowser_form_empty.html" ] ||
+     [ "$launch_page" = "zbrowser_google_lite.html" ]; then
     cp examples/zbrowser_form_*.html "$http_root/"
   fi
   if [ -d examples/styles ]; then
@@ -388,6 +443,12 @@ if [ "$serve_http" = "1" ]; then
 fi
 printf '%s\n' "${launch_url:-$launch_page}" >"$seed_root/mods/browser.url"
 printf '%s\n' "$browser_mode" >"$seed_root/mods/zbrowser.autostart"
+if [ -n "$send_keys" ]; then
+  printf '%s\n' "$send_keys" >"$seed_root/mods/browser.keys"
+fi
+if [ -n "$mouse_clicks" ]; then
+  printf '%s\n' "$mouse_clicks" >"$seed_root/mods/browser.clicks"
+fi
 cat >"$seed_root/autoexec" <<'EOF'
 mkdir mods
 cd mods
@@ -596,13 +657,13 @@ quit_after_log() {
 
 start_repro_watchers() {
   capture_screendump_after_log "$capture_trigger_pattern" "$screenshot_1" 1 35 8
-  if [ -n "$send_keys" ]; then
+  if [ -n "$send_keys" ] && [ "$replay_input" = "0" ]; then
     send_keys_after_log "$send_keys_trigger_pattern" "$send_keys" "$send_keys_delay" 40
   fi
-  if [ -n "$mouse_clicks" ]; then
+  if [ -n "$mouse_clicks" ] && [ "$replay_input" = "0" ]; then
     send_mouse_clicks_after_log "$send_keys_trigger_pattern" "$mouse_clicks" "$mouse_clicks_delay" 40
   fi
-  if [ -z "$send_keys" ] && [ -z "$mouse_clicks" ]; then
+  if [ -z "$send_keys" ] && [ -z "$mouse_clicks" ] || [ "$replay_input" = "1" ]; then
     capture_screendump_after_log "$idle_trigger_pattern" "$screenshot_2" "$idle_capture_delay" 60 8
   fi
   if [ "$auto_quit" = "1" ]; then
@@ -823,6 +884,7 @@ if [ "$renderer_path" = "html-redraw" ]; then
     fi
   fi
   if [ "$min_rendered_css" -gt 0 ] ||
+     [ "$min_styled_boxes" -gt 0 ] ||
      [ "$min_rendered_rects" -gt 0 ] ||
      [ "$min_rendered_lines" -gt 0 ] ||
      [ "$min_rendered_text" -gt 0 ] ||
@@ -844,6 +906,7 @@ if [ "$renderer_path" = "html-redraw" ]; then
     rendered_status="$(grep 'status NS rendered' "$serial_log" | tail -n 1)"
     rendered_css="$(sed -n 's/.* css\([0-9][0-9]*\)\/[0-9][0-9]* .*/\1/p' <<<"$rendered_status")"
     rendered_css_total="$(sed -n 's/.* css[0-9][0-9]*\/\([0-9][0-9]*\) .*/\1/p' <<<"$rendered_status")"
+    rendered_styled_boxes="$(sed -n 's/.* sty\([0-9][0-9]*\) grid[0-9][0-9]* .*/\1/p' <<<"$rendered_status")"
     rendered_rects="$(sed -n 's/.* rect\([0-9][0-9]*\) .*/\1/p' <<<"$rendered_status")"
     rendered_lines="$(sed -n 's/.* line\([0-9][0-9]*\) .*/\1/p' <<<"$rendered_status")"
     rendered_text="$(sed -n 's/.* txt\([0-9][0-9]*\)\/[0-9][0-9]* .*/\1/p' <<<"$rendered_status")"
@@ -864,6 +927,7 @@ if [ "$renderer_path" = "html-redraw" ]; then
     rendered_object_total="$(sed -n 's/.* obj[0-9][0-9]*\/\([0-9][0-9]*\) http[0-9][0-9]*\/[0-9][0-9]* .*/\1/p' <<<"$rendered_status")"
     rendered_css="${rendered_css:-0}"
     rendered_css_total="${rendered_css_total:-0}"
+    rendered_styled_boxes="${rendered_styled_boxes:-0}"
     rendered_rects="${rendered_rects:-0}"
     rendered_lines="${rendered_lines:-0}"
     rendered_text="${rendered_text:-0}"
@@ -885,6 +949,7 @@ if [ "$renderer_path" = "html-redraw" ]; then
     rendered_css_misses=$((rendered_css_total > rendered_css ? rendered_css_total - rendered_css : 0))
     rendered_object_misses=$((rendered_object_total > rendered_objects ? rendered_object_total - rendered_objects : 0))
     if [ "$rendered_css" -lt "$min_rendered_css" ] ||
+       [ "$rendered_styled_boxes" -lt "$min_styled_boxes" ] ||
        [ "$rendered_rects" -lt "$min_rendered_rects" ] ||
        [ "$rendered_lines" -lt "$min_rendered_lines" ] ||
        [ "$rendered_text" -lt "$min_rendered_text" ] ||
@@ -904,8 +969,8 @@ if [ "$renderer_path" = "html-redraw" ]; then
        [ "$rendered_css_misses" -lt "$min_css_misses" ] ||
        [ "$rendered_object_misses" -lt "$min_object_misses" ]; then
       printf 'zbrowser launch repro: rendered layout counters too low: %s\n' "$rendered_status" >&2
-      printf 'zbrowser launch repro: minimums css>=%s rect>=%s line>=%s text>=%s path>=%s poly>=%s disc>=%s arc>=%s img>=%s img-fallback>=%s img-error>=%s bitmap-render-ok>=%s bitmap-render>=%s bitmap-render-error<=%s http-fetch>=%s http-ok>=%s type-reject>=%s css-miss>=%s obj-miss>=%s\n' \
-        "$min_rendered_css" "$min_rendered_rects" "$min_rendered_lines" "$min_rendered_text" \
+      printf 'zbrowser launch repro: minimums css>=%s styled-box>=%s rect>=%s line>=%s text>=%s path>=%s poly>=%s disc>=%s arc>=%s img>=%s img-fallback>=%s img-error>=%s bitmap-render-ok>=%s bitmap-render>=%s bitmap-render-error<=%s http-fetch>=%s http-ok>=%s type-reject>=%s css-miss>=%s obj-miss>=%s\n' \
+        "$min_rendered_css" "$min_styled_boxes" "$min_rendered_rects" "$min_rendered_lines" "$min_rendered_text" \
         "$min_rendered_paths" "$min_rendered_polygons" "$min_rendered_discs" "$min_rendered_arcs" \
         "$min_image_decodes" "$min_image_fallbacks" "$min_image_errors" \
         "$min_bitmap_render_successes" "$min_bitmap_renders" "$max_bitmap_render_errors" \
@@ -953,20 +1018,53 @@ max_status_quad_field() {
   done < <(sed -n "s/.* $pattern\\([0-9][0-9]*\\)\\/\\([0-9][0-9]*\\)\\/\\([0-9][0-9]*\\)\\/\\([0-9][0-9]*\\).*/\\${index}/p" "$serial_log")
   printf '%s\n' "$max_value"
 }
+max_status_quint_field() {
+  local pattern="$1"
+  local index="$2"
+  local max_value=0
+  local value=
+
+  while IFS= read -r value; do
+    value="${value:-0}"
+    if [ "$value" -gt "$max_value" ]; then
+      max_value="$value"
+    fi
+  done < <(sed -n "s/.* $pattern\\([0-9][0-9]*\\)\\/\\([0-9][0-9]*\\)\\/\\([0-9][0-9]*\\)\\/\\([0-9][0-9]*\\)\\/\\([0-9][0-9]*\\).*/\\${index}/p" "$serial_log")
+  if [ "$max_value" -eq 0 ] && [ "$index" -le 4 ]; then
+    max_value="$(max_status_quad_field "$pattern" "$index")"
+  fi
+  printf '%s\n' "$max_value"
+}
 if [ "$min_form_keys" -gt 0 ] ||
    [ "$min_form_mouse" -gt 0 ] ||
    [ "$min_form_nav_creates" -gt 0 ] ||
    [ "$min_form_nav_consumes" -gt 0 ]; then
-  form_keys="$(max_status_quad_field "frm" 1)"
-  form_mouse="$(max_status_quad_field "frm" 2)"
-  form_nav_creates="$(max_status_quad_field "frm" 3)"
-  form_nav_consumes="$(max_status_quad_field "frm" 4)"
+  form_keys="$(max_status_quint_field "frm" 1)"
+  form_mouse="$(max_status_quint_field "frm" 2)"
+  form_focus="$(max_status_quint_field "frm" 3)"
+  form_nav_creates="$(max_status_quint_field "frm" 4)"
+  form_nav_consumes="$(max_status_quint_field "frm" 5)"
+  if [ "$form_keys" -eq 0 ]; then
+    form_keys="$(grep -c 'zbrowser form-key-bridge-ok' "$serial_log" || true)"
+  fi
+  if [ "$form_mouse" -eq 0 ]; then
+    form_mouse="$(grep -c 'zbrowser mouse-html-result' "$serial_log" || true)"
+  fi
+  if [ "$form_focus" -eq 0 ]; then
+    form_focus="$(grep -c 'zbrowser form-focus-.*hit' "$serial_log" || true)"
+  fi
+  if [ "$form_nav_creates" -eq 0 ]; then
+    form_nav_creates="$(grep -c 'zbrowser pending-navigation' "$serial_log" || true)"
+  fi
+  if [ "$form_nav_consumes" -eq 0 ]; then
+    form_nav_consumes="$(grep -c 'zbrowser pending-navigation' "$serial_log" || true)"
+  fi
   if [ "$form_keys" -lt "$min_form_keys" ] ||
      [ "$form_mouse" -lt "$min_form_mouse" ] ||
      [ "$form_nav_creates" -lt "$min_form_nav_creates" ] ||
      [ "$form_nav_consumes" -lt "$min_form_nav_consumes" ]; then
-    printf 'zbrowser launch repro: form counters too low: frm key=%s mouse=%s nav=%s consume=%s\n' \
-      "$form_keys" "$form_mouse" "$form_nav_creates" "$form_nav_consumes" >&2
+    printf 'zbrowser launch repro: form counters too low: frm key=%s mouse=%s focus=%s nav=%s consume=%s\n' \
+      "$form_keys" "$form_mouse" "$form_focus" "$form_nav_creates" "$form_nav_consumes" >&2
     tail -n 220 "$serial_log" || true
     exit 1
   fi

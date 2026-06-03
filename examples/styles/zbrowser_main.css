@@ -24,6 +24,34 @@ h1 {
   color: #3d405b;
 }
 
+.summary[data-css="cascade"] {
+  border-left: 4px solid #457b9d;
+  padding-left: 8px;
+}
+
+.page-shell .specificity-target {
+  color: #b23a48;
+  font-weight: bold;
+}
+
+.specificity-target {
+  color: #3d405b;
+}
+
 .primary-card {
   background: #d9e2ec;
+}
+
+.media-query-proof {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 2px solid #457b9d;
+  background: #eaf4f4;
+}
+
+@media screen and (min-width: 300px) {
+  .media-query-proof {
+    background: #cfe8ef;
+    color: #1d3557;
+  }
 }

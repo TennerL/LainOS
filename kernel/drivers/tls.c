@@ -416,7 +416,7 @@ int net_tls_http_get(uint32_t index,
     if (info) {
         *info = final_info;
     }
-    if (info && result == -4) {
+    if (info && (result == -4 || result == -6 || result == -10)) {
         info->tls_error = br_ssl_engine_last_error(&cc->eng);
         if (info->tls_error == 0) {
             net_debug_info_t debug;

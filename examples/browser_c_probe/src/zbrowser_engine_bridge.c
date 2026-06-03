@@ -37,11 +37,14 @@
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/box_inspect.h"
 #include "content/handlers/html/box_construct.h"
+#include "content/handlers/html/box_textarea.h"
 #include "content/handlers/html/form_internal.h"
 #include "content/handlers/html/layout.h"
 #include "content/handlers/html/html.h"
 #include "content/handlers/html/private.h"
+#include "content/handlers/html/interaction.h"
 #include "content/handlers/javascript/js.h"
+#include "desktop/textarea.h"
 #include "netsurf_resource_css.h"
 
 #undef dom_node_unref
@@ -61,6 +64,8 @@ static css_error zbrowser_engine_css_stylesheet_destroy(css_stylesheet *sheet) {
 extern void gfx_fill_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void gfx_draw_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 extern void gfx_draw_line(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t color);
+extern void debug_puts(const char *text);
+extern void debug_put_dec64(uint64_t value);
 extern int gfx_draw_rect_packed(uint32_t x, uint32_t y, uint32_t width, uint32_t height, const uint32_t *pixels, uint32_t pixel_count);
 extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg);
 extern void draw_text_scaled_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint32_t fg, uint32_t bg, uint32_t scale);
@@ -233,6 +238,10 @@ static int zbrowser_engine_content_rendered_once;
 static int zbrowser_engine_content_browser_window_cookie;
 static uint32_t zbrowser_engine_form_key_count;
 static uint32_t zbrowser_engine_form_mouse_count;
+static uint32_t zbrowser_engine_form_focus_count;
+static struct form_control *zbrowser_engine_focused_text_control;
+static char zbrowser_engine_focused_text_value[256];
+static uint32_t zbrowser_engine_focused_text_len;
 static jsheap *zbrowser_engine_content_jsheap;
 static const uint8_t *zbrowser_engine_content_source_html;
 static uint32_t zbrowser_engine_content_source_size;
@@ -335,7 +344,7 @@ static nserror zbrowser_engine_options(struct nsoption_s *defaults) {
     nsoption_set_bool(block_advertisements, false);
     nsoption_set_bool(author_level_css, true);
     nsoption_set_bool(enable_javascript, true);
-    nsoption_set_int(script_timeout, 3);
+    nsoption_set_int(script_timeout, 10);
     nsoption_set_int(max_fetchers, 8);
     nsoption_set_int(max_fetchers_per_host, 4);
     nsoption_set_uint(max_retried_fetches, 0);
@@ -1891,6 +1900,9 @@ static void zbrowser_engine_release_content(void) {
     zbrowser_engine_content_needs_chrome = 0;
     zbrowser_engine_content_prepare_pending = 0;
     zbrowser_engine_content_rendered_once = 0;
+    zbrowser_engine_focused_text_control = 0;
+    zbrowser_engine_focused_text_len = 0;
+    zbrowser_engine_focused_text_value[0] = 0;
     zbrowser_engine_content_error_detail[0] = 0;
     zbrowser_lainos_schedule_clear();
     if (zbrowser_engine_content_url != 0) {
@@ -1951,6 +1963,7 @@ typedef struct {
     unsigned int boxes;
     unsigned int text_boxes;
     unsigned int text_bytes;
+    unsigned int styled_boxes;
     unsigned int object_boxes;
     unsigned int max_depth;
     unsigned int negative_boxes;
@@ -2020,6 +2033,8 @@ static void zbrowser_engine_count_box_tree(const struct box *box,
         }
         if (box->style != 0) {
             uint8_t display = css_computed_display(box->style, false);
+
+            ++stats->styled_boxes;
             if (display == CSS_DISPLAY_GRID ||
                 display == CSS_DISPLAY_INLINE_GRID) {
                 const struct box *grid_child;
@@ -2340,7 +2355,7 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
         zbrowser_engine_content->status == CONTENT_STATUS_ERROR) {
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS %s error act%u dc%u/%u %u>%u detail:%s sched%u js%u/%u jse%u/%u pc%u css%u/%u obj%u/%u http%u/%u fail%u tr%u st%u err%d bytes%u frm%u/%u/%u/%u",
+                 "NS %s error act%u dc%u/%u %u>%u detail:%s sched%u js%u/%u jse%u/%u pc%u css%u/%u obj%u/%u http%u/%u fail%u tr%u st%u err%d bytes%u frm%u/%u/%u/%u/%u",
                  phase != 0 ? phase : "content",
                  zbrowser_engine_content->active,
                  zbrowser_engine_content_data_complete_ok,
@@ -2367,6 +2382,7 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
                  zbrowser_lainos_net_http_last_bytes(),
                  zbrowser_engine_form_key_count,
                  zbrowser_engine_form_mouse_count,
+                 zbrowser_engine_form_focus_count,
                  zbrowser_lainos_navigation_creates(),
                  zbrowser_lainos_navigation_consumes());
         zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
@@ -2374,7 +2390,7 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
     }
     snprintf((char *)zbrowser_engine_status_detail,
              sizeof(zbrowser_engine_status_detail),
-             "NS %s %s(%d) act%u dc%u/%u %u>%u sched%u js%u/%u jse%u/%u p%u n%u i%u pc%u jt%u css%u/%u obj%u/%u box%u txt%u/%u objb%u ext%dx%d wh%dx%d http%u/%u fail%u tr%u hit%u/%u ce%u/%u/%u cb%u st%u err%d bytes%u img%u fb%u ie%u br%u/%u/%u frm%u/%u/%u/%u %s",
+             "NS %s %s(%d) act%u dc%u/%u %u>%u sched%u js%u/%u jse%u/%u p%u n%u i%u pc%u jt%u css%u/%u obj%u/%u box%u txt%u/%u objb%u ext%dx%d wh%dx%d http%u/%u fail%u tr%u hit%u/%u ce%u/%u/%u cb%u st%u err%d bytes%u img%u fb%u ie%u br%u/%u/%u frm%u/%u/%u/%u/%u %s",
              phase != 0 ? phase : "content",
              status_name,
              status_value,
@@ -2426,6 +2442,7 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
              zbrowser_lainos_net_bitmap_render_errors(),
              zbrowser_engine_form_key_count,
              zbrowser_engine_form_mouse_count,
+             zbrowser_engine_form_focus_count,
              zbrowser_lainos_navigation_creates(),
              zbrowser_lainos_navigation_consumes(),
              zbrowser_engine_content_error_detail);
@@ -2459,6 +2476,10 @@ static int zbrowser_engine_prepare_content_pipeline(const uint8_t *url,
     zbrowser_lainos_net_stats_reset();
     zbrowser_engine_form_key_count = 0;
     zbrowser_engine_form_mouse_count = 0;
+    zbrowser_engine_form_focus_count = 0;
+    zbrowser_engine_focused_text_control = 0;
+    zbrowser_engine_focused_text_len = 0;
+    zbrowser_engine_focused_text_value[0] = 0;
     zbrowser_engine_content_viewport_width = viewport_width;
     zbrowser_engine_content_viewport_height = viewport_height;
     error = nsurl_create(zbrowser_engine_url_for_nsurl(url),
@@ -2706,8 +2727,9 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
         zbrowser_engine_viewport_box_stats((int)x, y_offset, &clip, &box_stats);
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS blank box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u rect%u line%u path%u/%u poly%u/%u disc%u/%u arc%u/%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u tr%u hit%u ce%u/%u/%u img%u fb%u ie%u br%u/%u/%u st%u jse%u/%u frm%u/%u/%u/%u",
+                 "NS blank box%u sty%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u rect%u line%u path%u/%u poly%u/%u disc%u/%u arc%u/%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u tr%u hit%u ce%u/%u/%u img%u fb%u ie%u br%u/%u/%u st%u jse%u/%u frm%u/%u/%u/%u/%u",
                  box_stats.boxes,
+                 box_stats.styled_boxes,
                  box_stats.grid_boxes,
                  box_stats.largest_grid_x,
                  box_stats.largest_grid_y,
@@ -2769,6 +2791,7 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  zbrowser_lainos_js_execs(),
                  zbrowser_engine_form_key_count,
                  zbrowser_engine_form_mouse_count,
+                 zbrowser_engine_form_focus_count,
                  zbrowser_lainos_navigation_creates(),
                  zbrowser_lainos_navigation_consumes());
         zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
@@ -2779,8 +2802,9 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
         zbrowser_engine_viewport_box_stats((int)x, y_offset, &clip, &box_stats);
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS rendered box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txt%u/%u txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u ty%d..%d rect%u line%u path%u/%u poly%u/%u disc%u/%u arc%u/%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u tr%u hit%u ce%u/%u/%u img%u fb%u ie%u br%u/%u/%u st%u jse%u/%u frm%u/%u/%u/%u",
+                 "NS rendered box%u sty%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txt%u/%u txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u ty%d..%d rect%u line%u path%u/%u poly%u/%u disc%u/%u arc%u/%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u tr%u hit%u ce%u/%u/%u img%u fb%u ie%u br%u/%u/%u st%u jse%u/%u frm%u/%u/%u/%u/%u",
                  box_stats.boxes,
+                 box_stats.styled_boxes,
                  box_stats.grid_boxes,
                  box_stats.largest_grid_x,
                  box_stats.largest_grid_y,
@@ -2846,6 +2870,7 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  zbrowser_lainos_js_execs(),
                  zbrowser_engine_form_key_count,
                  zbrowser_engine_form_mouse_count,
+                 zbrowser_engine_form_focus_count,
                  zbrowser_lainos_navigation_creates(),
                  zbrowser_lainos_navigation_consumes());
         zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
@@ -2951,6 +2976,10 @@ void zbrowser_engine_invalidate_cache_c(void) {
     zbrowser_lainos_net_stats_reset();
     zbrowser_engine_form_key_count = 0;
     zbrowser_engine_form_mouse_count = 0;
+    zbrowser_engine_form_focus_count = 0;
+    zbrowser_engine_focused_text_control = 0;
+    zbrowser_engine_focused_text_len = 0;
+    zbrowser_engine_focused_text_value[0] = 0;
     zbrowser_engine_content_source_html = 0;
     zbrowser_engine_content_source_size = 0;
     zbrowser_engine_content_source_url[0] = 0;
@@ -5561,13 +5590,292 @@ int netsurf_browser_poll(void) {
     return zbrowser_engine_poll();
 }
 
+static int zbrowser_engine_focus_text_control_at(int content_x, int content_y) {
+#if defined(ZBROWSER_ENGINE_ENABLE_DOM) && defined(ZBROWSER_ENGINE_USE_NETSURF_CONTENT)
+    html_content *html;
+    struct box *box;
+    struct box *hit_box;
+    struct box *next_box;
+    struct form *form;
+    struct form_control *control;
+    struct form_control *nearest_control;
+    uint32_t text_controls;
+    uint32_t logged;
+    int box_x;
+    int box_y;
+    int nearest_distance;
+
+    if (zbrowser_engine_content == 0) {
+        return 0;
+    }
+    html = (html_content *)zbrowser_engine_content;
+    if (html->layout == 0) {
+        debug_puts("zbrowser form-focus-no-layout\n");
+        return 0;
+    }
+    logged = 0;
+    text_controls = 0;
+    nearest_control = 0;
+    nearest_distance = 2147483647;
+    debug_puts("zbrowser form-focus-scan ");
+    debug_put_dec64((uint64_t)(uint32_t)content_x);
+    debug_puts(",");
+    debug_put_dec64((uint64_t)(uint32_t)content_y);
+    debug_puts("\n");
+
+    box = html->layout;
+    box_x = 0;
+    box_y = 0;
+    while ((next_box = box_at_point(&html->unit_len_ctx,
+                                    box,
+                                    content_x,
+                                    content_y,
+                                    &box_x,
+                                    &box_y)) != 0) {
+        box = next_box;
+        hit_box = box;
+        while (hit_box != 0) {
+            if (hit_box->gadget != 0 &&
+                (hit_box->gadget->type == GADGET_TEXTBOX ||
+                 hit_box->gadget->type == GADGET_PASSWORD ||
+                 hit_box->gadget->type == GADGET_TEXTAREA) &&
+                hit_box->gadget->data.text.ta != 0) {
+                union html_focus_owner focus_owner;
+
+                debug_puts("zbrowser form-focus-box-hit\n");
+                focus_owner.textarea = hit_box->gadget->box;
+                html_set_focus(html,
+                               HTML_FOCUS_TEXTAREA,
+                               focus_owner,
+                               false,
+                               0,
+                               0,
+                               0,
+                               0);
+                (void)textarea_set_caret(hit_box->gadget->data.text.ta,
+                                         (int)strlen(hit_box->gadget->value != 0 ?
+                                                     hit_box->gadget->value :
+                                                     ""));
+                zbrowser_engine_content_needs_redraw = 1;
+                zbrowser_engine_focused_text_control = hit_box->gadget;
+                zbrowser_engine_focused_text_len = 0;
+                if (hit_box->gadget->value != 0) {
+                    while (hit_box->gadget->value[zbrowser_engine_focused_text_len] != 0 &&
+                           zbrowser_engine_focused_text_len + 1u < sizeof(zbrowser_engine_focused_text_value)) {
+                        zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] =
+                            hit_box->gadget->value[zbrowser_engine_focused_text_len];
+                        ++zbrowser_engine_focused_text_len;
+                    }
+                }
+                zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] = 0;
+                ++zbrowser_engine_form_focus_count;
+                return 1;
+            }
+            hit_box = hit_box->parent;
+        }
+    }
+
+    for (form = html->forms; form != 0; form = form->prev) {
+        for (control = form->controls; control != 0; control = control->next) {
+            struct rect r;
+            struct rect expanded;
+            union html_focus_owner focus_owner;
+            int dx;
+            int dy;
+            int distance;
+
+            if ((control->type != GADGET_TEXTBOX &&
+                 control->type != GADGET_PASSWORD &&
+                 control->type != GADGET_TEXTAREA) ||
+                control->box == 0 ||
+                control->data.text.ta == 0) {
+                continue;
+            }
+            ++text_controls;
+            box_bounds(control->box, &r);
+            if (logged < 6u) {
+                debug_puts("zbrowser form-text-rect ");
+                debug_put_dec64((uint64_t)control->type);
+                debug_puts(" ");
+                debug_put_dec64((uint64_t)(uint32_t)r.x0);
+                debug_puts(",");
+                debug_put_dec64((uint64_t)(uint32_t)r.y0);
+                debug_puts("..");
+                debug_put_dec64((uint64_t)(uint32_t)r.x1);
+                debug_puts(",");
+                debug_put_dec64((uint64_t)(uint32_t)r.y1);
+                debug_puts("\n");
+                ++logged;
+            }
+            expanded = r;
+            expanded.x0 -= 16;
+            expanded.y0 -= 16;
+            expanded.x1 += 16;
+            expanded.y1 += 16;
+            dx = 0;
+            dy = 0;
+            if (content_x < r.x0) {
+                dx = r.x0 - content_x;
+            } else if (content_x >= r.x1) {
+                dx = content_x - r.x1 + 1;
+            }
+            if (content_y < r.y0) {
+                dy = r.y0 - content_y;
+            } else if (content_y >= r.y1) {
+                dy = content_y - r.y1 + 1;
+            }
+            distance = dx + dy;
+            if (distance < nearest_distance) {
+                nearest_distance = distance;
+                nearest_control = control;
+            }
+            if (!(content_x >= r.x0 &&
+                  content_x < r.x1 &&
+                  content_y >= r.y0 &&
+                  content_y < r.y1) &&
+                !(content_x >= expanded.x0 &&
+                  content_x < expanded.x1 &&
+                  content_y >= expanded.y0 &&
+                  content_y < expanded.y1)) {
+                continue;
+            }
+            debug_puts("zbrowser form-focus-hit\n");
+            focus_owner.textarea = control->box;
+            html_set_focus(html, HTML_FOCUS_TEXTAREA, focus_owner, false, 0, 0, 0, 0);
+            (void)textarea_set_caret(control->data.text.ta,
+                                     (int)strlen(control->value != 0 ?
+                                                 control->value :
+                                                 ""));
+            zbrowser_engine_content_needs_redraw = 1;
+            zbrowser_engine_focused_text_control = control;
+            zbrowser_engine_focused_text_len = 0;
+            if (control->value != 0) {
+                while (control->value[zbrowser_engine_focused_text_len] != 0 &&
+                       zbrowser_engine_focused_text_len + 1u < sizeof(zbrowser_engine_focused_text_value)) {
+                    zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] =
+                        control->value[zbrowser_engine_focused_text_len];
+                    ++zbrowser_engine_focused_text_len;
+                }
+            }
+            zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] = 0;
+            ++zbrowser_engine_form_focus_count;
+            return 1;
+        }
+    }
+    debug_puts("zbrowser form-focus-miss controls ");
+    debug_put_dec64((uint64_t)text_controls);
+    debug_puts(" nearest ");
+    debug_put_dec64((uint64_t)(uint32_t)nearest_distance);
+    debug_puts("\n");
+    if (nearest_control != 0 && nearest_distance <= 48) {
+        union html_focus_owner focus_owner;
+
+        debug_puts("zbrowser form-focus-nearest-hit\n");
+        focus_owner.textarea = nearest_control->box;
+        html_set_focus(html, HTML_FOCUS_TEXTAREA, focus_owner, false, 0, 0, 0, 0);
+        (void)textarea_set_caret(nearest_control->data.text.ta,
+                                 (int)strlen(nearest_control->value != 0 ?
+                                             nearest_control->value :
+                                             ""));
+        zbrowser_engine_content_needs_redraw = 1;
+        zbrowser_engine_focused_text_control = nearest_control;
+        zbrowser_engine_focused_text_len = 0;
+        if (nearest_control->value != 0) {
+            while (nearest_control->value[zbrowser_engine_focused_text_len] != 0 &&
+                   zbrowser_engine_focused_text_len + 1u < sizeof(zbrowser_engine_focused_text_value)) {
+                zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] =
+                    nearest_control->value[zbrowser_engine_focused_text_len];
+                ++zbrowser_engine_focused_text_len;
+            }
+        }
+        zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] = 0;
+        ++zbrowser_engine_form_focus_count;
+        return 1;
+    }
+#else
+    (void)content_x;
+    (void)content_y;
+#endif
+    return 0;
+}
+
+static char *zbrowser_engine_strdup_local(const char *value) {
+    size_t len;
+    char *copy;
+
+    if (value == 0) {
+        value = "";
+    }
+    len = strlen(value);
+    copy = malloc(len + 1u);
+    if (copy == 0) {
+        return 0;
+    }
+    memcpy(copy, value, len + 1u);
+    return copy;
+}
+
+static int zbrowser_engine_focused_text_key(uint32_t key) {
+#if defined(ZBROWSER_ENGINE_ENABLE_DOM) && defined(ZBROWSER_ENGINE_USE_NETSURF_CONTENT)
+    char *copy;
+
+    if (zbrowser_engine_focused_text_control == 0 ||
+        zbrowser_engine_focused_text_control->data.text.ta == 0) {
+        return 0;
+    }
+    if (key == 13 || key == 10) {
+        if (zbrowser_engine_focused_text_control->form != 0 &&
+            form_submit(content_get_url(zbrowser_engine_content),
+                        ((html_content *)zbrowser_engine_content)->bw,
+                        zbrowser_engine_focused_text_control->form,
+                        0) == NSERROR_OK) {
+            zbrowser_engine_content_needs_redraw = 1;
+            return 1;
+        }
+        return 0;
+    }
+    if (key == 8 || key == 127) {
+        if (zbrowser_engine_focused_text_len > 0) {
+            --zbrowser_engine_focused_text_len;
+            zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] = 0;
+        }
+    } else if (key >= 32 && key <= 126) {
+        if (zbrowser_engine_focused_text_len + 1u >= sizeof(zbrowser_engine_focused_text_value)) {
+            return 1;
+        }
+        zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] = (char)key;
+        ++zbrowser_engine_focused_text_len;
+        zbrowser_engine_focused_text_value[zbrowser_engine_focused_text_len] = 0;
+    } else {
+        return 0;
+    }
+    copy = zbrowser_engine_strdup_local(zbrowser_engine_focused_text_value);
+    if (copy != 0) {
+        form_gadget_update_value(zbrowser_engine_focused_text_control, copy);
+    }
+    (void)textarea_set_text(zbrowser_engine_focused_text_control->data.text.ta,
+                            zbrowser_engine_focused_text_value);
+    (void)textarea_set_caret(zbrowser_engine_focused_text_control->data.text.ta,
+                             (int)zbrowser_engine_focused_text_len);
+    zbrowser_engine_content_needs_redraw = 1;
+    return 1;
+#else
+    (void)key;
+    return 0;
+#endif
+}
+
 int netsurf_browser_key_event(uint32_t key) {
 #if defined(ZBROWSER_ENGINE_ENABLE_DOM) && defined(ZBROWSER_ENGINE_USE_NETSURF_CONTENT)
+    debug_puts("zbrowser form-key ");
+    debug_put_dec64((uint64_t)key);
+    debug_puts("\n");
     if (zbrowser_engine_content == 0 ||
         (zbrowser_engine_content->status != CONTENT_STATUS_READY &&
          zbrowser_engine_content->status != CONTENT_STATUS_DONE) ||
         zbrowser_engine_content->handler == 0 ||
         zbrowser_engine_content->handler->keypress == 0) {
+        debug_puts("zbrowser form-key-unavailable\n");
         return 0;
     }
     if (zbrowser_engine_content_opened == 0 &&
@@ -5580,10 +5888,29 @@ int netsurf_browser_key_event(uint32_t key) {
     }
     zbrowser_engine_content_opened = 1;
     ++zbrowser_engine_form_key_count;
+    if (zbrowser_engine_focused_text_control != 0 &&
+        zbrowser_engine_focused_text_control->box != 0 &&
+        zbrowser_engine_focused_text_control->data.text.ta != 0) {
+        debug_puts("zbrowser form-key-focused\n");
+        if (zbrowser_engine_focused_text_key(key) != 0) {
+            debug_puts("zbrowser form-key-bridge-ok\n");
+            return 1;
+        }
+        if (box_textarea_keypress((html_content *)zbrowser_engine_content,
+                                  zbrowser_engine_focused_text_control->box,
+                                  key) == NSERROR_OK) {
+            debug_puts("zbrowser form-key-direct-ok\n");
+            zbrowser_engine_content_needs_redraw = 1;
+            return 1;
+        }
+        debug_puts("zbrowser form-key-direct-fail\n");
+    }
     if (zbrowser_engine_content->handler->keypress(zbrowser_engine_content, key)) {
+        debug_puts("zbrowser form-key-handler-ok\n");
         zbrowser_engine_content_needs_redraw = 1;
         return 1;
     }
+    debug_puts("zbrowser form-key-unhandled\n");
 #else
     (void)key;
 #endif
@@ -5625,6 +5952,7 @@ int netsurf_browser_mouse_html_view(const zbrowser_engine_view_t *view,
     if (zbrowser_engine_content->handler->mouse_action == 0) {
         return 0;
     }
+    (void)zbrowser_engine_focus_text_control_at(content_x, content_y);
     ++zbrowser_engine_form_mouse_count;
     if (zbrowser_engine_content->handler->mouse_action(
             zbrowser_engine_content,

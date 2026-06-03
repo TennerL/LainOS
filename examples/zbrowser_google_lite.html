@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Google Lite</title>
+<style>
+body {
+  background: #ffffff;
+  color: #202124;
+  font-family: sans-serif;
+}
+.search-page {
+  margin: 42px auto;
+  width: 640px;
+  text-align: center;
+}
+.logo {
+  margin: 8px auto 26px;
+  font-size: 58px;
+  font-weight: bold;
+}
+.g-blue { color: #4285f4; }
+.g-red { color: #ea4335; }
+.g-yellow { color: #fbbc05; }
+.g-green { color: #34a853; }
+.search-box {
+  width: 520px;
+  padding: 12px;
+  border: 2px solid #dadce0;
+  background: #ffffff;
+  color: #202124;
+  font-size: 20px;
+}
+.actions {
+  margin-top: 22px;
+}
+button {
+  margin: 4px;
+  padding: 10px 18px;
+  border: 1px solid #dadce0;
+  background: #f8f9fa;
+  color: #202124;
+  font-size: 16px;
+}
+.hint {
+  margin-top: 24px;
+  color: #5f6368;
+}
+</style>
+</head>
+<body>
+<main class="search-page">
+<div class="logo">
+<span class="g-blue">G</span><span class="g-red">o</span><span class="g-yellow">o</span><span class="g-blue">g</span><span class="g-green">l</span><span class="g-red">e</span>
+</div>
+<form method="get" action="zbrowser_form_result.html">
+<input class="search-box" type="text" name="q" value="" autofocus>
+<div class="actions">
+<button type="submit" name="btnK" value="Google Search">Google Search</button>
+<button type="submit" name="btnI" value="Feeling Lucky">I'm Feeling Lucky</button>
+</div>
+</form>
+<p class="hint">Static search repro: no JavaScript required, GET submit required.</p>
+</main>
+</body>
+</html>
