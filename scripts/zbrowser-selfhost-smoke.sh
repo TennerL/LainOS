@@ -444,6 +444,7 @@ ramdisk_seed_args+=(
 )
 build/tools/ramdisk_seed_gen build/ramdisk_seed.h "${ramdisk_seed_args[@]}" >/dev/null
 restore_ramdisk_seed=1
+rm -f build/kernel/ui/shell.o build/kernel.elf build/kernel.bin build/boot.iso build/image/kernel.elf
 make build/boot.iso
 cp build/data.img "$smoke_img"
 cp "$ovmf_vars" "$smoke_vars"

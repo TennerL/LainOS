@@ -1,4 +1,5 @@
 examples/browser_c_probe/include/zbrowser_engine_abi.h
+examples/browser_c_probe/include/curl/curl.h
 examples/browser_c_probe/src/zbrowser_engine_bridge.c
 examples/browser_c_probe/src/zbrowser_engine_platform.c
 kernel/include/zlib.h

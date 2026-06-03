@@ -6,6 +6,23 @@ cd "$repo_root"
 
 source scripts/zbuild-host-lib.sh
 
+check_clean_third_party_submodule() {
+  local path="$1"
+  local status
+
+  status="$(git -C "$path" status --porcelain)"
+  if [ -n "$status" ]; then
+    printf 'zbrowser-compile-smoke: third-party dependency has local changes: %s\n' "$path" >&2
+    printf '%s\n' "$status" >&2
+    exit 1
+  fi
+}
+
+check_clean_third_party_submodule third_party/netsurf/src/libcss
+check_clean_third_party_submodule third_party/netsurf/src/libdom
+check_clean_third_party_submodule third_party/netsurf/src/libparserutils
+check_clean_third_party_submodule third_party/netsurf/src/netsurf
+
 mkdir -p build/zbrowser-smoke
 mkdir -p build/zbrowser-smoke/all-manifests
 mkdir -p build/zbrowser-smoke/all-installs

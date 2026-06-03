@@ -1,0 +1,6 @@
+#ifndef ZBROWSER_BROWSER_C_PROBE_CURL_CURL_H
+#define ZBROWSER_BROWSER_C_PROBE_CURL_CURL_H
+
+typedef void CURLM;
+
+#endif

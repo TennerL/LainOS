@@ -122,11 +122,11 @@ with open(output_path, "rb") as package:
             chunk.write(data)
         index += 1
 PY
-for chunk in "$package_root"/zbrowser_netsurf.zp??; do
+for chunk in "$package_root"/zbrowser_netsurf.zp[0-9][0-9]; do
   [[ -f "$chunk" ]] || continue
   printf '%s=examples/%s\n' "$chunk" "$(basename "$chunk")" >>"$seed_args"
 done
-for chunk in "$package_root"/zbrowser_netsurf.zp??; do
+for chunk in "$package_root"/zbrowser_netsurf.zp[0-9][0-9]; do
   [[ -f "$chunk" ]] || continue
   printf 'cp R:/examples/%s %s\n' "$(basename "$chunk")" "$(basename "$chunk")" >>"$copy_script"
 done

@@ -323,7 +323,6 @@ extern uint32_t gfx_get_pixel(uint32_t x, uint32_t y);
 extern uint32_t gfx_width(void);
 extern uint32_t gfx_height(void);
 extern int zbrowser_lainos_consume_navigation(uint8_t *out, uint32_t capacity);
-extern const char *zbrowser_netsurf_box_construct_last_error;
 
 static nserror zbrowser_engine_options(struct nsoption_s *defaults) {
     (void)defaults;
@@ -1768,9 +1767,8 @@ static void zbrowser_engine_content_user(struct content *content,
             : "";
         if ((error_msg == 0 || error_msg[0] == 0) &&
             data != 0 &&
-            data->errordata.errorcode == NSERROR_BOX_CONVERT &&
-            zbrowser_netsurf_box_construct_last_error != 0) {
-            error_msg = zbrowser_netsurf_box_construct_last_error;
+            data->errordata.errorcode == NSERROR_BOX_CONVERT) {
+            error_msg = "box conversion";
         }
         zbrowser_engine_content_needs_redraw = 1;
         snprintf(zbrowser_engine_content_error_detail,
@@ -3036,13 +3034,9 @@ static int zbrowser_engine_prepare_html_layout(const uint8_t *url,
         zbrowser_engine_html.layout == 0) {
         zbrowser_engine_status_text = zbrowser_engine_detail_status(
             "NetSurf HTML layout failed: DOM to box conversion",
-            zbrowser_netsurf_box_construct_last_error != 0
-                ? " (" : "",
-            zbrowser_netsurf_box_construct_last_error != 0
-                ? zbrowser_netsurf_box_construct_last_error
-                : "; DOM painter fallback",
-            zbrowser_netsurf_box_construct_last_error != 0
-                ? "); DOM painter fallback" : 0,
+            "; DOM painter fallback",
+            0,
+            0,
             0);
         return -1;
     }

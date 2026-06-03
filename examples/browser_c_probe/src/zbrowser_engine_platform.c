@@ -4639,7 +4639,7 @@ void fetch_change_callback(struct fetch *fetch, fetch_callback callback, void *p
 static unsigned int zbrowser_lainos_real_fetch_pending_count;
 
 unsigned int zbrowser_lainos_fetch_pending_count(void) {
-    return fetch_active_count() + fetch_queued_count();
+    return zbrowser_lainos_real_fetch_pending_count;
 }
 
 unsigned int zbrowser_lainos_pump_fetchers(void) {
