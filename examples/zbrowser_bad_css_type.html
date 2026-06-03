@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Bad CSS Type Smoke</title>
+<link rel="stylesheet" href="styles/zbrowser_not_css.html">
+<style>
+body {
+  background: #f6f8fa;
+  color: #202122;
+}
+.frame {
+  margin: 12px;
+  padding: 16px;
+  border: 2px solid #475569;
+  background: #ffffff;
+}
+.label {
+  display: inline-block;
+  padding: 3px 6px;
+  border: 1px solid #9a3412;
+  color: #9a3412;
+}
+</style>
+</head>
+<body>
+<div class="frame">
+<h1>Bad CSS Type Smoke</h1>
+<p><span class="label">type reject expected</span> The linked stylesheet URL is HTML, not CSS.</p>
+<img src="styles/zbrowser_not_css.html" width="96" height="48" alt="bad image type">
+</div>
+</body>
+</html>

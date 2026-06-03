@@ -220,6 +220,9 @@ zcc ../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/nsurl.c src/selfhos
 zcc ../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/parse.c src/selfhost_nsurl_parse.zo
 zcc ../browser_c/third_party/netsurf/src/netsurf/utils/corestrings.c src/selfhost_corestrings.zo
 zcc ../browser_c/third_party/netsurf/src/netsurf/content/handlers/css/internal.c src/selfhost_css_internal.zo
+zcc ../browser_c/third_party/netsurf/src/netsurf/content/handlers/html/font.c src/selfhost_html_font.zo
+zcc ../browser_c/third_party/netsurf/src/netsurf/content/handlers/html/redraw_border.c src/selfhost_html_redraw_border.zo
+zcc src/browser_c_tier5_border_smoke.c src/selfhost_tier5_border_smoke.zo
 ztest tier5
 ztest http_chal
 ztest http_wa
@@ -320,7 +323,12 @@ browser_c_seed_paths=(
   third_party/netsurf/src/netsurf/utils/nsurl/private.h
   third_party/netsurf/src/netsurf/content/handlers/css/internal.c
   third_party/netsurf/src/netsurf/content/handlers/css/internal.h
+  third_party/netsurf/src/netsurf/content/handlers/css/utils.h
+  third_party/netsurf/src/netsurf/content/handlers/html/font.c
+  third_party/netsurf/src/netsurf/content/handlers/html/font.h
+  third_party/netsurf/src/netsurf/content/handlers/html/redraw_border.c
   third_party/netsurf/src/netsurf/desktop/browser_private.h
+  third_party/netsurf/src/netsurf/desktop/options.h
   third_party/netsurf/src/netsurf/desktop/frame_types.h
   third_party/netsurf/src/netsurf/desktop/mouse.c
   third_party/netsurf/src/netsurf/desktop/plot_style.c
@@ -337,8 +345,10 @@ browser_c_seed_paths=(
   third_party/netsurf/src/netsurf/include/netsurf/console.h
   third_party/netsurf/src/netsurf/include/netsurf/css.h
   third_party/netsurf/src/netsurf/include/netsurf/mouse.h
+  third_party/netsurf/src/netsurf/include/netsurf/plot_style.h
   third_party/netsurf/src/netsurf/include/netsurf/plotters.h
   third_party/netsurf/src/netsurf/include/netsurf/ssl_certs.h
+  third_party/netsurf/src/netsurf/include/netsurf/types.h
   third_party/netsurf/src/netsurf/include/netsurf/utf8.h
   third_party/netsurf/src/netsurf/test/testament.h
   third_party/netsurf/src/libdom/include/dom/dom.h
@@ -383,8 +393,13 @@ browser_c_seed_paths=(
   third_party/netsurf/src/libdom/src/utils/validate.h
   third_party/netsurf/src/libdom/src/utils/character_valid.h
   third_party/netsurf/src/libhubbub/include/hubbub/errors.h
+  third_party/netsurf/src/libcss/include/libcss/computed.h
   third_party/netsurf/src/libcss/include/libcss/libcss.h
   third_party/netsurf/src/libcss/include/libcss/errors.h
+  third_party/netsurf/src/libcss/include/libcss/fpmath.h
+  third_party/netsurf/src/libcss/include/libcss/properties.h
+  third_party/netsurf/src/libcss/include/libcss/types.h
+  third_party/netsurf/src/libcss/include/libcss/unit.h
   third_party/netsurf/src/libparserutils/include/parserutils/charset/utf8.h
 )
 ramdisk_seed_args=(
@@ -577,7 +592,7 @@ check_serial_success() {
     exit 1
   fi
 
-  if ! grep -q 'zbuild: linked 12 object(s) to browser_c_tier5.bin' "$serial_log" ||
+  if ! grep -q 'zbuild: linked 15 object(s) to browser_c_tier5.bin' "$serial_log" ||
      ! grep -q 'ztest: running browser_c_tier5.bin' "$serial_log"; then
     printf 'zbrowser self-host smoke: expected tier5 browser C guest-compiled unit success output\n' >&2
     tail -n 120 "$serial_log" >&2 || true
@@ -769,6 +784,9 @@ check_file "browser_c_probe/src/selfhost_nsurl_core.zo"
 check_file "browser_c_probe/src/selfhost_nsurl_parse.zo"
 check_file "browser_c_probe/src/selfhost_corestrings.zo"
 check_file "browser_c_probe/src/selfhost_css_internal.zo"
+check_file "browser_c_probe/src/selfhost_html_font.zo"
+check_file "browser_c_probe/src/selfhost_html_redraw_border.zo"
+check_file "browser_c_probe/src/selfhost_tier5_border_smoke.zo"
 check_file "browser_c_probe/browser_c_first_unit.bin"
 check_file "browser_c_probe/first_unit.buildlog"
 check_file "browser_c_probe/first_unit.testlog"
@@ -863,7 +881,7 @@ check_log_contains "browser_c_probe/tier4.buildlog" '^objects 24$' "browser C ti
 check_log_contains "browser_c_probe/tier4.buildlog" '^status ok$' "browser C tier4 build log"
 check_log_contains "browser_c_probe/tier4.testlog" '^result 0$' "browser C tier4 test log"
 check_log_contains "browser_c_probe/tier4.testlog" '^status ok$' "browser C tier4 test log"
-check_log_contains "browser_c_probe/tier5.buildlog" '^objects 12$' "browser C tier5 build log"
+check_log_contains "browser_c_probe/tier5.buildlog" '^objects 15$' "browser C tier5 build log"
 check_log_contains "browser_c_probe/tier5.buildlog" '^status ok$' "browser C tier5 build log"
 check_log_contains "browser_c_probe/tier5.testlog" '^result 0$' "browser C tier5 test log"
 check_log_contains "browser_c_probe/tier5.testlog" '^status ok$' "browser C tier5 test log"

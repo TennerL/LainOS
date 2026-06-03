@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Bad Image Smoke</title>
+<style>
+body {
+  background: #ffffff;
+  color: #1f2933;
+}
+.frame {
+  width: 360px;
+  margin: 12px auto;
+  padding: 14px;
+  border: 2px solid #415a77;
+  background: #f7fafc;
+}
+.label {
+  color: #7b341e;
+}
+img {
+  display: block;
+  width: 96px;
+  height: 64px;
+  margin-top: 10px;
+  border: 1px solid #718096;
+}
+</style>
+</head>
+<body>
+<div class="frame">
+<p class="label">Invalid PNG should render through image fallback:</p>
+<img src="styles/zbrowser_bad_image.png" width="96" height="64" alt="invalid image">
+</div>
+</body>
+</html>

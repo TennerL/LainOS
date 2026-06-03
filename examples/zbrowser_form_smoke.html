@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Form Smoke</title>
+<style>
+body {
+  background: #f6f8fa;
+  color: #17202a;
+  font-family: sans-serif;
+}
+.page-shell {
+  margin: 24px;
+  padding: 18px;
+  background: #ffffff;
+  border: 4px solid #475569;
+}
+h1 {
+  margin: 0 0 12px;
+  color: #1f4f7a;
+}
+.field-row {
+  margin: 12px 0;
+  padding: 8px;
+  border: 2px solid #c7d2fe;
+  background: #eef2ff;
+}
+label {
+  display: block;
+  margin: 6px 0;
+}
+input, textarea, select, button {
+  font-size: 18px;
+  margin: 6px 0;
+  padding: 6px;
+  border: 2px solid #334155;
+  background: #ffffff;
+  color: #111827;
+}
+textarea {
+  width: 360px;
+  height: 70px;
+}
+button {
+  background: #0f766e;
+  color: #ffffff;
+}
+.expected-state {
+  color: #7c2d12;
+}
+</style>
+</head>
+<body>
+<main class="page-shell">
+<h1>Z Browser Form Smoke</h1>
+<p class="expected-state">Expected: focus, typing, checkbox/radio/select updates, then GET submit.</p>
+<form method="get" action="zbrowser_form_result.html">
+<div class="field-row">
+<label for="q">Search text</label>
+<input id="q" name="q" type="text" value="lain">
+</div>
+<div class="field-row">
+<label for="notes">Notes textarea</label>
+<textarea id="notes" name="notes">forms work</textarea>
+</div>
+<div class="field-row">
+<label><input type="checkbox" name="agree" value="yes"> Agree checkbox</label>
+<label><input type="radio" name="mode" value="basic" checked> Basic radio</label>
+<label><input type="radio" name="mode" value="advanced"> Advanced radio</label>
+</div>
+<div class="field-row">
+<label for="scope">Scope select</label>
+<select id="scope" name="scope">
+<option value="articles">Articles</option>
+<option value="images">Images</option>
+</select>
+</div>
+<button type="submit" name="submitted" value="1">Submit form</button>
+</form>
+</main>
+</body>
+</html>

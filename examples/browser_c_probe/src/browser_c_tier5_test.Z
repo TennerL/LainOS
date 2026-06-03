@@ -4,6 +4,82 @@ struct lwc_string_s {
     uint32_t hash;
     uint32_t refcnt;
 };
+struct css_computed_style_s {
+    uint32_t opaque;
+};
+struct css_unit_ctx_s {
+    int32_t viewport_width;
+    int32_t viewport_height;
+    int32_t font_size_default;
+    int32_t font_size_minimum;
+    int32_t device_dpi;
+};
+struct plot_font_style_s {
+    uint8_t **families;
+    int family;
+    int size;
+    int weight;
+    int flags;
+    uint32_t background;
+    uint32_t foreground;
+};
+struct nsoption_slot_s {
+    uint8_t *key;
+    int key_len;
+    int type;
+    int value_i;
+    int value_pad;
+};
+struct rect_s {
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+};
+struct plot_style_s {
+    int stroke_type;
+    int stroke_width;
+    uint32_t stroke_colour;
+    int fill_type;
+    uint32_t fill_colour;
+};
+struct redraw_context_s;
+struct plotter_table_s {
+    int (*clip)(struct redraw_context_s *ctx, struct rect_s *clip);
+    int (*arc)(struct redraw_context_s *ctx);
+    int (*disc)(struct redraw_context_s *ctx);
+    int (*line)(struct redraw_context_s *ctx, struct plot_style_s *style, struct rect_s *line);
+    int (*rectangle)(struct redraw_context_s *ctx, struct plot_style_s *style, struct rect_s *rect);
+    int (*polygon)(struct redraw_context_s *ctx, struct plot_style_s *style, int *p, uint32_t n);
+    int (*path)(struct redraw_context_s *ctx);
+    int (*bitmap)(struct redraw_context_s *ctx);
+    int (*text)(struct redraw_context_s *ctx);
+    int (*group_start)(struct redraw_context_s *ctx, uint8_t *name);
+    int (*group_end)(struct redraw_context_s *ctx);
+    int (*flush)(struct redraw_context_s *ctx);
+    uint8_t option_knockout;
+};
+struct redraw_context_s {
+    uint8_t interactive;
+    uint8_t background_images;
+    uint8_t pad[6];
+    struct plotter_table_s *plot;
+    uint8_t *priv;
+};
+struct box_border_s {
+    int style;
+    uint32_t c;
+    int width;
+};
+struct tier5_box_s {
+    uint8_t pad0[120];
+    int x;
+    int y;
+    int width;
+    int height;
+    uint8_t pad1[48];
+    struct box_border_s border[4];
+};
 extern int corestrings_init(void);
 extern int corestrings_fini(void);
 extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);
@@ -11,6 +87,48 @@ extern uint8_t *lwc_string_data(struct lwc_string_s *str);
 extern uint64_t lwc_string_length(struct lwc_string_s *str);
 extern void lwc_string_unref(struct lwc_string_s *str);
 extern int nscss_resolve_url(uint8_t *pw, const uint8_t *base, struct lwc_string_s *rel, struct lwc_string_s **abs);
+extern void font_plot_style_from_css(struct css_unit_ctx_s *unit_len_ctx, struct css_computed_style_s *css, struct plot_font_style_s *fstyle);
+extern int tier5_html_redraw_border_smoke(void);
+
+global struct nsoption_slot_s tier5_nsoptions_storage[10];
+global struct nsoption_slot_s *nsoptions;
+global int tier5_border_rect_count;
+global int tier5_border_poly_count;
+global int tier5_border_line_count;
+global struct rect_s tier5_last_rect;
+global uint32_t tier5_last_fill;
+
+export uint8_t css_computed_font_family(struct css_computed_style_s *style, uint8_t ***names) {
+    *names = (uint8_t **)0;
+    return 5;
+}
+
+export uint8_t css_computed_font_size(struct css_computed_style_s *style, int32_t *length, int *unit) {
+    *length = 12288;
+    *unit = 0;
+    return 10;
+}
+
+export uint8_t css_computed_font_weight(struct css_computed_style_s *style) {
+    return 11;
+}
+
+export uint8_t css_computed_font_style(struct css_computed_style_s *style) {
+    return 2;
+}
+
+export uint8_t css_computed_font_variant(struct css_computed_style_s *style) {
+    return 2;
+}
+
+export uint8_t css_computed_color(struct css_computed_style_s *style, uint32_t *color) {
+    *color = 4281558681;
+    return 1;
+}
+
+export int32_t css_unit_font_size_len2pt(struct css_computed_style_s *style, struct css_unit_ctx_s *ctx, int32_t length, int unit) {
+    return length;
+}
 
 uint8_t str_eq_len(uint8_t *a, uint64_t a_len, uint8_t *b) {
     uint64_t i;
@@ -30,13 +148,67 @@ uint8_t str_eq_len(uint8_t *a, uint64_t a_len, uint8_t *b) {
     return 1;
 }
 
+int tier5_plot_ok_clip(struct redraw_context_s *ctx, struct rect_s *clip) {
+    return 0;
+}
+
+int tier5_plot_ok1(struct redraw_context_s *ctx) {
+    return 0;
+}
+
+int tier5_plot_line(struct redraw_context_s *ctx, struct plot_style_s *style, struct rect_s *line) {
+    tier5_border_line_count = tier5_border_line_count + 1;
+    return 0;
+}
+
+int tier5_plot_rectangle(struct redraw_context_s *ctx, struct plot_style_s *style, struct rect_s *rect) {
+    tier5_border_rect_count = tier5_border_rect_count + 1;
+    tier5_last_rect.x0 = rect->x0;
+    tier5_last_rect.y0 = rect->y0;
+    tier5_last_rect.x1 = rect->x1;
+    tier5_last_rect.y1 = rect->y1;
+    tier5_last_fill = style->fill_colour;
+    return 0;
+}
+
+int tier5_plot_polygon(struct redraw_context_s *ctx, struct plot_style_s *style, int *p, uint32_t n) {
+    tier5_border_poly_count = tier5_border_poly_count + 1;
+    return 0;
+}
+
+int tier5_plot_ok_group_start(struct redraw_context_s *ctx, uint8_t *name) {
+    return 0;
+}
+
+int tier5_plot_ok_group_end(struct redraw_context_s *ctx) {
+    return 0;
+}
+
+int tier5_plot_ok_flush(struct redraw_context_s *ctx) {
+    return 0;
+}
+
+uint8_t run_redraw_border_smoke(void) {
+    if (tier5_html_redraw_border_smoke() != 1) {
+        return 0;
+    }
+    return 1;
+}
+
 int main(void) {
     struct lwc_string_s *rel;
     struct lwc_string_s *abs;
+    struct css_unit_ctx_s unit_ctx;
+    struct css_computed_style_s css_style;
+    struct plot_font_style_s font_style;
+    struct nsoption_slot_s *font_min_option;
     int rc;
 
     rel = (struct lwc_string_s *)0;
     abs = (struct lwc_string_s *)0;
+    nsoptions = tier5_nsoptions_storage;
+    font_min_option = tier5_nsoptions_storage + 9;
+    font_min_option->value_i = 85;
 
     rc = corestrings_init();
     if (rc != 0) {
@@ -70,8 +242,41 @@ int main(void) {
 
     lwc_string_unref(abs);
     lwc_string_unref(rel);
+
+    unit_ctx.viewport_width = 0;
+    unit_ctx.viewport_height = 0;
+    unit_ctx.font_size_default = 12288;
+    unit_ctx.font_size_minimum = 8704;
+    unit_ctx.device_dpi = 98304;
+    css_style.opaque = 0;
+    font_style.families = (uint8_t **)0;
+    font_style.family = 0;
+    font_style.size = 0;
+    font_style.weight = 0;
+    font_style.flags = 0;
+    font_style.background = 99;
+    font_style.foreground = 0;
+
+    font_plot_style_from_css(&unit_ctx, &css_style, &font_style);
+    if (font_style.family != 2 ||
+        font_style.size != 12288 ||
+        font_style.weight != 700 ||
+        font_style.flags != 5 ||
+        font_style.background != 0 ||
+        font_style.foreground != 10053171) {
+        print("browser_c tier5: html font style failed\n");
+        corestrings_fini();
+        return 104;
+    }
+
+    if (run_redraw_border_smoke() != 1) {
+        print("browser_c tier5: html redraw border failed\n");
+        corestrings_fini();
+        return 105;
+    }
+
     corestrings_fini();
 
-    print("browser_c tier5: ok corestrings nsurl css_internal\n");
+    print("browser_c tier5: ok corestrings nsurl css_internal html_font html_redraw_border\n");
     return 0;
 }

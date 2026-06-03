@@ -12,4 +12,7 @@ selfhost_nsurl_core.zo selfhost_nsurl_core.zo
 selfhost_nsurl_parse.zo selfhost_nsurl_parse.zo
 selfhost_corestrings.zo selfhost_corestrings.zo
 selfhost_css_internal.zo selfhost_css_internal.zo
+selfhost_html_font.zo selfhost_html_font.zo
+selfhost_html_redraw_border.zo selfhost_html_redraw_border.zo
+selfhost_tier5_border_smoke.zo selfhost_tier5_border_smoke.zo
 browser_c_tier5_test.Z browser_c_tier5_test.zo

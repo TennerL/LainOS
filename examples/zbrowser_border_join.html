@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<title>Z Browser Border Join Smoke</title>
+<style>
+body {
+  background: #eef5f1;
+  color: #202122;
+  font-family: serif;
+  margin: 0;
+}
+.panel {
+  width: 340px;
+  margin: 20px auto;
+  padding: 18px 22px;
+  background: #fffdf8;
+  border-top: 12px solid #6b2d5c;
+  border-right: 18px solid #d33f49;
+  border-bottom: 10px solid #2f855a;
+  border-left: 14px solid #2f4858;
+}
+h1 {
+  color: #355c7d;
+  margin: 0 0 10px 0;
+}
+.note {
+  color: #4a5568;
+}
+</style>
+</head>
+<body>
+<div class="panel">
+<h1>Border Join Smoke</h1>
+<p>Asymmetric border joins should render as filled polygons.</p>
+<p class="note">All four corners should be solid joined wedges.</p>
+</div>
+</body>
+</html>

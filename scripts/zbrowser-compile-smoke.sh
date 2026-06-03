@@ -303,7 +303,7 @@ manifest_skips_broad_ztest() {
   local manifest="$1"
 
   case "$manifest" in
-    examples/browser_c_probe/kernel.zbuild|examples/browser_c_probe/first_unit.zbuild|examples/browser_c_probe/tier1.zbuild|examples/browser_c_probe/tier2.zbuild|examples/browser_c_probe/tier3.zbuild|examples/browser_c_probe/tier4.zbuild|examples/browser_c_probe/http_chal.zbuild|examples/browser_c_probe/http_wa.zbuild|examples/browser_c_probe/http_cc.zbuild|examples/browser_c_probe/http_sts.zbuild|examples/browser_c_probe/log.zbuild)
+    examples/browser_c_probe/kernel.zbuild|examples/browser_c_probe/first_unit.zbuild|examples/browser_c_probe/tier1.zbuild|examples/browser_c_probe/tier2.zbuild|examples/browser_c_probe/tier3.zbuild|examples/browser_c_probe/tier4.zbuild|examples/browser_c_probe/tier5.zbuild|examples/browser_c_probe/http_chal.zbuild|examples/browser_c_probe/http_wa.zbuild|examples/browser_c_probe/http_cc.zbuild|examples/browser_c_probe/http_sts.zbuild|examples/browser_c_probe/log.zbuild)
       return 0
       ;;
   esac

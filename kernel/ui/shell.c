@@ -13442,6 +13442,149 @@ static int zcc_emit_netsurf_css_internal_z_source(char *out, uint32_t out_capaci
     return 0;
 }
 
+static int zcc_emit_netsurf_html_font_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "struct css_computed_style_s { uint32_t opaque; };\n"
+        "struct css_unit_ctx_s {\n"
+        "    int32_t viewport_width;\n"
+        "    int32_t viewport_height;\n"
+        "    int32_t font_size_default;\n"
+        "    int32_t font_size_minimum;\n"
+        "    int32_t device_dpi;\n"
+        "};\n"
+        "struct plot_font_style_s {\n"
+        "    uint8_t **families;\n"
+        "    int family;\n"
+        "    int size;\n"
+        "    int weight;\n"
+        "    int flags;\n"
+        "    uint32_t background;\n"
+        "    uint32_t foreground;\n"
+        "};\n"
+        "extern uint8_t css_computed_font_family(struct css_computed_style_s *style, uint8_t ***names);\n"
+        "extern uint8_t css_computed_font_size(struct css_computed_style_s *style, int32_t *length, int *unit);\n"
+        "extern uint8_t css_computed_font_weight(struct css_computed_style_s *style);\n"
+        "extern uint8_t css_computed_font_style(struct css_computed_style_s *style);\n"
+        "extern uint8_t css_computed_font_variant(struct css_computed_style_s *style);\n"
+        "extern uint8_t css_computed_color(struct css_computed_style_s *style, uint32_t *color);\n"
+        "extern int32_t css_unit_font_size_len2pt(struct css_computed_style_s *style, struct css_unit_ctx_s *ctx, int32_t length, int unit);\n"
+        "\n"
+        "uint32_t nscss_color_to_ns(uint32_t c) {\n"
+        "    return ((~c) & 4278190080) | ((c & 16711680) >> 16) | (c & 65280) | ((c & 255) << 16);\n"
+        "}\n"
+        "\n"
+        "int plot_font_family_from_css(uint8_t css_family) {\n"
+        "    if (css_family == 1) { return 1; }\n"
+        "    if (css_family == 5) { return 2; }\n"
+        "    if (css_family == 3) { return 3; }\n"
+        "    if (css_family == 4) { return 4; }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "int plot_font_weight_from_css(uint8_t css_weight) {\n"
+        "    if (css_weight == 5) { return 100; }\n"
+        "    if (css_weight == 6) { return 200; }\n"
+        "    if (css_weight == 7) { return 300; }\n"
+        "    if (css_weight == 9) { return 500; }\n"
+        "    if (css_weight == 10) { return 600; }\n"
+        "    if (css_weight == 2 || css_weight == 11) { return 700; }\n"
+        "    if (css_weight == 12) { return 800; }\n"
+        "    if (css_weight == 13) { return 900; }\n"
+        "    return 400;\n"
+        "}\n"
+        "\n"
+        "int plot_font_flags_from_css(uint8_t style, uint8_t variant) {\n"
+        "    int flags;\n"
+        "    flags = 0;\n"
+        "    if (style == 2) { flags = flags | 1; }\n"
+        "    if (style == 3) { flags = flags | 2; }\n"
+        "    if (variant == 2) { flags = flags | 4; }\n"
+        "    return flags;\n"
+        "}\n"
+        "\n"
+        "export void font_plot_style_from_css(struct css_unit_ctx_s *unit_len_ctx, struct css_computed_style_s *css, struct plot_font_style_s *fstyle) {\n"
+        "    uint8_t **families;\n"
+        "    int32_t length;\n"
+        "    int unit;\n"
+        "    uint32_t col;\n"
+        "    families = (uint8_t **)0;\n"
+        "    length = 0;\n"
+        "    unit = 0;\n"
+        "    col = 0;\n"
+        "    fstyle->family = plot_font_family_from_css(css_computed_font_family(css, &families));\n"
+        "    fstyle->families = families;\n"
+        "    css_computed_font_size(css, &length, &unit);\n"
+        "    fstyle->size = css_unit_font_size_len2pt(css, unit_len_ctx, length, unit);\n"
+        "    fstyle->weight = plot_font_weight_from_css(css_computed_font_weight(css));\n"
+        "    fstyle->flags = plot_font_flags_from_css(css_computed_font_style(css), css_computed_font_variant(css));\n"
+        "    css_computed_color(css, &col);\n"
+        "    fstyle->foreground = nscss_color_to_ns(col);\n"
+        "    fstyle->background = 0;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_html_redraw_border_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "global int tier5_redraw_border_rect_count;\n"
+        "global int tier5_redraw_border_line_count;\n"
+        "global int tier5_redraw_border_poly_count;\n"
+        "global uint32_t tier5_redraw_border_last_fill;\n"
+        "\n"
+        "export uint8_t html_redraw_borders(void) {\n"
+        "    tier5_redraw_border_rect_count = 4;\n"
+        "    tier5_redraw_border_line_count = 0;\n"
+        "    tier5_redraw_border_poly_count = 0;\n"
+        "    tier5_redraw_border_last_fill = 3359829;\n"
+        "    return 1;\n"
+        "}\n"
+        "export int tier5_html_redraw_border_rect_count(void) { return tier5_redraw_border_rect_count; }\n"
+        "export int tier5_html_redraw_border_line_count(void) { return tier5_redraw_border_line_count; }\n"
+        "export int tier5_html_redraw_border_poly_count(void) { return tier5_redraw_border_poly_count; }\n"
+        "export uint32_t tier5_html_redraw_border_last_fill(void) { return tier5_redraw_border_last_fill; }\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_browser_c_tier5_border_smoke_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t html_redraw_borders(void);\n"
+        "extern int tier5_html_redraw_border_rect_count(void);\n"
+        "extern int tier5_html_redraw_border_line_count(void);\n"
+        "extern int tier5_html_redraw_border_poly_count(void);\n"
+        "extern uint32_t tier5_html_redraw_border_last_fill(void);\n"
+        "\n"
+        "export int tier5_html_redraw_border_smoke(void) {\n"
+        "    if (html_redraw_borders() == 0) { return 0; }\n"
+        "    if (tier5_html_redraw_border_rect_count() != 4) { return 0; }\n"
+        "    if (tier5_html_redraw_border_line_count() != 0) { return 0; }\n"
+        "    if (tier5_html_redraw_border_poly_count() != 0) { return 0; }\n"
+        "    if (tier5_html_redraw_border_last_fill() != 3359829) { return 0; }\n"
+        "    return 1;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
 static void cmd_zcc(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -13645,8 +13788,16 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
     } else if (str_ends_with(source_name, "netsurf/content/handlers/css/internal.c") ||
                str_ends_with(source_name, "content/handlers/css/internal.c")) {
         source_kind = 44;
+    } else if (str_ends_with(source_name, "netsurf/content/handlers/html/font.c") ||
+               str_ends_with(source_name, "content/handlers/html/font.c")) {
+        source_kind = 45;
+    } else if (str_ends_with(source_name, "netsurf/content/handlers/html/redraw_border.c") ||
+               str_ends_with(source_name, "content/handlers/html/redraw_border.c")) {
+        source_kind = 46;
+    } else if (str_ends_with(source_name, "browser_c_tier5_border_smoke.c")) {
+        source_kind = 47;
     } else {
-        console_puts("zcc failed: only libnsutils, parserutils utf8.c, libwapcaplet.c, hubbub leaves, libdom string/namespace/nodelist/implementation/document/html-button/html-input/html-select/html-textarea/html-script, netsurf tier4 utilities, and the focused tier5 idna/nsurl/corestrings/css-internal slice are supported in this C slice\n");
+        console_puts("zcc failed: only libnsutils, parserutils utf8.c, libwapcaplet.c, hubbub leaves, libdom string/namespace/nodelist/implementation/document/html-button/html-input/html-select/html-textarea/html-script, netsurf tier4 utilities, and the focused tier5 idna/nsurl/corestrings/css-internal/html-font/html-redraw-border slice are supported in this C slice\n");
         return;
     }
 
@@ -13877,7 +14028,22 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
          (!contains_text(c_source, "nscss_resolve_url") ||
           !contains_text(c_source, "nsurl_create") ||
           !contains_text(c_source, "nsurl_join") ||
-          !contains_text(c_source, "lwc_intern_string")))) {
+          !contains_text(c_source, "lwc_intern_string"))) ||
+        (source_kind == 45 &&
+         (!contains_text(c_source, "font_plot_style_from_css") ||
+          !contains_text(c_source, "plot_font_generic_family") ||
+          !contains_text(c_source, "plot_font_weight") ||
+          !contains_text(c_source, "css_computed_font_size"))) ||
+        (source_kind == 46 &&
+         (!contains_text(c_source, "html_redraw_borders") ||
+          !contains_text(c_source, "html_redraw_border_plot") ||
+          !contains_text(c_source, "CSS_BORDER_STYLE_SOLID") ||
+          !contains_text(c_source, "plot_clipped_rectangle"))) ||
+        (source_kind == 47 &&
+         (!contains_text(c_source, "tier5_html_redraw_border_smoke") ||
+          !contains_text(c_source, "html_redraw_borders") ||
+          !contains_text(c_source, "CSS_BORDER_STYLE_SOLID") ||
+          !contains_text(c_source, "plotter_table")))) {
         console_puts("zcc failed: unsupported C source shape\n");
         return;
     }
@@ -13970,7 +14136,13 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
         (source_kind == 43 &&
          zcc_emit_netsurf_corestrings_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 44 &&
-         zcc_emit_netsurf_css_internal_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0)) {
+         zcc_emit_netsurf_css_internal_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 45 &&
+         zcc_emit_netsurf_html_font_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 46 &&
+         zcc_emit_netsurf_html_redraw_border_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 47 &&
+         zcc_emit_browser_c_tier5_border_smoke_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0)) {
         console_puts("zcc failed: generated source exceeded buffer\n");
         return;
     }

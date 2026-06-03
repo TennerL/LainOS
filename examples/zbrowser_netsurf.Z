@@ -121,8 +121,8 @@ extern int image_probe(const uint8_t *data, uint32_t size, struct ImageInfo *out
 extern int image_decode_rgba32(const uint8_t *data, uint32_t size, uint8_t *rgba, uint32_t rgba_capacity, struct ImageInfo *out_image);
 
 struct NetSurfBrowserView {
-    uint32_t x;
-    uint32_t y;
+    int x;
+    int y;
     uint32_t width;
     uint32_t height;
     uint32_t scroll;
@@ -180,10 +180,13 @@ global uint32_t zbrowser_ns_page_redraw_count;
 global uint32_t zbrowser_ns_scroll_redraw_count;
 global uint32_t zbrowser_ns_poll_full_redraw_count;
 global uint32_t zbrowser_ns_poll_chrome_redraw_count;
+global uint32_t zbrowser_ns_poll_suppressed_full_count;
+global uint32_t zbrowser_ns_poll_suppressed_chrome_count;
 global uint32_t zbrowser_ns_render_fail_count;
 global uint32_t zbrowser_ns_tick_logged;
 global uint32_t zbrowser_ns_visual_sample_logged;
 global uint64_t zbrowser_ns_last_render_tick;
+global uint64_t zbrowser_ns_last_poll_suppressed_tick;
 global uint64_t zbrowser_ns_last_poll_tick;
 global uint64_t zbrowser_ns_doc_addr;
 global uint64_t zbrowser_ns_history_addr;
@@ -363,6 +366,10 @@ void zbrowser_ns_log_renderer_status(const uint8_t *phase) {
     debug_put_dec64(zbrowser_ns_poll_full_redraw_count);
     debug_puts("\nzbrowser redraw-counters poll-chrome ");
     debug_put_dec64(zbrowser_ns_poll_chrome_redraw_count);
+    debug_puts("\nzbrowser redraw-counters poll-suppressed-full ");
+    debug_put_dec64(zbrowser_ns_poll_suppressed_full_count);
+    debug_puts("\nzbrowser redraw-counters poll-suppressed-chrome ");
+    debug_put_dec64(zbrowser_ns_poll_suppressed_chrome_count);
     debug_puts("\nzbrowser redraw-counters render-fail ");
     debug_put_dec64(zbrowser_ns_render_fail_count);
     debug_puts("\n");
@@ -383,6 +390,10 @@ void zbrowser_ns_log_redraw_summary(const uint8_t *phase) {
     debug_put_dec64(zbrowser_ns_poll_full_redraw_count);
     debug_puts(" poll-chrome ");
     debug_put_dec64(zbrowser_ns_poll_chrome_redraw_count);
+    debug_puts(" poll-suppressed-full ");
+    debug_put_dec64(zbrowser_ns_poll_suppressed_full_count);
+    debug_puts(" poll-suppressed-chrome ");
+    debug_put_dec64(zbrowser_ns_poll_suppressed_chrome_count);
     debug_puts(" render-fail ");
     debug_put_dec64(zbrowser_ns_render_fail_count);
     debug_puts("\n");
@@ -393,6 +404,16 @@ void zbrowser_ns_log_stage(const uint8_t *phase) {
     debug_puts(phase);
     debug_puts(" status ");
     debug_puts(zbrowser_ns_status);
+    debug_puts("\n");
+}
+
+void zbrowser_ns_log_frontend_status(const uint8_t *phase) {
+    debug_puts("zbrowser frontend-status\nphase ");
+    debug_puts(phase);
+    debug_puts("\nstatus ");
+    debug_put_dec64(zbrowser_ns_frontend_status);
+    debug_puts("\ndetail ");
+    debug_puts(netsurf_kernel_frontend_status());
     debug_puts("\n");
 }
 
@@ -477,6 +498,7 @@ void zbrowser_ns_load_task(uint8_t *arg) {
     zbrowser_ns_http_status = 0;
     zbrowser_ns_dom_status = 0;
     zbrowser_ns_frontend_status = netsurf_kernel_frontend_smoke();
+    zbrowser_ns_log_frontend_status("load");
 
     if (zbrowser_ns_starts_http(zbrowser_ns_url) != 0) {
         size = os_http_get_ex(zbrowser_ns_url, doc, ZBROWSER_NS_HTTP_CAPACITY - 1, &zbrowser_ns_http_info);
@@ -614,8 +636,15 @@ void zbrowser_ns_poll_task(uint8_t *arg) {
 
 int zbrowser_ns_poll_quiet(uint64_t now) {
     if (zbrowser_ns_last_render_tick != 0 &&
-        zbrowser_ns_page_redraw_count != 0 &&
-        now - zbrowser_ns_last_render_tick < 10000) {
+        zbrowser_ns_page_redraw_count != 0) {
+        if (zbrowser_ns_last_poll_suppressed_tick == 0) {
+            zbrowser_ns_last_poll_suppressed_tick = now;
+        } else {
+            if (now - zbrowser_ns_last_poll_suppressed_tick >= 30000) {
+                zbrowser_ns_last_poll_suppressed_tick = 0;
+                return 0;
+            }
+        }
         return 1;
     }
     return 0;
@@ -654,6 +683,7 @@ void zbrowser_ns_start_core_poll(void) {
     now = ticks();
     if (zbrowser_ns_poll_result == 2) {
         if (zbrowser_ns_poll_quiet(now) != 0) {
+            zbrowser_ns_poll_suppressed_full_count = zbrowser_ns_poll_suppressed_full_count + 1;
             return;
         }
         if (zbrowser_ns_last_core_redraw_tick == 0 || now - zbrowser_ns_last_core_redraw_tick >= 250) {
@@ -666,6 +696,7 @@ void zbrowser_ns_start_core_poll(void) {
         }
     } else if (zbrowser_ns_poll_result == 1) {
         if (zbrowser_ns_poll_quiet(now) != 0) {
+            zbrowser_ns_poll_suppressed_chrome_count = zbrowser_ns_poll_suppressed_chrome_count + 1;
             return;
         }
         zbrowser_ns_poll_chrome_redraw_count = zbrowser_ns_poll_chrome_redraw_count + 1;
@@ -688,6 +719,7 @@ void zbrowser_ns_poll_core_task(void) {
     now = ticks();
     if (zbrowser_ns_poll_result == 2) {
         if (zbrowser_ns_poll_quiet(now) != 0) {
+            zbrowser_ns_poll_suppressed_full_count = zbrowser_ns_poll_suppressed_full_count + 1;
             return;
         }
         if (zbrowser_ns_last_core_redraw_tick == 0 || now - zbrowser_ns_last_core_redraw_tick >= 250) {
@@ -700,6 +732,7 @@ void zbrowser_ns_poll_core_task(void) {
         }
     } else if (zbrowser_ns_poll_result == 1) {
         if (zbrowser_ns_poll_quiet(now) != 0) {
+            zbrowser_ns_poll_suppressed_chrome_count = zbrowser_ns_poll_suppressed_chrome_count + 1;
             return;
         }
         zbrowser_ns_poll_chrome_redraw_count = zbrowser_ns_poll_chrome_redraw_count + 1;
@@ -907,6 +940,9 @@ void zbrowser_ns_go_home(void) {
 
 void zbrowser_ns_follow_navigation(void) {
     if (netsurf_browser_consume_navigation(zbrowser_ns_pending_url, ZBROWSER_NS_URL_CAPACITY) != 0) {
+        debug_puts("zbrowser pending-navigation ");
+        debug_puts(zbrowser_ns_pending_url);
+        debug_puts("\n");
         zbrowser_ns_navigate_to(zbrowser_ns_pending_url, 1);
     }
 }
@@ -1248,9 +1284,9 @@ export void zmodule_key(uint32_t key_type, uint32_t ch) {
     }
     if (ns_key != 0 && zbrowser_ns_render_ready != 0) {
         ns_result = netsurf_browser_key_event(ns_key);
+        zbrowser_ns_follow_navigation();
         if (ns_result != 0) {
             zbrowser_ns_needs_redraw = 1;
-            zbrowser_ns_follow_navigation();
             return;
         }
     }
@@ -1354,10 +1390,11 @@ export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t whee
             y < zbrowser_ns_view.y + zbrowser_ns_view.height) {
             zbrowser_ns_editing = 0;
             ns_result = netsurf_browser_mouse_html_view(&zbrowser_ns_view, x, y, 1);
+            ns_result = ns_result + netsurf_browser_mouse_html_view(&zbrowser_ns_view, x, y, 0);
             ns_result = ns_result + netsurf_browser_mouse_html_view(&zbrowser_ns_view, x, y, 32);
+            zbrowser_ns_follow_navigation();
             if (ns_result != 0) {
                 zbrowser_ns_needs_redraw = 1;
-                zbrowser_ns_follow_navigation();
                 return;
             }
         }
@@ -1430,6 +1467,7 @@ zbrowser_ns_poll_result = 0;
 zbrowser_ns_http_status = 0;
 zbrowser_ns_dom_status = netsurf_port_dom_status();
 zbrowser_ns_frontend_status = netsurf_kernel_frontend_smoke();
+zbrowser_ns_log_frontend_status("init");
 zbrowser_ns_history_count = 0;
 zbrowser_ns_history_index = 0;
 zbrowser_ns_full_redraw_count = 0;

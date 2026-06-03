@@ -227,7 +227,10 @@ static int zbrowser_engine_content_needs_reformat;
 static int zbrowser_engine_content_needs_redraw;
 static int zbrowser_engine_content_needs_chrome;
 static int zbrowser_engine_content_prepare_pending;
+static int zbrowser_engine_content_rendered_once;
 static int zbrowser_engine_content_browser_window_cookie;
+static uint32_t zbrowser_engine_form_key_count;
+static uint32_t zbrowser_engine_form_mouse_count;
 static jsheap *zbrowser_engine_content_jsheap;
 static const uint8_t *zbrowser_engine_content_source_html;
 static uint32_t zbrowser_engine_content_source_size;
@@ -1621,7 +1624,13 @@ typedef struct {
     unsigned int visible_bitmaps;
     unsigned int lines;
     unsigned int polygons;
+    unsigned int visible_polygons;
+    unsigned int discs;
+    unsigned int visible_discs;
+    unsigned int arcs;
+    unsigned int visible_arcs;
     unsigned int paths;
+    unsigned int visible_paths;
     unsigned int text_bytes;
     unsigned int text_width;
 } zbrowser_engine_plot_ctx_t;
@@ -1644,6 +1653,7 @@ extern uint32_t zbrowser_lainos_net_http_errors(void);
 extern uint32_t zbrowser_lainos_net_http_last_status(void);
 extern uint32_t zbrowser_lainos_net_http_last_bytes(void);
 extern int32_t zbrowser_lainos_net_http_last_error(void);
+extern uint32_t zbrowser_lainos_net_content_type_rejects(void);
 extern uint32_t zbrowser_lainos_net_cache_hits(void);
 extern uint32_t zbrowser_lainos_net_cache_entries(void);
 extern uint32_t zbrowser_lainos_net_cache_kib(void);
@@ -1655,6 +1665,15 @@ extern uint32_t zbrowser_lainos_net_css_compat_groups(void);
 extern uint32_t zbrowser_lainos_net_image_decodes(void);
 extern uint32_t zbrowser_lainos_net_image_fallbacks(void);
 extern uint32_t zbrowser_lainos_net_image_errors(void);
+extern uint32_t zbrowser_lainos_net_bitmap_renders(void);
+extern uint32_t zbrowser_lainos_net_bitmap_render_successes(void);
+extern uint32_t zbrowser_lainos_net_bitmap_render_errors(void);
+extern uint32_t zbrowser_lainos_navigation_creates(void);
+extern uint32_t zbrowser_lainos_navigation_consumes(void);
+extern uint32_t zbrowser_lainos_js_execs(void);
+extern uint32_t zbrowser_lainos_js_exec_successes(void);
+extern uint32_t zbrowser_lainos_frontend_smoke(void);
+extern const char *zbrowser_lainos_frontend_status(void);
 
 #define ZBROWSER_ENGINE_PREPARE_CALLBACK_BUDGET 64u
 #define ZBROWSER_ENGINE_PREPARE_ROUND_LIMIT 512u
@@ -1871,6 +1890,7 @@ static void zbrowser_engine_release_content(void) {
     zbrowser_engine_content_needs_redraw = 0;
     zbrowser_engine_content_needs_chrome = 0;
     zbrowser_engine_content_prepare_pending = 0;
+    zbrowser_engine_content_rendered_once = 0;
     zbrowser_engine_content_error_detail[0] = 0;
     zbrowser_lainos_schedule_clear();
     if (zbrowser_engine_content_url != 0) {
@@ -2320,7 +2340,7 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
         zbrowser_engine_content->status == CONTENT_STATUS_ERROR) {
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS %s error act%u dc%u/%u %u>%u detail:%s sched%u js%u/%u pc%u css%u/%u obj%u/%u http%u/%u fail%u st%u err%d bytes%u",
+                 "NS %s error act%u dc%u/%u %u>%u detail:%s sched%u js%u/%u jse%u/%u pc%u css%u/%u obj%u/%u http%u/%u fail%u tr%u st%u err%d bytes%u frm%u/%u/%u/%u",
                  phase != 0 ? phase : "content",
                  zbrowser_engine_content->active,
                  zbrowser_engine_content_data_complete_ok,
@@ -2331,6 +2351,8 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
                  zbrowser_lainos_schedule_count() + zbrowser_lainos_fetch_pending_count(),
                  script_handles,
                  script_total,
+                 zbrowser_lainos_js_exec_successes(),
+                 zbrowser_lainos_js_execs(),
                  parse_complete,
                  css_loaded,
                  css_total,
@@ -2339,15 +2361,20 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
                  zbrowser_lainos_net_http_successes(),
                  zbrowser_lainos_net_http_fetches(),
                  zbrowser_lainos_net_http_errors(),
+                 zbrowser_lainos_net_content_type_rejects(),
                  zbrowser_lainos_net_http_last_status(),
                  zbrowser_lainos_net_http_last_error(),
-                 zbrowser_lainos_net_http_last_bytes());
+                 zbrowser_lainos_net_http_last_bytes(),
+                 zbrowser_engine_form_key_count,
+                 zbrowser_engine_form_mouse_count,
+                 zbrowser_lainos_navigation_creates(),
+                 zbrowser_lainos_navigation_consumes());
         zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
         return zbrowser_engine_status_detail;
     }
     snprintf((char *)zbrowser_engine_status_detail,
              sizeof(zbrowser_engine_status_detail),
-             "NS %s %s(%d) act%u dc%u/%u %u>%u sched%u js%u/%u p%u n%u i%u pc%u jt%u css%u/%u obj%u/%u box%u txt%u/%u objb%u ext%dx%d wh%dx%d http%u/%u fail%u hit%u ce%u/%u/%u cb%u st%u err%d bytes%u img%u fb%u ie%u %s",
+             "NS %s %s(%d) act%u dc%u/%u %u>%u sched%u js%u/%u jse%u/%u p%u n%u i%u pc%u jt%u css%u/%u obj%u/%u box%u txt%u/%u objb%u ext%dx%d wh%dx%d http%u/%u fail%u tr%u hit%u/%u ce%u/%u/%u cb%u st%u err%d bytes%u img%u fb%u ie%u br%u/%u/%u frm%u/%u/%u/%u %s",
              phase != 0 ? phase : "content",
              status_name,
              status_value,
@@ -2359,6 +2386,8 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
              zbrowser_lainos_schedule_count() + zbrowser_lainos_fetch_pending_count(),
              script_handles,
              script_total,
+             zbrowser_lainos_js_exec_successes(),
+             zbrowser_lainos_js_execs(),
              script_pending,
              script_not_started,
              script_inline,
@@ -2379,6 +2408,7 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
              zbrowser_lainos_net_http_successes(),
              zbrowser_lainos_net_http_fetches(),
              zbrowser_lainos_net_http_errors(),
+             zbrowser_lainos_net_content_type_rejects(),
              zbrowser_lainos_net_cache_hits(),
              zbrowser_lainos_net_cache_entries(),
              zbrowser_lainos_net_css_compat_transforms(),
@@ -2391,6 +2421,13 @@ static const uint8_t *zbrowser_engine_content_detail_status(const char *phase) {
              zbrowser_lainos_net_image_decodes(),
              zbrowser_lainos_net_image_fallbacks(),
              zbrowser_lainos_net_image_errors(),
+             zbrowser_lainos_net_bitmap_render_successes(),
+             zbrowser_lainos_net_bitmap_renders(),
+             zbrowser_lainos_net_bitmap_render_errors(),
+             zbrowser_engine_form_key_count,
+             zbrowser_engine_form_mouse_count,
+             zbrowser_lainos_navigation_creates(),
+             zbrowser_lainos_navigation_consumes(),
              zbrowser_engine_content_error_detail);
     zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
     return zbrowser_engine_status_detail;
@@ -2420,6 +2457,8 @@ static int zbrowser_engine_prepare_content_pipeline(const uint8_t *url,
         zbrowser_engine_content_source_url[i] = 0;
     }
     zbrowser_lainos_net_stats_reset();
+    zbrowser_engine_form_key_count = 0;
+    zbrowser_engine_form_mouse_count = 0;
     zbrowser_engine_content_viewport_width = viewport_width;
     zbrowser_engine_content_viewport_height = viewport_height;
     error = nsurl_create(zbrowser_engine_url_for_nsurl(url),
@@ -2459,6 +2498,7 @@ static int zbrowser_engine_prepare_content_pipeline(const uint8_t *url,
     zbrowser_engine_content_prepare_pending = 1;
     zbrowser_engine_content_needs_reformat = 1;
     zbrowser_engine_content_needs_redraw = 1;
+    zbrowser_engine_content_rendered_once = 0;
     zbrowser_engine_content_data_complete_called = 0;
     zbrowser_engine_content_data_complete_ok = 0;
     zbrowser_engine_content_active_before_complete = 0;
@@ -2530,6 +2570,7 @@ static int zbrowser_engine_prepare_content_pipeline(const uint8_t *url,
     zbrowser_engine_content_prepare_pending = 1;
     zbrowser_engine_content_needs_reformat = 1;
     zbrowser_engine_content_needs_redraw = 1;
+    zbrowser_engine_content_rendered_once = 0;
     if (!content_add_user(zbrowser_engine_content,
                           zbrowser_engine_content_user,
                           0)) {
@@ -2665,7 +2706,7 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
         zbrowser_engine_viewport_box_stats((int)x, y_offset, &clip, &box_stats);
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS blank box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u rect%u line%u path%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u hit%u ce%u/%u/%u st%u",
+                 "NS blank box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u rect%u line%u path%u/%u poly%u/%u disc%u/%u arc%u/%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u tr%u hit%u ce%u/%u/%u img%u fb%u ie%u br%u/%u/%u st%u jse%u/%u frm%u/%u/%u/%u",
                  box_stats.boxes,
                  box_stats.grid_boxes,
                  box_stats.largest_grid_x,
@@ -2691,7 +2732,14 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  box_stats.viewport_zero_text_boxes,
                  plot_ctx.rectangles,
                  plot_ctx.lines,
+                 plot_ctx.visible_paths,
                  plot_ctx.paths,
+                 plot_ctx.visible_polygons,
+                 plot_ctx.polygons,
+                 plot_ctx.visible_discs,
+                 plot_ctx.discs,
+                 plot_ctx.visible_arcs,
+                 plot_ctx.arcs,
                  plot_ctx.visible_bitmaps,
                  plot_ctx.bitmaps,
                  box_stats.max_right,
@@ -2705,11 +2753,24 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  zbrowser_lainos_net_http_successes(),
                  zbrowser_lainos_net_http_fetches(),
                  zbrowser_lainos_net_http_errors(),
+                 zbrowser_lainos_net_content_type_rejects(),
                  zbrowser_lainos_net_cache_hits(),
                  zbrowser_lainos_net_css_compat_transforms(),
                  zbrowser_lainos_net_css_compat_vars(),
                  zbrowser_lainos_net_css_compat_groups(),
-                 zbrowser_lainos_net_http_last_status());
+                 zbrowser_lainos_net_image_decodes(),
+                 zbrowser_lainos_net_image_fallbacks(),
+                 zbrowser_lainos_net_image_errors(),
+                 zbrowser_lainos_net_bitmap_render_successes(),
+                 zbrowser_lainos_net_bitmap_renders(),
+                 zbrowser_lainos_net_bitmap_render_errors(),
+                 zbrowser_lainos_net_http_last_status(),
+                 zbrowser_lainos_js_exec_successes(),
+                 zbrowser_lainos_js_execs(),
+                 zbrowser_engine_form_key_count,
+                 zbrowser_engine_form_mouse_count,
+                 zbrowser_lainos_navigation_creates(),
+                 zbrowser_lainos_navigation_consumes());
         zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
         zbrowser_engine_status_text = zbrowser_engine_status_detail;
     } else {
@@ -2718,7 +2779,7 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
         zbrowser_engine_viewport_box_stats((int)x, y_offset, &clip, &box_stats);
         snprintf((char *)zbrowser_engine_status_detail,
                  sizeof(zbrowser_engine_status_detail),
-                 "NS rendered box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txt%u/%u txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u ty%d..%d rect%u line%u path%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u hit%u ce%u/%u/%u st%u",
+                 "NS rendered box%u grid%u gl %d,%d %dx%d c%u cy%d..%d g0 %d,%d %dx%d c%u cy%d..%d txt%u/%u txtbox%u viewtxt%u/%u vis%u/%u hid%u zero%u ty%d..%d rect%u line%u path%u/%u poly%u/%u disc%u/%u arc%u/%u bmp%u/%u ext%dx%d wh%dx%d css%u/%u obj%u/%u http%u/%u fail%u tr%u hit%u ce%u/%u/%u img%u fb%u ie%u br%u/%u/%u st%u jse%u/%u frm%u/%u/%u/%u",
                  box_stats.boxes,
                  box_stats.grid_boxes,
                  box_stats.largest_grid_x,
@@ -2748,7 +2809,14 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  box_stats.text_max_y,
                  plot_ctx.rectangles,
                  plot_ctx.lines,
+                 plot_ctx.visible_paths,
                  plot_ctx.paths,
+                 plot_ctx.visible_polygons,
+                 plot_ctx.polygons,
+                 plot_ctx.visible_discs,
+                 plot_ctx.discs,
+                 plot_ctx.visible_arcs,
+                 plot_ctx.arcs,
                  plot_ctx.visible_bitmaps,
                  plot_ctx.bitmaps,
                  box_stats.max_right,
@@ -2762,15 +2830,29 @@ static int zbrowser_engine_redraw_content_view(uint32_t x,
                  zbrowser_lainos_net_http_successes(),
                  zbrowser_lainos_net_http_fetches(),
                  zbrowser_lainos_net_http_errors(),
+                 zbrowser_lainos_net_content_type_rejects(),
                  zbrowser_lainos_net_cache_hits(),
                  zbrowser_lainos_net_css_compat_transforms(),
                  zbrowser_lainos_net_css_compat_vars(),
                  zbrowser_lainos_net_css_compat_groups(),
-                 zbrowser_lainos_net_http_last_status());
+                 zbrowser_lainos_net_image_decodes(),
+                 zbrowser_lainos_net_image_fallbacks(),
+                 zbrowser_lainos_net_image_errors(),
+                 zbrowser_lainos_net_bitmap_render_successes(),
+                 zbrowser_lainos_net_bitmap_renders(),
+                 zbrowser_lainos_net_bitmap_render_errors(),
+                 zbrowser_lainos_net_http_last_status(),
+                 zbrowser_lainos_js_exec_successes(),
+                 zbrowser_lainos_js_execs(),
+                 zbrowser_engine_form_key_count,
+                 zbrowser_engine_form_mouse_count,
+                 zbrowser_lainos_navigation_creates(),
+                 zbrowser_lainos_navigation_consumes());
         zbrowser_engine_status_detail[sizeof(zbrowser_engine_status_detail) - 1u] = 0;
         zbrowser_engine_status_text = zbrowser_engine_status_detail;
     }
     zbrowser_engine_content_needs_redraw = 0;
+    zbrowser_engine_content_rendered_once = 1;
     return 0;
 }
 
@@ -2832,8 +2914,8 @@ int zbrowser_engine_poll_c(void) {
                     (zbrowser_engine_content_prepare_pending != 0 ? 1u : 0u) +
                     (zbrowser_engine_content_needs_reformat != 0 ? 1u : 0u) +
                     (zbrowser_engine_content_needs_chrome != 0 ? 1u : 0u);
-    if (ran == 0u &&
-        pending_after == 0u &&
+    if (pending_after == 0u &&
+        zbrowser_engine_content_rendered_once != 0 &&
         zbrowser_engine_content_needs_redraw != 0 &&
         (zbrowser_engine_content->status == CONTENT_STATUS_READY ||
          zbrowser_engine_content->status == CONTENT_STATUS_DONE)) {
@@ -2867,6 +2949,8 @@ void zbrowser_engine_invalidate_cache_c(void) {
     zbrowser_engine_release_document();
 #ifdef ZBROWSER_ENGINE_USE_NETSURF_CONTENT
     zbrowser_lainos_net_stats_reset();
+    zbrowser_engine_form_key_count = 0;
+    zbrowser_engine_form_mouse_count = 0;
     zbrowser_engine_content_source_html = 0;
     zbrowser_engine_content_source_size = 0;
     zbrowser_engine_content_source_url[0] = 0;
@@ -3034,6 +3118,11 @@ static void zbrowser_engine_fill_rect_clipped(const struct redraw_context *ctx,
                       (uint32_t)(y1 - y0),
                       colour);
     }
+}
+
+static int zbrowser_engine_rect_visible(const struct redraw_context *ctx,
+        int x0, int y0, int x1, int y1) {
+    return zbrowser_engine_clip_rect(ctx, &x0, &y0, &x1, &y1);
 }
 
 static int zbrowser_engine_positive_mod(int value, int divisor) {
@@ -3221,6 +3310,154 @@ static void zbrowser_engine_plot_line_brush(const struct redraw_context *ctx,
                                       colour);
 }
 
+static void zbrowser_engine_draw_line_clipped(const struct redraw_context *ctx,
+        int x0,
+        int y0,
+        int x1,
+        int y1,
+        int width,
+        uint32_t colour);
+
+static int zbrowser_engine_clamped_disc_radius(int radius) {
+    if (radius < 1) {
+        return 0;
+    }
+    if (radius > 512) {
+        return 512;
+    }
+    return radius;
+}
+
+static void zbrowser_engine_fill_disc_clipped(const struct redraw_context *ctx,
+        int x,
+        int y,
+        int radius,
+        uint32_t colour) {
+    int r = zbrowser_engine_clamped_disc_radius(radius);
+    int r2 = r * r;
+
+    if (r == 0) {
+        return;
+    }
+    for (int dy = -r; dy <= r; ++dy) {
+        int span = 0;
+        int dy2 = dy * dy;
+        while ((span + 1) * (span + 1) + dy2 <= r2) {
+            ++span;
+        }
+        zbrowser_engine_fill_rect_clipped(ctx,
+                                          x - span,
+                                          y + dy,
+                                          x + span + 1,
+                                          y + dy + 1,
+                                          colour);
+    }
+}
+
+static void zbrowser_engine_draw_disc_outline_clipped(const struct redraw_context *ctx,
+        int x,
+        int y,
+        int radius,
+        int width,
+        uint32_t colour) {
+    int r = zbrowser_engine_clamped_disc_radius(radius);
+    int inner;
+    int r2;
+    int inner2;
+
+    if (r == 0) {
+        return;
+    }
+    if (width < 1) {
+        width = 1;
+    }
+    if (width > r) {
+        width = r;
+    }
+    inner = r - width;
+    r2 = r * r;
+    inner2 = inner * inner;
+    for (int dy = -r; dy <= r; ++dy) {
+        int dy2 = dy * dy;
+        for (int dx = -r; dx <= r; ++dx) {
+            int d2 = dx * dx + dy2;
+            if (d2 <= r2 && d2 >= inner2) {
+                zbrowser_engine_plot_pixel(ctx, x + dx, y + dy, colour);
+            }
+        }
+    }
+}
+
+static int zbrowser_engine_normalize_degrees(int degrees) {
+    int result = degrees % 360;
+    return result < 0 ? result + 360 : result;
+}
+
+static int zbrowser_engine_sin_deg_1024(int degrees) {
+    int d = zbrowser_engine_normalize_degrees(degrees);
+    int sign = 1;
+    int numerator;
+    int denominator;
+
+    if (d > 180) {
+        d -= 180;
+        sign = -1;
+    }
+    if (d > 90) {
+        d = 180 - d;
+    }
+    numerator = 4 * d * (180 - d);
+    denominator = 40500 - d * (180 - d);
+    if (denominator == 0) {
+        return 0;
+    }
+    return sign * (numerator * 1024 + denominator / 2) / denominator;
+}
+
+static int zbrowser_engine_cos_deg_1024(int degrees) {
+    return zbrowser_engine_sin_deg_1024(degrees + 90);
+}
+
+static void zbrowser_engine_draw_arc_clipped(const struct redraw_context *ctx,
+        int x,
+        int y,
+        int radius,
+        int angle1,
+        int angle2,
+        int width,
+        uint32_t colour) {
+    int r = zbrowser_engine_clamped_disc_radius(radius);
+    int start = zbrowser_engine_normalize_degrees(angle1);
+    int end = zbrowser_engine_normalize_degrees(angle2);
+    int span = end - start;
+    int last_x = 0;
+    int last_y = 0;
+    bool have_last = false;
+
+    if (r == 0) {
+        return;
+    }
+    if (span <= 0) {
+        span += 360;
+    }
+    if (width < 1) {
+        width = 1;
+    }
+    for (int step = 0; step <= span; ++step) {
+        int degrees = start + step + 90;
+        int px = x + (zbrowser_engine_cos_deg_1024(degrees) * r + 512) / 1024;
+        int py = y + (zbrowser_engine_sin_deg_1024(degrees) * r + 512) / 1024;
+        if (have_last) {
+            zbrowser_engine_draw_line_clipped(ctx, last_x, last_y, px, py, width, colour);
+        } else {
+            zbrowser_engine_plot_line_brush(ctx, px, py, width, colour);
+        }
+        last_x = px;
+        last_y = py;
+        have_last = true;
+    }
+}
+
 static void zbrowser_engine_draw_diagonal_line_clipped(const struct redraw_context *ctx,
         int x0,
         int y0,
@@ -3389,16 +3626,35 @@ static nserror zbrowser_engine_plot_line(const struct redraw_context *ctx,
 
 static nserror zbrowser_engine_plot_disc(const struct redraw_context *ctx,
         const plot_style_t *style, int x, int y, int radius) {
-    struct rect r;
-    (void)ctx;
+    zbrowser_engine_plot_ctx_t *plot = ctx != 0 ? (zbrowser_engine_plot_ctx_t *)ctx->priv : 0;
+    if (plot != 0) {
+        ++plot->discs;
+    }
     if (style == 0 || radius <= 0) {
         return NSERROR_OK;
     }
-    r.x0 = x - radius;
-    r.y0 = y - radius;
-    r.x1 = x + radius;
-    r.y1 = y + radius;
-    return zbrowser_engine_plot_rectangle(ctx, style, &r);
+    if (plot != 0 &&
+        zbrowser_engine_rect_visible(ctx, x - radius, y - radius, x + radius, y + radius) != 0) {
+        ++plot->visible_discs;
+    }
+    if (style->fill_type != PLOT_OP_TYPE_NONE &&
+        style->fill_colour != NS_TRANSPARENT) {
+        zbrowser_engine_fill_disc_clipped(ctx,
+                                          x,
+                                          y,
+                                          radius,
+                                          zbrowser_engine_ns_colour(style->fill_colour));
+    }
+    if (style->stroke_type != PLOT_OP_TYPE_NONE &&
+        style->stroke_colour != NS_TRANSPARENT) {
+        zbrowser_engine_draw_disc_outline_clipped(ctx,
+                                                  x,
+                                                  y,
+                                                  radius,
+                                                  zbrowser_engine_style_width(style),
+                                                  zbrowser_engine_ns_colour(style->stroke_colour));
+    }
+    return NSERROR_OK;
 }
 
 static nserror zbrowser_engine_plot_noop(const struct redraw_context *ctx) {
@@ -3523,6 +3779,31 @@ static nserror zbrowser_engine_plot_path(const struct redraw_context *ctx,
     if (!valid) {
         return NSERROR_OK;
     }
+    if (plot != 0 && point_count != 0u) {
+        int min_x = points[0];
+        int max_x = points[0];
+        int min_y = points[1];
+        int max_y = points[1];
+        for (unsigned int j = 1u; j < point_count; ++j) {
+            int px = points[j * 2u];
+            int py = points[j * 2u + 1u];
+            if (px < min_x) {
+                min_x = px;
+            }
+            if (px > max_x) {
+                max_x = px;
+            }
+            if (py < min_y) {
+                min_y = py;
+            }
+            if (py > max_y) {
+                max_y = py;
+            }
+        }
+        if (zbrowser_engine_rect_visible(ctx, min_x, min_y, max_x + 1, max_y + 1) != 0) {
+            ++plot->visible_paths;
+        }
+    }
     if (style->fill_type != PLOT_OP_TYPE_NONE &&
         style->fill_colour != NS_TRANSPARENT &&
         moves == 1u &&
@@ -3641,6 +3922,31 @@ static nserror zbrowser_engine_plot_polygon(const struct redraw_context *ctx,
         ++plot->polygons;
     }
     if (style != 0 && p != 0 && n >= 2u) {
+        if (plot != 0) {
+            int min_x = p[0];
+            int max_x = p[0];
+            int min_y = p[1];
+            int max_y = p[1];
+            for (unsigned int i = 1u; i < n; ++i) {
+                int px = p[i * 2u];
+                int py = p[i * 2u + 1u];
+                if (px < min_x) {
+                    min_x = px;
+                }
+                if (px > max_x) {
+                    max_x = px;
+                }
+                if (py < min_y) {
+                    min_y = py;
+                }
+                if (py > max_y) {
+                    max_y = py;
+                }
+            }
+            if (zbrowser_engine_rect_visible(ctx, min_x, min_y, max_x + 1, max_y + 1) != 0) {
+                ++plot->visible_polygons;
+            }
+        }
         if (style->fill_type != PLOT_OP_TYPE_NONE &&
             style->fill_colour != NS_TRANSPARENT) {
             zbrowser_engine_fill_polygon_points(ctx,
@@ -3670,9 +3976,39 @@ static nserror zbrowser_engine_plot_polygon(const struct redraw_context *ctx,
 static nserror zbrowser_engine_plot_arc(const struct redraw_context *ctx,
         const plot_style_t *style, int x, int y, int radius,
         int angle1, int angle2) {
-    (void)angle1;
-    (void)angle2;
-    return zbrowser_engine_plot_disc(ctx, style, x, y, radius);
+    zbrowser_engine_plot_ctx_t *plot = ctx != 0 ? (zbrowser_engine_plot_ctx_t *)ctx->priv : 0;
+    if (plot != 0) {
+        ++plot->arcs;
+    }
+    if (style == 0 || radius <= 0) {
+        return NSERROR_OK;
+    }
+    if (plot != 0 &&
+        zbrowser_engine_rect_visible(ctx, x - radius, y - radius, x + radius, y + radius) != 0) {
+        ++plot->visible_arcs;
+    }
+    if (style->fill_type != PLOT_OP_TYPE_NONE &&
+        style->fill_colour != NS_TRANSPARENT) {
+        zbrowser_engine_draw_arc_clipped(ctx,
+                                         x,
+                                         y,
+                                         radius,
+                                         angle1,
+                                         angle2,
+                                         zbrowser_engine_style_width(style),
+                                         zbrowser_engine_ns_colour(style->fill_colour));
+    } else if (style->stroke_type != PLOT_OP_TYPE_NONE &&
+               style->stroke_colour != NS_TRANSPARENT) {
+        zbrowser_engine_draw_arc_clipped(ctx,
+                                         x,
+                                         y,
+                                         radius,
+                                         angle1,
+                                         angle2,
+                                         zbrowser_engine_style_width(style),
+                                         zbrowser_engine_ns_colour(style->stroke_colour));
+    }
+    return NSERROR_OK;
 }
 
 static nserror zbrowser_engine_plot_bitmap(const struct redraw_context *ctx,
@@ -3951,14 +4287,21 @@ static int zbrowser_engine_redraw_html(uint32_t scroll_line,
     }
     snprintf((char *)zbrowser_engine_status_detail,
              sizeof(zbrowser_engine_status_detail),
-             "NS html redraw txt%u/%u bmp%u/%u rect%u line%u path%u bytes%u width%u wh%dx%d css%u/%u",
+             "NS html redraw txt%u/%u bmp%u/%u rect%u line%u path%u/%u poly%u/%u disc%u/%u arc%u/%u bytes%u width%u wh%dx%d css%u/%u",
              plot_ctx.visible_texts,
              plot_ctx.texts,
              plot_ctx.visible_bitmaps,
              plot_ctx.bitmaps,
              plot_ctx.rectangles,
              plot_ctx.lines,
+             plot_ctx.visible_paths,
              plot_ctx.paths,
+             plot_ctx.visible_polygons,
+             plot_ctx.polygons,
+             plot_ctx.visible_discs,
+             plot_ctx.discs,
+             plot_ctx.visible_arcs,
+             plot_ctx.arcs,
              plot_ctx.text_bytes,
              plot_ctx.text_width,
              zbrowser_engine_html.base.width,
@@ -5212,6 +5555,7 @@ int netsurf_browser_key_event(uint32_t key) {
         return 0;
     }
     zbrowser_engine_content_opened = 1;
+    ++zbrowser_engine_form_key_count;
     if (zbrowser_engine_content->handler->keypress(zbrowser_engine_content, key)) {
         zbrowser_engine_content_needs_redraw = 1;
         return 1;
@@ -5254,13 +5598,17 @@ int netsurf_browser_mouse_html_view(const zbrowser_engine_view_t *view,
     content_x = (int)x - (int)view->x;
     content_y = (int)y - (int)view->y +
                 (int)zbrowser_engine_scroll_lines_to_px(view->scroll);
-    if (zbrowser_engine_content->handler->mouse_action != 0 &&
-        zbrowser_engine_content->handler->mouse_action(
+    if (zbrowser_engine_content->handler->mouse_action == 0) {
+        return 0;
+    }
+    ++zbrowser_engine_form_mouse_count;
+    if (zbrowser_engine_content->handler->mouse_action(
             zbrowser_engine_content,
             (struct browser_window *)&zbrowser_engine_content_browser_window_cookie,
             (browser_mouse_state)mouse_state,
             content_x,
             content_y) == NSERROR_OK) {
+        ++zbrowser_engine_form_mouse_count;
         zbrowser_engine_content_needs_redraw = 1;
         return 1;
     }
@@ -5272,6 +5620,7 @@ int netsurf_browser_mouse_html_view(const zbrowser_engine_view_t *view,
 #endif
     return 0;
 }
+
 
 int netsurf_browser_consume_navigation(uint8_t *out, uint32_t capacity) {
     return zbrowser_lainos_consume_navigation(out, capacity);
@@ -5300,11 +5649,11 @@ uint8_t *netsurf_port_status(void) {
 }
 
 uint32_t netsurf_kernel_frontend_smoke(void) {
-    return 0x1fu;
+    return zbrowser_lainos_frontend_smoke();
 }
 
 uint8_t *netsurf_kernel_frontend_status(void) {
-    return (uint8_t *)"NetSurf module frontend ready";
+    return (uint8_t *)zbrowser_lainos_frontend_status();
 }
 
 int zbrowser_engine_draw(const uint8_t *html,

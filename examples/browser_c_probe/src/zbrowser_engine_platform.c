@@ -85,6 +85,7 @@ static uint32_t zbrowser_lainos_http_fetch_error_count;
 static uint32_t zbrowser_lainos_http_last_status;
 static uint32_t zbrowser_lainos_http_last_bytes;
 static int32_t zbrowser_lainos_http_last_error;
+static uint32_t zbrowser_lainos_content_type_reject_count;
 static uint32_t zbrowser_lainos_resource_cache_hits;
 static uint32_t zbrowser_lainos_resource_cache_stores;
 static uint32_t zbrowser_lainos_resource_cache_evictions;
@@ -94,6 +95,15 @@ static uint32_t zbrowser_lainos_css_compat_group_count;
 static uint32_t zbrowser_lainos_image_decode_count;
 static uint32_t zbrowser_lainos_image_fallback_count;
 static uint32_t zbrowser_lainos_image_error_count;
+static uint32_t zbrowser_lainos_bitmap_render_count;
+static uint32_t zbrowser_lainos_bitmap_render_success_count;
+static uint32_t zbrowser_lainos_bitmap_render_error_count;
+static uint32_t zbrowser_lainos_navigation_create_count;
+static uint32_t zbrowser_lainos_navigation_consume_count;
+static uint32_t zbrowser_lainos_js_exec_count;
+static uint32_t zbrowser_lainos_js_exec_success_count;
+static char zbrowser_lainos_frontend_smoke_status[96] =
+    "NetSurf module frontend ready";
 static char zbrowser_lainos_pending_url[1024];
 static bool zbrowser_lainos_navigation_pending;
 
@@ -314,6 +324,11 @@ typedef struct zbrowser_lainos_bitmap {
     bool opaque;
     uint8_t *pixels;
 } zbrowser_lainos_bitmap_t;
+
+typedef struct zbrowser_lainos_offscreen_plot {
+    zbrowser_lainos_bitmap_t *bitmap;
+    struct rect clip;
+} zbrowser_lainos_offscreen_plot_t;
 
 typedef struct zbrowser_lainos_image_content {
     struct content base;
@@ -1035,11 +1050,987 @@ static void zbrowser_lainos_bitmap_modified(void *bitmap) {
     (void)bitmap;
 }
 
+static uint32_t zbrowser_lainos_ns_colour(colour c) {
+    return ((c & 0x0000ffu) << 16) |
+           (c & 0x00ff00u) |
+           ((c & 0xff0000u) >> 16);
+}
+
+static uint32_t zbrowser_lainos_bitmap_get_rgb(zbrowser_lainos_bitmap_t *bitmap,
+        int x,
+        int y) {
+    uint8_t *pixel;
+
+    if (bitmap == 0 || bitmap->pixels == 0 ||
+        x < 0 || y < 0 || x >= bitmap->width || y >= bitmap->height) {
+        return 0xffffffu;
+    }
+    pixel = bitmap->pixels + ((size_t)y * (size_t)bitmap->width + (size_t)x) * 4u;
+    return ((uint32_t)pixel[0] << 16) | ((uint32_t)pixel[1] << 8) | (uint32_t)pixel[2];
+}
+
+static void zbrowser_lainos_bitmap_put_rgb(zbrowser_lainos_bitmap_t *bitmap,
+        int x,
+        int y,
+        uint32_t rgb) {
+    uint8_t *pixel;
+
+    if (bitmap == 0 || bitmap->pixels == 0 ||
+        x < 0 || y < 0 || x >= bitmap->width || y >= bitmap->height) {
+        return;
+    }
+    pixel = bitmap->pixels + ((size_t)y * (size_t)bitmap->width + (size_t)x) * 4u;
+    pixel[0] = (uint8_t)((rgb >> 16) & 0xffu);
+    pixel[1] = (uint8_t)((rgb >> 8) & 0xffu);
+    pixel[2] = (uint8_t)(rgb & 0xffu);
+    pixel[3] = 0xffu;
+}
+
+static bool zbrowser_lainos_offscreen_clip_rect(zbrowser_lainos_offscreen_plot_t *plot,
+        int *x0,
+        int *y0,
+        int *x1,
+        int *y1) {
+    if (plot == 0 || plot->bitmap == 0 || x0 == 0 || y0 == 0 || x1 == 0 || y1 == 0) {
+        return false;
+    }
+    if (*x0 < plot->clip.x0) {
+        *x0 = plot->clip.x0;
+    }
+    if (*y0 < plot->clip.y0) {
+        *y0 = plot->clip.y0;
+    }
+    if (*x1 > plot->clip.x1) {
+        *x1 = plot->clip.x1;
+    }
+    if (*y1 > plot->clip.y1) {
+        *y1 = plot->clip.y1;
+    }
+    if (*x0 < 0) {
+        *x0 = 0;
+    }
+    if (*y0 < 0) {
+        *y0 = 0;
+    }
+    if (*x1 > plot->bitmap->width) {
+        *x1 = plot->bitmap->width;
+    }
+    if (*y1 > plot->bitmap->height) {
+        *y1 = plot->bitmap->height;
+    }
+    return *x0 < *x1 && *y0 < *y1;
+}
+
+static nserror zbrowser_lainos_offscreen_clip(const struct redraw_context *ctx,
+        const struct rect *clip) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+
+    if (plot != 0 && clip != 0) {
+        plot->clip = *clip;
+    }
+    return NSERROR_OK;
+}
+
+static void zbrowser_lainos_offscreen_fill_rect(zbrowser_lainos_offscreen_plot_t *plot,
+        int x0,
+        int y0,
+        int x1,
+        int y1,
+        uint32_t rgb) {
+    if (!zbrowser_lainos_offscreen_clip_rect(plot, &x0, &y0, &x1, &y1)) {
+        return;
+    }
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            zbrowser_lainos_bitmap_put_rgb(plot->bitmap, x, y, rgb);
+        }
+    }
+}
+
+static void zbrowser_lainos_offscreen_put_clipped(zbrowser_lainos_offscreen_plot_t *plot,
+        int x,
+        int y,
+        uint32_t rgb) {
+    if (plot == 0 || plot->bitmap == 0 ||
+        x < plot->clip.x0 || y < plot->clip.y0 ||
+        x >= plot->clip.x1 || y >= plot->clip.y1) {
+        return;
+    }
+    zbrowser_lainos_bitmap_put_rgb(plot->bitmap, x, y, rgb);
+}
+
+static int zbrowser_lainos_abs_int(int value) {
+    return value < 0 ? -value : value;
+}
+
+static void zbrowser_lainos_offscreen_draw_line(zbrowser_lainos_offscreen_plot_t *plot,
+        int x0,
+        int y0,
+        int x1,
+        int y1,
+        int width,
+        uint32_t rgb) {
+    int dx = zbrowser_lainos_abs_int(x1 - x0);
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = -zbrowser_lainos_abs_int(y1 - y0);
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    int radius = width > 1 ? width / 2 : 0;
+
+    for (;;) {
+        zbrowser_lainos_offscreen_fill_rect(plot,
+                                            x0 - radius,
+                                            y0 - radius,
+                                            x0 + radius + 1,
+                                            y0 + radius + 1,
+                                            rgb);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        {
+            int e2 = err * 2;
+            if (e2 >= dy) {
+                err += dy;
+                x0 += sx;
+            }
+            if (e2 <= dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+}
+
+static nserror zbrowser_lainos_offscreen_rectangle(const struct redraw_context *ctx,
+        const plot_style_t *style,
+        const struct rect *rectangle) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+    int width = 1;
+
+    if (plot == 0 || rectangle == 0 || style == 0) {
+        return NSERROR_OK;
+    }
+    x0 = rectangle->x0;
+    y0 = rectangle->y0;
+    x1 = rectangle->x1;
+    y1 = rectangle->y1;
+    if (style->fill_type != PLOT_OP_TYPE_NONE &&
+        style->fill_colour != NS_TRANSPARENT) {
+        zbrowser_lainos_offscreen_fill_rect(plot,
+                                            x0,
+                                            y0,
+                                            x1,
+                                            y1,
+                                            zbrowser_lainos_ns_colour(style->fill_colour));
+    }
+    if (style->stroke_type != PLOT_OP_TYPE_NONE &&
+        style->stroke_colour != NS_TRANSPARENT) {
+        uint32_t rgb = zbrowser_lainos_ns_colour(style->stroke_colour);
+        if (style->stroke_width > 0) {
+            width = plot_style_fixed_to_int(style->stroke_width);
+            if (width < 1) {
+                width = 1;
+            }
+        }
+        zbrowser_lainos_offscreen_fill_rect(plot, x0, y0, x1, y0 + width, rgb);
+        zbrowser_lainos_offscreen_fill_rect(plot, x0, y1 - width, x1, y1, rgb);
+        zbrowser_lainos_offscreen_fill_rect(plot, x0, y0, x0 + width, y1, rgb);
+        zbrowser_lainos_offscreen_fill_rect(plot, x1 - width, y0, x1, y1, rgb);
+    }
+    return NSERROR_OK;
+}
+
+static nserror zbrowser_lainos_offscreen_line(const struct redraw_context *ctx,
+        const plot_style_t *style,
+        const struct rect *line) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    struct rect rectangle;
+    int width = 1;
+    uint32_t rgb;
+
+    if (plot == 0 || line == 0 || style == 0 ||
+        style->stroke_type == PLOT_OP_TYPE_NONE ||
+        style->stroke_colour == NS_TRANSPARENT) {
+        return NSERROR_OK;
+    }
+    if (style->stroke_width > 0) {
+        width = plot_style_fixed_to_int(style->stroke_width);
+        if (width < 1) {
+            width = 1;
+        }
+    }
+    rgb = zbrowser_lainos_ns_colour(style->stroke_colour);
+    if (line->y0 == line->y1) {
+        rectangle.x0 = line->x0 < line->x1 ? line->x0 : line->x1;
+        rectangle.x1 = (line->x0 > line->x1 ? line->x0 : line->x1) + width;
+        rectangle.y0 = line->y0 - width / 2;
+        rectangle.y1 = rectangle.y0 + width;
+        zbrowser_lainos_offscreen_fill_rect(plot, rectangle.x0, rectangle.y0,
+                                            rectangle.x1, rectangle.y1, rgb);
+        return NSERROR_OK;
+    }
+    if (line->x0 == line->x1) {
+        rectangle.x0 = line->x0 - width / 2;
+        rectangle.x1 = rectangle.x0 + width;
+        rectangle.y0 = line->y0 < line->y1 ? line->y0 : line->y1;
+        rectangle.y1 = (line->y0 > line->y1 ? line->y0 : line->y1) + width;
+        zbrowser_lainos_offscreen_fill_rect(plot, rectangle.x0, rectangle.y0,
+                                            rectangle.x1, rectangle.y1, rgb);
+        return NSERROR_OK;
+    }
+    zbrowser_lainos_offscreen_draw_line(plot,
+                                        line->x0,
+                                        line->y0,
+                                        line->x1,
+                                        line->y1,
+                                        width,
+                                        rgb);
+    return NSERROR_OK;
+}
+
+static nserror zbrowser_lainos_offscreen_bitmap(const struct redraw_context *ctx,
+        struct bitmap *bitmap,
+        int x,
+        int y,
+        int width,
+        int height,
+        colour bg,
+        bitmap_flags_t flags) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    zbrowser_lainos_bitmap_t *src = (zbrowser_lainos_bitmap_t *)bitmap;
+    int x0 = x;
+    int y0 = y;
+    int x1 = x + width;
+    int y1 = y + height;
+
+    if (plot == 0 || plot->bitmap == 0 || src == 0 || src->pixels == 0 ||
+        src->width <= 0 || src->height <= 0 || width <= 0 || height <= 0) {
+        return NSERROR_OK;
+    }
+    if ((flags & BITMAPF_REPEAT_X) != 0u) {
+        x0 = plot->clip.x0;
+        x1 = plot->clip.x1;
+    }
+    if ((flags & BITMAPF_REPEAT_Y) != 0u) {
+        y0 = plot->clip.y0;
+        y1 = plot->clip.y1;
+    }
+    if (!zbrowser_lainos_offscreen_clip_rect(plot, &x0, &y0, &x1, &y1)) {
+        return NSERROR_OK;
+    }
+    for (int py = y0; py < y1; ++py) {
+        int rel_y = py - y;
+        int tile_y = (flags & BITMAPF_REPEAT_Y) != 0u
+            ? ((rel_y % height) + height) % height
+            : rel_y;
+        int src_y;
+        if (tile_y < 0 || tile_y >= height) {
+            continue;
+        }
+        src_y = (int)(((int64_t)tile_y * (int64_t)src->height) / (int64_t)height);
+        if (src_y >= src->height) {
+            src_y = src->height - 1;
+        }
+        for (int px = x0; px < x1; ++px) {
+            int rel_x = px - x;
+            int tile_x = (flags & BITMAPF_REPEAT_X) != 0u
+                ? ((rel_x % width) + width) % width
+                : rel_x;
+            int src_x;
+            const uint8_t *sp;
+            uint32_t rgb;
+            uint32_t alpha;
+
+            if (tile_x < 0 || tile_x >= width) {
+                continue;
+            }
+            src_x = (int)(((int64_t)tile_x * (int64_t)src->width) / (int64_t)width);
+            if (src_x >= src->width) {
+                src_x = src->width - 1;
+            }
+            sp = src->pixels + ((size_t)src_y * (size_t)src->width + (size_t)src_x) * 4u;
+            rgb = ((uint32_t)sp[0] << 16) | ((uint32_t)sp[1] << 8) | (uint32_t)sp[2];
+            alpha = src->opaque ? 255u : (uint32_t)sp[3];
+            if (alpha != 255u) {
+                uint32_t dst = bg != NS_TRANSPARENT
+                    ? zbrowser_lainos_ns_colour(bg)
+                    : zbrowser_lainos_bitmap_get_rgb(plot->bitmap, px, py);
+                rgb = zbrowser_lainos_blend_rgb(dst, rgb, alpha);
+            }
+            zbrowser_lainos_bitmap_put_rgb(plot->bitmap, px, py, rgb);
+        }
+    }
+    return NSERROR_OK;
+}
+
+static nserror zbrowser_lainos_offscreen_noop(const struct redraw_context *ctx) {
+    (void)ctx;
+    return NSERROR_OK;
+}
+
+static nserror zbrowser_lainos_offscreen_noop_group(const struct redraw_context *ctx,
+        const char *name) {
+    (void)ctx;
+    (void)name;
+    return NSERROR_OK;
+}
+
+static int zbrowser_lainos_normalize_degrees(int degrees) {
+    int result = degrees % 360;
+    return result < 0 ? result + 360 : result;
+}
+
+static int zbrowser_lainos_sin_deg_1024(int degrees) {
+    int d = zbrowser_lainos_normalize_degrees(degrees);
+    int sign = 1;
+    int numerator;
+    int denominator;
+
+    if (d > 180) {
+        d -= 180;
+        sign = -1;
+    }
+    if (d > 90) {
+        d = 180 - d;
+    }
+    numerator = 4 * d * (180 - d);
+    denominator = 40500 - d * (180 - d);
+    if (denominator == 0) {
+        return 0;
+    }
+    return sign * (numerator * 1024 + denominator / 2) / denominator;
+}
+
+static int zbrowser_lainos_cos_deg_1024(int degrees) {
+    return zbrowser_lainos_sin_deg_1024(degrees + 90);
+}
+
+static nserror zbrowser_lainos_offscreen_arc(const struct redraw_context *ctx,
+        const plot_style_t *style, int x, int y, int radius, int angle1, int angle2) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    int start = zbrowser_lainos_normalize_degrees(angle1);
+    int end = zbrowser_lainos_normalize_degrees(angle2);
+    int span = end - start;
+    int width = 1;
+    uint32_t rgb = 0;
+    int last_x = 0;
+    int last_y = 0;
+    bool have_last = false;
+
+    if (plot == 0 || style == 0 || radius <= 0) {
+        return NSERROR_OK;
+    }
+    if (radius > 256) {
+        radius = 256;
+    }
+    if (span <= 0) {
+        span += 360;
+    }
+    if (style->fill_type != PLOT_OP_TYPE_NONE &&
+        style->fill_colour != NS_TRANSPARENT) {
+        rgb = zbrowser_lainos_ns_colour(style->fill_colour);
+    } else if (style->stroke_type != PLOT_OP_TYPE_NONE &&
+               style->stroke_colour != NS_TRANSPARENT) {
+        rgb = zbrowser_lainos_ns_colour(style->stroke_colour);
+    } else {
+        return NSERROR_OK;
+    }
+    if (style->stroke_width > 0) {
+        width = plot_style_fixed_to_int(style->stroke_width);
+        if (width < 1) {
+            width = 1;
+        }
+    }
+    for (int step = 0; step <= span; ++step) {
+        int degrees = start + step + 90;
+        int px = x + (zbrowser_lainos_cos_deg_1024(degrees) * radius + 512) / 1024;
+        int py = y + (zbrowser_lainos_sin_deg_1024(degrees) * radius + 512) / 1024;
+
+        if (have_last) {
+            zbrowser_lainos_offscreen_draw_line(plot, last_x, last_y, px, py, width, rgb);
+        } else {
+            zbrowser_lainos_offscreen_fill_rect(plot,
+                                                px - width / 2,
+                                                py - width / 2,
+                                                px - width / 2 + width,
+                                                py - width / 2 + width,
+                                                rgb);
+        }
+        last_x = px;
+        last_y = py;
+        have_last = true;
+    }
+    return NSERROR_OK;
+}
+
+static nserror zbrowser_lainos_offscreen_disc(const struct redraw_context *ctx,
+        const plot_style_t *style, int x, int y, int radius) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    int r2;
+
+    if (plot == 0 || style == 0 || radius <= 0) {
+        return NSERROR_OK;
+    }
+    if (radius > 256) {
+        radius = 256;
+    }
+    r2 = radius * radius;
+    if (style->fill_type != PLOT_OP_TYPE_NONE &&
+        style->fill_colour != NS_TRANSPARENT) {
+        uint32_t rgb = zbrowser_lainos_ns_colour(style->fill_colour);
+        for (int dy = -radius; dy <= radius; ++dy) {
+            int span = 0;
+            while (span <= radius && span * span + dy * dy <= r2) {
+                ++span;
+            }
+            zbrowser_lainos_offscreen_fill_rect(plot,
+                                                x - span + 1,
+                                                y + dy,
+                                                x + span,
+                                                y + dy + 1,
+                                                rgb);
+        }
+    }
+    if (style->stroke_type != PLOT_OP_TYPE_NONE &&
+        style->stroke_colour != NS_TRANSPARENT) {
+        uint32_t rgb = zbrowser_lainos_ns_colour(style->stroke_colour);
+        int width = style->stroke_width > 0 ? plot_style_fixed_to_int(style->stroke_width) : 1;
+        int inner = radius - (width > 0 ? width : 1);
+        int inner2 = inner > 0 ? inner * inner : 0;
+        for (int dy = -radius; dy <= radius; ++dy) {
+            for (int dx = -radius; dx <= radius; ++dx) {
+                int d2 = dx * dx + dy * dy;
+                if (d2 <= r2 && (inner <= 0 || d2 >= inner2)) {
+                    zbrowser_lainos_offscreen_put_clipped(plot, x + dx, y + dy, rgb);
+                }
+            }
+        }
+    }
+    return NSERROR_OK;
+}
+
+static nserror zbrowser_lainos_offscreen_polygon(const struct redraw_context *ctx,
+        const plot_style_t *style, const int *p, unsigned int n) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    int min_y;
+    int max_y;
+
+    if (plot == 0 || style == 0 || p == 0 || n < 2u) {
+        return NSERROR_OK;
+    }
+    min_y = p[1];
+    max_y = p[1];
+    for (unsigned int i = 1u; i < n; ++i) {
+        int y = p[i * 2u + 1u];
+        if (y < min_y) {
+            min_y = y;
+        }
+        if (y > max_y) {
+            max_y = y;
+        }
+    }
+    if (min_y < plot->clip.y0) {
+        min_y = plot->clip.y0;
+    }
+    if (max_y >= plot->clip.y1) {
+        max_y = plot->clip.y1 - 1;
+    }
+    if (style->fill_type != PLOT_OP_TYPE_NONE &&
+        style->fill_colour != NS_TRANSPARENT &&
+        n >= 3u) {
+        uint32_t rgb = zbrowser_lainos_ns_colour(style->fill_colour);
+        int intersections[64];
+        unsigned int max_intersections = n < 64u ? n : 64u;
+
+        for (int y = min_y; y <= max_y; ++y) {
+            unsigned int count = 0;
+            for (unsigned int i = 0u; i < n && count < max_intersections; ++i) {
+                unsigned int j = (i + 1u) % n;
+                int x0 = p[i * 2u];
+                int y0 = p[i * 2u + 1u];
+                int x1 = p[j * 2u];
+                int y1 = p[j * 2u + 1u];
+                if ((y0 <= y && y1 > y) || (y1 <= y && y0 > y)) {
+                    intersections[count++] = x0 +
+                        (int)(((int64_t)(y - y0) * (int64_t)(x1 - x0)) /
+                              (int64_t)(y1 - y0));
+                }
+            }
+            for (unsigned int a = 0u; a + 1u < count; ++a) {
+                for (unsigned int b = a + 1u; b < count; ++b) {
+                    if (intersections[b] < intersections[a]) {
+                        int tmp = intersections[a];
+                        intersections[a] = intersections[b];
+                        intersections[b] = tmp;
+                    }
+                }
+            }
+            for (unsigned int k = 0u; k + 1u < count; k += 2u) {
+                zbrowser_lainos_offscreen_fill_rect(plot,
+                                                    intersections[k],
+                                                    y,
+                                                    intersections[k + 1u] + 1,
+                                                    y + 1,
+                                                    rgb);
+            }
+        }
+    }
+    if (style->stroke_type != PLOT_OP_TYPE_NONE &&
+        style->stroke_colour != NS_TRANSPARENT) {
+        uint32_t rgb = zbrowser_lainos_ns_colour(style->stroke_colour);
+        int width = style->stroke_width > 0 ? plot_style_fixed_to_int(style->stroke_width) : 1;
+        if (width < 1) {
+            width = 1;
+        }
+        for (unsigned int i = 0u; i < n; ++i) {
+            unsigned int j = (i + 1u) % n;
+            zbrowser_lainos_offscreen_draw_line(plot,
+                                                p[i * 2u],
+                                                p[i * 2u + 1u],
+                                                p[j * 2u],
+                                                p[j * 2u + 1u],
+                                                width,
+                                                rgb);
+        }
+    }
+    return NSERROR_OK;
+}
+
+static int zbrowser_lainos_round_float_to_int(float value) {
+    return (int)(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
+
+static void zbrowser_lainos_transform_point(float *x,
+        float *y,
+        const float transform[6]) {
+    if (x != 0 && y != 0 && transform != 0) {
+        float ox = *x;
+        float oy = *y;
+        *x = ox * transform[0] + oy * transform[2] + transform[4];
+        *y = ox * transform[1] + oy * transform[3] + transform[5];
+    }
+}
+
+static nserror zbrowser_lainos_offscreen_path(const struct redraw_context *ctx,
+        const plot_style_t *style, const float *p, unsigned int n,
+        const float transform[6]) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    int points[128 * 2u];
+    unsigned int point_count = 0u;
+    unsigned int moves = 0u;
+    unsigned int i = 0u;
+    bool valid = true;
+    float current_x = 0.0f;
+    float current_y = 0.0f;
+
+    if (plot == 0 || style == 0 || p == 0 || n == 0u || p[0] != PLOTTER_PATH_MOVE) {
+        return NSERROR_OK;
+    }
+    while (i < n && valid) {
+        if (p[i] == PLOTTER_PATH_MOVE) {
+            float tx;
+            float ty;
+
+            if (i + 2u >= n) {
+                valid = false;
+                break;
+            }
+            tx = p[i + 1u];
+            ty = p[i + 2u];
+            current_x = tx;
+            current_y = ty;
+            zbrowser_lainos_transform_point(&tx, &ty, transform);
+            ++moves;
+            if (moves == 1u && point_count < 128u) {
+                points[point_count * 2u] = zbrowser_lainos_round_float_to_int(tx);
+                points[point_count * 2u + 1u] = zbrowser_lainos_round_float_to_int(ty);
+                ++point_count;
+            }
+            i += 3u;
+        } else if (p[i] == PLOTTER_PATH_CLOSE) {
+            i += 1u;
+        } else if (p[i] == PLOTTER_PATH_LINE) {
+            float tx;
+            float ty;
+
+            if (i + 2u >= n) {
+                valid = false;
+                break;
+            }
+            tx = p[i + 1u];
+            ty = p[i + 2u];
+            current_x = tx;
+            current_y = ty;
+            zbrowser_lainos_transform_point(&tx, &ty, transform);
+            if (moves == 1u && point_count < 128u) {
+                points[point_count * 2u] = zbrowser_lainos_round_float_to_int(tx);
+                points[point_count * 2u + 1u] = zbrowser_lainos_round_float_to_int(ty);
+                ++point_count;
+            }
+            i += 3u;
+        } else if (p[i] == PLOTTER_PATH_BEZIER) {
+            float x0 = current_x;
+            float y0 = current_y;
+
+            if (i + 6u >= n) {
+                valid = false;
+                break;
+            }
+            for (unsigned int step = 1u; step <= 8u; ++step) {
+                float t = (float)step / 8.0f;
+                float mt = 1.0f - t;
+                float bx = mt * mt * mt * x0 +
+                    3.0f * mt * mt * t * p[i + 1u] +
+                    3.0f * mt * t * t * p[i + 3u] +
+                    t * t * t * p[i + 5u];
+                float by = mt * mt * mt * y0 +
+                    3.0f * mt * mt * t * p[i + 2u] +
+                    3.0f * mt * t * t * p[i + 4u] +
+                    t * t * t * p[i + 6u];
+
+                zbrowser_lainos_transform_point(&bx, &by, transform);
+                if (moves == 1u && point_count < 128u) {
+                    points[point_count * 2u] = zbrowser_lainos_round_float_to_int(bx);
+                    points[point_count * 2u + 1u] = zbrowser_lainos_round_float_to_int(by);
+                    ++point_count;
+                }
+            }
+            current_x = p[i + 5u];
+            current_y = p[i + 6u];
+            i += 7u;
+        } else {
+            valid = false;
+        }
+    }
+    if (!valid) {
+        return NSERROR_OK;
+    }
+    if (style->fill_type != PLOT_OP_TYPE_NONE &&
+        style->fill_colour != NS_TRANSPARENT &&
+        moves == 1u &&
+        point_count >= 3u) {
+        zbrowser_lainos_offscreen_polygon(ctx, style, points, point_count);
+    }
+    if (style->stroke_type != PLOT_OP_TYPE_NONE &&
+        style->stroke_colour != NS_TRANSPARENT) {
+        int last_x = 0;
+        int last_y = 0;
+        int start_x = 0;
+        int start_y = 0;
+        float source_x = 0.0f;
+        float source_y = 0.0f;
+        bool have_point = false;
+        uint32_t stroke = zbrowser_lainos_ns_colour(style->stroke_colour);
+        int width = style->stroke_width > 0 ? plot_style_fixed_to_int(style->stroke_width) : 1;
+
+        if (width < 1) {
+            width = 1;
+        }
+        i = 0u;
+        while (i < n) {
+            if (p[i] == PLOTTER_PATH_MOVE) {
+                float tx;
+                float ty;
+
+                if (i + 2u >= n) {
+                    break;
+                }
+                tx = p[i + 1u];
+                ty = p[i + 2u];
+                source_x = tx;
+                source_y = ty;
+                zbrowser_lainos_transform_point(&tx, &ty, transform);
+                last_x = zbrowser_lainos_round_float_to_int(tx);
+                last_y = zbrowser_lainos_round_float_to_int(ty);
+                start_x = last_x;
+                start_y = last_y;
+                have_point = true;
+                i += 3u;
+            } else if (p[i] == PLOTTER_PATH_CLOSE) {
+                if (have_point) {
+                    zbrowser_lainos_offscreen_draw_line(plot,
+                                                        last_x,
+                                                        last_y,
+                                                        start_x,
+                                                        start_y,
+                                                        width,
+                                                        stroke);
+                }
+                i += 1u;
+            } else if (p[i] == PLOTTER_PATH_LINE) {
+                float tx;
+                float ty;
+                int x;
+                int y;
+
+                if (i + 2u >= n) {
+                    break;
+                }
+                tx = p[i + 1u];
+                ty = p[i + 2u];
+                source_x = tx;
+                source_y = ty;
+                zbrowser_lainos_transform_point(&tx, &ty, transform);
+                x = zbrowser_lainos_round_float_to_int(tx);
+                y = zbrowser_lainos_round_float_to_int(ty);
+                if (have_point) {
+                    zbrowser_lainos_offscreen_draw_line(plot,
+                                                        last_x,
+                                                        last_y,
+                                                        x,
+                                                        y,
+                                                        width,
+                                                        stroke);
+                }
+                last_x = x;
+                last_y = y;
+                have_point = true;
+                i += 3u;
+            } else if (p[i] == PLOTTER_PATH_BEZIER) {
+                float x0 = source_x;
+                float y0 = source_y;
+
+                if (i + 6u >= n) {
+                    break;
+                }
+                for (unsigned int step = 1u; step <= 8u; ++step) {
+                    float t = (float)step / 8.0f;
+                    float mt = 1.0f - t;
+                    float bx = mt * mt * mt * x0 +
+                        3.0f * mt * mt * t * p[i + 1u] +
+                        3.0f * mt * t * t * p[i + 3u] +
+                        t * t * t * p[i + 5u];
+                    float by = mt * mt * mt * y0 +
+                        3.0f * mt * mt * t * p[i + 2u] +
+                        3.0f * mt * t * t * p[i + 4u] +
+                        t * t * t * p[i + 6u];
+                    int x;
+                    int y;
+
+                    zbrowser_lainos_transform_point(&bx, &by, transform);
+                    x = zbrowser_lainos_round_float_to_int(bx);
+                    y = zbrowser_lainos_round_float_to_int(by);
+                    if (have_point) {
+                        zbrowser_lainos_offscreen_draw_line(plot,
+                                                            last_x,
+                                                            last_y,
+                                                            x,
+                                                            y,
+                                                            width,
+                                                            stroke);
+                    }
+                    last_x = x;
+                    last_y = y;
+                    have_point = true;
+                }
+                source_x = p[i + 5u];
+                source_y = p[i + 6u];
+                i += 7u;
+            } else {
+                break;
+            }
+        }
+    }
+    return NSERROR_OK;
+}
+
+static int zbrowser_lainos_offscreen_plot_ttf_glyph(zbrowser_lainos_offscreen_plot_t *plot,
+        const struct plot_font_style *fstyle,
+        uint32_t codepoint,
+        int x,
+        int baseline_y,
+        uint32_t fg,
+        int bold,
+        int italic) {
+    zbrowser_lainos_font_cache_entry_t *glyph =
+        zbrowser_lainos_ttf_glyph(fstyle, codepoint);
+    int passes = bold != 0 ? 2 : 1;
+
+    if (plot == 0 || plot->bitmap == 0 || glyph == 0 || glyph->alpha == 0) {
+        return 0;
+    }
+    for (int pass = 0; pass < passes; ++pass) {
+        for (int row = 0; row < glyph->height; ++row) {
+            int shear = italic != 0 ? (glyph->height - row) / 5 : 0;
+            int py = baseline_y + glyph->yoff + row;
+
+            if (py < plot->clip.y0 || py >= plot->clip.y1) {
+                continue;
+            }
+            for (int col = 0; col < glyph->width; ++col) {
+                uint32_t alpha = glyph->alpha[(size_t)row * (size_t)glyph->width + (size_t)col];
+                int px;
+                uint32_t dst;
+                uint32_t rgb;
+
+                if (alpha == 0u) {
+                    continue;
+                }
+                px = x + glyph->xoff + col + shear + pass;
+                if (px < plot->clip.x0 || px >= plot->clip.x1) {
+                    continue;
+                }
+                dst = zbrowser_lainos_bitmap_get_rgb(plot->bitmap, px, py);
+                rgb = zbrowser_lainos_blend_rgb(dst, fg, alpha);
+                zbrowser_lainos_bitmap_put_rgb(plot->bitmap, px, py, rgb);
+            }
+        }
+    }
+    return glyph->advance + (bold != 0 ? 1 : 0);
+}
+
+static nserror zbrowser_lainos_offscreen_text(const struct redraw_context *ctx,
+        const plot_font_style_t *fstyle, int x, int y, const char *text, size_t length) {
+    zbrowser_lainos_offscreen_plot_t *plot =
+        ctx != 0 ? (zbrowser_lainos_offscreen_plot_t *)ctx->priv : 0;
+    size_t offset = 0;
+    int pen_x = x;
+    uint32_t fg;
+    int bold;
+    int italic;
+
+    if (plot == 0 || plot->bitmap == 0 || fstyle == 0 ||
+        text == 0 || length == 0u) {
+        return NSERROR_OK;
+    }
+    fg = zbrowser_lainos_ns_colour(fstyle->foreground);
+    bold = fstyle->weight >= 600;
+    italic = (fstyle->flags & (FONTF_ITALIC | FONTF_OBLIQUE)) != 0;
+    while (offset < length) {
+        uint32_t codepoint = 0xfffdu;
+        size_t next = zbrowser_lainos_utf8_next(text, length, offset, &codepoint);
+        int advance = zbrowser_lainos_offscreen_plot_ttf_glyph(plot,
+                                                               fstyle,
+                                                               codepoint,
+                                                               pen_x,
+                                                               y,
+                                                               fg,
+                                                               bold,
+                                                               italic);
+        if (advance <= 0) {
+            advance = zbrowser_lainos_char_width(fstyle, text, offset, next);
+        }
+        pen_x += advance;
+        offset = next;
+    }
+    return NSERROR_OK;
+}
+
+static const struct plotter_table zbrowser_lainos_offscreen_plotters = {
+    .clip = zbrowser_lainos_offscreen_clip,
+    .arc = zbrowser_lainos_offscreen_arc,
+    .disc = zbrowser_lainos_offscreen_disc,
+    .line = zbrowser_lainos_offscreen_line,
+    .rectangle = zbrowser_lainos_offscreen_rectangle,
+    .polygon = zbrowser_lainos_offscreen_polygon,
+    .path = zbrowser_lainos_offscreen_path,
+    .bitmap = zbrowser_lainos_offscreen_bitmap,
+    .text = zbrowser_lainos_offscreen_text,
+    .group_start = zbrowser_lainos_offscreen_noop_group,
+    .group_end = zbrowser_lainos_offscreen_noop,
+    .flush = zbrowser_lainos_offscreen_noop,
+    .option_knockout = false
+};
+
+static bool zbrowser_lainos_content_scaled_redraw(struct content *content,
+        int width,
+        int height,
+        const struct redraw_context *ctx) {
+    struct redraw_context redraw;
+    struct content_redraw_data data;
+    plot_style_t white_style;
+    struct rect clip;
+    bool ok = true;
+
+    if (content == 0 || width <= 0 || height <= 0 ||
+        ctx == 0 || ctx->plot == 0) {
+        return false;
+    }
+    if (content->locked ||
+        content->handler == 0 ||
+        content->handler->redraw == 0) {
+        return true;
+    }
+
+    redraw = *ctx;
+    clip.x0 = 0;
+    clip.y0 = 0;
+    clip.x1 = width;
+    clip.y1 = height;
+    if (redraw.plot->clip != 0) {
+        ok = ok && redraw.plot->clip(&redraw, &clip) == NSERROR_OK;
+    }
+
+    memset(&white_style, 0, sizeof(white_style));
+    white_style.fill_type = PLOT_OP_TYPE_SOLID;
+    white_style.fill_colour = 0xffffffu;
+    white_style.stroke_type = PLOT_OP_TYPE_NONE;
+    white_style.stroke_colour = NS_TRANSPARENT;
+    if (redraw.plot->rectangle != 0) {
+        ok = ok && redraw.plot->rectangle(&redraw, &white_style, &clip) == NSERROR_OK;
+    }
+
+    data.x = 0;
+    data.y = 0;
+    data.width = width;
+    data.height = height;
+    data.background_colour = 0xffffffu;
+    data.scale = content->width > 0
+        ? (float)width / (float)content->width
+        : 1.0f;
+    data.repeat_x = false;
+    data.repeat_y = false;
+
+    return ok && content->handler->redraw(content, &data, &clip, &redraw);
+}
+
 static nserror zbrowser_lainos_bitmap_render(struct bitmap *bitmap,
-        struct hlcache_handle *content) {
-    (void)bitmap;
-    (void)content;
-    return NSERROR_NOT_IMPLEMENTED;
+        struct hlcache_handle *handle) {
+    zbrowser_lainos_bitmap_t *target = (zbrowser_lainos_bitmap_t *)bitmap;
+    zbrowser_lainos_offscreen_plot_t plot;
+    struct redraw_context redraw;
+    struct content *content;
+
+    ++zbrowser_lainos_bitmap_render_count;
+    if (target == 0 || target->pixels == 0 ||
+        target->width <= 0 || target->height <= 0 ||
+        handle == 0) {
+        ++zbrowser_lainos_bitmap_render_error_count;
+        return NSERROR_BAD_PARAMETER;
+    }
+    content = hlcache_handle_get_content(handle);
+    if (content == 0) {
+        ++zbrowser_lainos_bitmap_render_error_count;
+        return NSERROR_BAD_PARAMETER;
+    }
+    plot.bitmap = target;
+    plot.clip.x0 = 0;
+    plot.clip.y0 = 0;
+    plot.clip.x1 = target->width;
+    plot.clip.y1 = target->height;
+    redraw.interactive = false;
+    redraw.background_images = true;
+    redraw.plot = &zbrowser_lainos_offscreen_plotters;
+    redraw.priv = &plot;
+    if (!zbrowser_lainos_content_scaled_redraw(content, target->width, target->height, &redraw)) {
+        ++zbrowser_lainos_bitmap_render_error_count;
+        return NSERROR_INVALID;
+    }
+    target->opaque = true;
+    ++zbrowser_lainos_bitmap_render_success_count;
+    return NSERROR_OK;
 }
 
 int zbrowser_lainos_bitmap_width(struct bitmap *bitmap) {
@@ -1086,7 +2077,6 @@ static bool zbrowser_lainos_image_placeholder(zbrowser_lainos_image_content_t *i
     if (image == 0) {
         return false;
     }
-    ++zbrowser_lainos_image_fallback_count;
     image->bitmap = (struct bitmap *)guit->bitmap->create(width, height, BITMAP_OPAQUE | BITMAP_CLEAR);
     if (image->bitmap == 0) {
         return false;
@@ -1113,7 +2103,12 @@ static bool zbrowser_lainos_image_placeholder(zbrowser_lainos_image_content_t *i
     guit->bitmap->modified(image->bitmap);
     image->base.width = width;
     image->base.height = height;
+    image->base.size += (unsigned int)((size_t)width * (size_t)height * 4u);
     image->base.status = CONTENT_STATUS_DONE;
+    content_set_ready(&image->base);
+    content_set_done(&image->base);
+    content_set_status(&image->base, "");
+    ++zbrowser_lainos_image_fallback_count;
     return true;
 }
 
@@ -1403,6 +2398,238 @@ static struct netsurf_table zbrowser_lainos_gui_table = {
 };
 
 struct netsurf_table *guit = &zbrowser_lainos_gui_table;
+
+static bool zbrowser_lainos_frontend_smoke_redraw(struct content *content,
+        struct content_redraw_data *data,
+        const struct rect *clip,
+        const struct redraw_context *ctx) {
+    plot_style_t fill_style;
+    plot_style_t line_style;
+    plot_font_style_t text_style;
+    struct rect rect;
+    struct rect line;
+    int polygon[6];
+    float path[10];
+
+    (void)content;
+    (void)data;
+    if (clip == 0 || ctx == 0 || ctx->plot == 0 ||
+        ctx->plot->arc == 0 ||
+        ctx->plot->rectangle == 0 ||
+        ctx->plot->line == 0 ||
+        ctx->plot->disc == 0 ||
+        ctx->plot->polygon == 0 ||
+        ctx->plot->path == 0 ||
+        ctx->plot->text == 0) {
+        return false;
+    }
+    memset(&fill_style, 0, sizeof(fill_style));
+    fill_style.fill_type = PLOT_OP_TYPE_SOLID;
+    fill_style.fill_colour = 0x000000ffu;
+    fill_style.stroke_type = PLOT_OP_TYPE_NONE;
+    fill_style.stroke_colour = NS_TRANSPARENT;
+    memset(&line_style, 0, sizeof(line_style));
+    line_style.fill_type = PLOT_OP_TYPE_NONE;
+    line_style.fill_colour = NS_TRANSPARENT;
+    line_style.stroke_type = PLOT_OP_TYPE_SOLID;
+    line_style.stroke_colour = 0x000000ffu;
+    line_style.stroke_width = 1;
+
+    rect.x0 = clip->x0 + 1;
+    rect.y0 = clip->y0 + 1;
+    rect.x1 = clip->x0 + 4;
+    rect.y1 = clip->y0 + 4;
+    if (ctx->plot->rectangle(ctx, &fill_style, &rect) != NSERROR_OK) {
+        return false;
+    }
+    line.x0 = clip->x0 + 0;
+    line.y0 = clip->y0 + 11;
+    line.x1 = clip->x0 + 11;
+    line.y1 = clip->y0 + 0;
+    if (ctx->plot->line(ctx, &line_style, &line) != NSERROR_OK) {
+        return false;
+    }
+    if (ctx->plot->disc(ctx,
+                        &fill_style,
+                        clip->x0 + 9,
+                        clip->y0 + 9,
+                        2) != NSERROR_OK) {
+        return false;
+    }
+    polygon[0] = clip->x0 + 5;
+    polygon[1] = clip->y0 + 7;
+    polygon[2] = clip->x0 + 8;
+    polygon[3] = clip->y0 + 7;
+    polygon[4] = clip->x0 + 6;
+    polygon[5] = clip->y0 + 10;
+    if (ctx->plot->polygon(ctx, &fill_style, polygon, 3) != NSERROR_OK) {
+        return false;
+    }
+
+    path[0] = PLOTTER_PATH_MOVE;
+    path[1] = (float)(clip->x0 + 16);
+    path[2] = (float)(clip->y0 + 1);
+    path[3] = PLOTTER_PATH_LINE;
+    path[4] = (float)(clip->x0 + 22);
+    path[5] = (float)(clip->y0 + 1);
+    path[6] = PLOTTER_PATH_LINE;
+    path[7] = (float)(clip->x0 + 19);
+    path[8] = (float)(clip->y0 + 5);
+    path[9] = PLOTTER_PATH_CLOSE;
+    if (ctx->plot->path(ctx, &fill_style, path, 10u, 0) != NSERROR_OK) {
+        return false;
+    }
+    if (ctx->plot->arc(ctx,
+                       &line_style,
+                       clip->x0 + 30,
+                       clip->y0 + 7,
+                       4,
+                       0,
+                       90) != NSERROR_OK) {
+        return false;
+    }
+
+    memset(&text_style, 0, sizeof(text_style));
+    text_style.family = PLOT_FONT_FAMILY_SANS_SERIF;
+    text_style.size = plot_style_int_to_fixed(12);
+    text_style.weight = 400;
+    text_style.background = NS_TRANSPARENT;
+    text_style.foreground = 0x000000ffu;
+    return ctx->plot->text(ctx,
+                           &text_style,
+                           clip->x0 + 14,
+                           clip->y0 + 14,
+                           "A",
+                           1u) == NSERROR_OK;
+}
+
+static bool zbrowser_lainos_frontend_smoke_area_painted(uint8_t *pixels,
+        size_t stride,
+        int x0,
+        int y0,
+        int x1,
+        int y1) {
+    if (pixels == 0 || stride == 0u) {
+        return false;
+    }
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            uint8_t *pixel = pixels + (size_t)y * stride + (size_t)x * 4u;
+            if (pixel[0] != 0xffu ||
+                pixel[1] != 0xffu ||
+                pixel[2] != 0xffu) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+uint32_t zbrowser_lainos_frontend_smoke(void) {
+    static const struct content_handler smoke_handler = {
+        .redraw = zbrowser_lainos_frontend_smoke_redraw
+    };
+    struct content content;
+    struct bitmap *bitmap;
+    uint8_t *pixels;
+    uint32_t result = 0x1fu;
+    const size_t smoke_stride = 36u * 4u;
+
+    snprintf(zbrowser_lainos_frontend_smoke_status,
+             sizeof(zbrowser_lainos_frontend_smoke_status),
+             "NetSurf module frontend ready");
+    zbrowser_lainos_frontend_smoke_status[sizeof(zbrowser_lainos_frontend_smoke_status) - 1u] = 0;
+    if (guit == 0 || guit->bitmap == 0 ||
+        guit->bitmap->create == 0 ||
+        guit->bitmap->render == 0 ||
+        guit->bitmap->get_buffer == 0 ||
+        guit->bitmap->destroy == 0) {
+        snprintf(zbrowser_lainos_frontend_smoke_status,
+                 sizeof(zbrowser_lainos_frontend_smoke_status),
+                 "NetSurf module frontend missing bitmap hooks");
+        zbrowser_lainos_frontend_smoke_status[sizeof(zbrowser_lainos_frontend_smoke_status) - 1u] = 0;
+        return result;
+    }
+    bitmap = (struct bitmap *)guit->bitmap->create(36, 18, BITMAP_CLEAR);
+    if (bitmap == 0) {
+        snprintf(zbrowser_lainos_frontend_smoke_status,
+                 sizeof(zbrowser_lainos_frontend_smoke_status),
+                 "NetSurf module frontend bitmap create failed");
+        zbrowser_lainos_frontend_smoke_status[sizeof(zbrowser_lainos_frontend_smoke_status) - 1u] = 0;
+        return result;
+    }
+    memset(&content, 0, sizeof(content));
+    content.handler = &smoke_handler;
+    content.status = CONTENT_STATUS_DONE;
+    content.width = 36;
+    content.height = 18;
+    ++zbrowser_lainos_bitmap_render_count;
+    if (zbrowser_lainos_content_scaled_redraw(&content, 36, 18, &(struct redraw_context) {
+            .interactive = false,
+            .background_images = true,
+            .plot = &zbrowser_lainos_offscreen_plotters,
+            .priv = &(zbrowser_lainos_offscreen_plot_t) {
+                .bitmap = (zbrowser_lainos_bitmap_t *)bitmap,
+                .clip = { .x0 = 0, .y0 = 0, .x1 = 36, .y1 = 18 }
+            }
+        })) {
+        ++zbrowser_lainos_bitmap_render_success_count;
+        result |= 0x20u;
+        pixels = guit->bitmap->get_buffer(bitmap);
+        if (pixels != 0) {
+            uint8_t *rect_pixel = pixels + (2u * smoke_stride + 2u * 4u);
+            uint8_t *line_pixel = pixels + (6u * smoke_stride + 5u * 4u);
+            uint8_t *disc_pixel = pixels + (9u * smoke_stride + 9u * 4u);
+            uint8_t *poly_pixel = pixels + (8u * smoke_stride + 6u * 4u);
+            uint8_t *path_pixel = pixels + (2u * smoke_stride + 19u * 4u);
+            uint8_t *arc_pixel = pixels + (11u * smoke_stride + 30u * 4u);
+            bool text_painted =
+                zbrowser_lainos_frontend_smoke_area_painted(pixels,
+                                                            smoke_stride,
+                                                            14,
+                                                            4,
+                                                            23,
+                                                            15);
+            if ((rect_pixel[0] != 0xffu ||
+                 rect_pixel[1] != 0xffu ||
+                 rect_pixel[2] != 0xffu) &&
+                (line_pixel[0] != 0xffu ||
+                 line_pixel[1] != 0xffu ||
+                 line_pixel[2] != 0xffu) &&
+                (disc_pixel[0] != 0xffu ||
+                 disc_pixel[1] != 0xffu ||
+                 disc_pixel[2] != 0xffu) &&
+                (poly_pixel[0] != 0xffu ||
+                 poly_pixel[1] != 0xffu ||
+                 poly_pixel[2] != 0xffu) &&
+                (path_pixel[0] != 0xffu ||
+                 path_pixel[1] != 0xffu ||
+                 path_pixel[2] != 0xffu) &&
+                (arc_pixel[0] != 0xffu ||
+                 arc_pixel[1] != 0xffu ||
+                 arc_pixel[2] != 0xffu) &&
+                text_painted) {
+                result |= 0x40u;
+            }
+        }
+    } else {
+        ++zbrowser_lainos_bitmap_render_error_count;
+    }
+    guit->bitmap->destroy(bitmap);
+    snprintf(zbrowser_lainos_frontend_smoke_status,
+             sizeof(zbrowser_lainos_frontend_smoke_status),
+             "NetSurf module frontend ready br%u/%u/%u smoke%u",
+             zbrowser_lainos_bitmap_render_success_count,
+             zbrowser_lainos_bitmap_render_count,
+             zbrowser_lainos_bitmap_render_error_count,
+             result);
+    zbrowser_lainos_frontend_smoke_status[sizeof(zbrowser_lainos_frontend_smoke_status) - 1u] = 0;
+    return result;
+}
+
+const char *zbrowser_lainos_frontend_status(void) {
+    return zbrowser_lainos_frontend_smoke_status;
+}
 
 #ifdef ZBROWSER_ENGINE_USE_REAL_NETSURF_CACHE
 nserror fetch_data_register(void) {
@@ -2084,6 +3311,7 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags, nsurl *referer,
     struct hlcache_handle *handle;
     lwc_string *mime = 0;
     const char *content_type;
+    content_type computed_type;
     const char *charset;
     char *filtered_css = 0;
     uint32_t filtered_len = 0;
@@ -2096,7 +3324,6 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags, nsurl *referer,
 
     (void)flags;
     (void)post;
-    (void)accepted_types;
     if (result != 0) {
         *result = 0;
     }
@@ -2174,6 +3401,13 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags, nsurl *referer,
         hlcache_handle_release(handle);
         return NSERROR_NOMEM;
     }
+    computed_type = content_factory_type_from_mime_type(mime);
+    if ((accepted_types & computed_type) == 0) {
+        ++zbrowser_lainos_content_type_reject_count;
+        lwc_string_unref(mime);
+        hlcache_handle_release(handle);
+        return NSERROR_INVALID;
+    }
     charset = child != 0 && child->charset != 0 ? child->charset : "UTF-8";
     quirks = child != 0 ? child->quirks : false;
     handle->content = content_factory_create_content(&handle->llcache,
@@ -2201,8 +3435,50 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags, nsurl *referer,
     return NSERROR_OK;
 }
 
+static bool zbrowser_lainos_mime_base_equals(const char *mime,
+        const char *expected) {
+    size_t len;
+
+    if (mime == 0 || expected == 0) {
+        return false;
+    }
+    len = strlen(expected);
+    if (strncasecmp(mime, expected, len) != 0) {
+        return false;
+    }
+    return mime[len] == 0 || mime[len] == ';' ||
+        mime[len] == ' ' || mime[len] == '\t';
+}
+
 content_type content_factory_type_from_mime_type(lwc_string *mime_type) {
-    (void)mime_type;
+    const char *mime;
+
+    if (mime_type == 0) {
+        return CONTENT_NONE;
+    }
+    mime = lwc_string_data(mime_type);
+    if (mime == 0) {
+        return CONTENT_NONE;
+    }
+    if (zbrowser_lainos_mime_base_equals(mime, "text/html") ||
+        zbrowser_lainos_mime_base_equals(mime, "application/xhtml+xml")) {
+        return CONTENT_HTML;
+    }
+    if (zbrowser_lainos_mime_base_equals(mime, "text/css")) {
+        return CONTENT_CSS;
+    }
+    if (zbrowser_lainos_mime_base_equals(mime, "text/plain")) {
+        return CONTENT_TEXTPLAIN;
+    }
+    if (zbrowser_lainos_mime_base_equals(mime, "application/javascript") ||
+        zbrowser_lainos_mime_base_equals(mime, "application/ecmascript") ||
+        zbrowser_lainos_mime_base_equals(mime, "text/javascript") ||
+        zbrowser_lainos_mime_base_equals(mime, "text/ecmascript")) {
+        return CONTENT_JS;
+    }
+    if (strncasecmp(mime, "image/", 6u) == 0) {
+        return CONTENT_IMAGE;
+    }
     return CONTENT_NONE;
 }
 
@@ -2289,11 +3565,10 @@ bool content_redraw(struct hlcache_handle *handle, struct content_redraw_data *d
 
 bool content_scaled_redraw(struct hlcache_handle *handle, int width, int height,
         const struct redraw_context *ctx) {
-    (void)handle;
-    (void)width;
-    (void)height;
-    (void)ctx;
-    return false;
+    return zbrowser_lainos_content_scaled_redraw(hlcache_handle_get_content(handle),
+                                                width,
+                                                height,
+                                                ctx);
 }
 
 void content__request_redraw(struct content *content, int x, int y,
@@ -3001,6 +4276,7 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags, nsurl *referer,
     struct hlcache_handle *handle;
     lwc_string *mime = 0;
     const char *content_type;
+    content_type computed_type;
     const char *charset;
     char *filtered_css = 0;
     uint32_t filtered_len = 0;
@@ -3013,7 +4289,6 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags, nsurl *referer,
 
     (void)flags;
     (void)post;
-    (void)accepted_types;
     if (result != 0) {
         *result = 0;
     }
@@ -3090,6 +4365,13 @@ nserror hlcache_handle_retrieve(nsurl *url, uint32_t flags, nsurl *referer,
     if (lwc_intern_string(content_type, strlen(content_type), &mime) != lwc_error_ok) {
         hlcache_handle_release(handle);
         return NSERROR_NOMEM;
+    }
+    computed_type = content_factory_type_from_mime_type(mime);
+    if ((accepted_types & computed_type) == 0) {
+        ++zbrowser_lainos_content_type_reject_count;
+        lwc_string_unref(mime);
+        hlcache_handle_release(handle);
+        return NSERROR_INVALID;
     }
     charset = child != 0 && child->charset != 0 ? child->charset : "UTF-8";
     quirks = child != 0 ? child->quirks : false;
@@ -4146,6 +5428,7 @@ void zbrowser_lainos_net_stats_reset(void) {
     zbrowser_lainos_http_last_status = 0;
     zbrowser_lainos_http_last_bytes = 0;
     zbrowser_lainos_http_last_error = 0;
+    zbrowser_lainos_content_type_reject_count = 0;
     zbrowser_lainos_resource_cache_hits = 0;
     zbrowser_lainos_resource_cache_stores = 0;
     zbrowser_lainos_resource_cache_evictions = 0;
@@ -4155,6 +5438,13 @@ void zbrowser_lainos_net_stats_reset(void) {
     zbrowser_lainos_image_decode_count = 0;
     zbrowser_lainos_image_fallback_count = 0;
     zbrowser_lainos_image_error_count = 0;
+    zbrowser_lainos_bitmap_render_count = 0;
+    zbrowser_lainos_bitmap_render_success_count = 0;
+    zbrowser_lainos_bitmap_render_error_count = 0;
+    zbrowser_lainos_navigation_create_count = 0;
+    zbrowser_lainos_navigation_consume_count = 0;
+    zbrowser_lainos_js_exec_count = 0;
+    zbrowser_lainos_js_exec_success_count = 0;
 }
 
 uint32_t zbrowser_lainos_net_http_fetches(void) {
@@ -4179,6 +5469,26 @@ uint32_t zbrowser_lainos_net_http_last_bytes(void) {
 
 int32_t zbrowser_lainos_net_http_last_error(void) {
     return zbrowser_lainos_http_last_error;
+}
+
+uint32_t zbrowser_lainos_net_content_type_rejects(void) {
+    return zbrowser_lainos_content_type_reject_count;
+}
+
+uint32_t zbrowser_lainos_navigation_creates(void) {
+    return zbrowser_lainos_navigation_create_count;
+}
+
+uint32_t zbrowser_lainos_navigation_consumes(void) {
+    return zbrowser_lainos_navigation_consume_count;
+}
+
+uint32_t zbrowser_lainos_js_execs(void) {
+    return zbrowser_lainos_js_exec_count;
+}
+
+uint32_t zbrowser_lainos_js_exec_successes(void) {
+    return zbrowser_lainos_js_exec_success_count;
 }
 
 uint32_t zbrowser_lainos_net_cache_hits(void) {
@@ -4230,6 +5540,18 @@ uint32_t zbrowser_lainos_net_image_fallbacks(void) {
 
 uint32_t zbrowser_lainos_net_image_errors(void) {
     return zbrowser_lainos_image_error_count;
+}
+
+uint32_t zbrowser_lainos_net_bitmap_renders(void) {
+    return zbrowser_lainos_bitmap_render_count;
+}
+
+uint32_t zbrowser_lainos_net_bitmap_render_successes(void) {
+    return zbrowser_lainos_bitmap_render_success_count;
+}
+
+uint32_t zbrowser_lainos_net_bitmap_render_errors(void) {
+    return zbrowser_lainos_bitmap_render_error_count;
 }
 
 static const char *zbrowser_lainos_filetype_for_url(const char *url) {
@@ -4894,6 +6216,9 @@ nserror browser_window_navigate(struct browser_window *bw,
              "%s",
              nsurl_access(url));
     zbrowser_lainos_navigation_pending = zbrowser_lainos_pending_url[0] != 0;
+    if (zbrowser_lainos_navigation_pending) {
+        ++zbrowser_lainos_navigation_create_count;
+    }
     return zbrowser_lainos_navigation_pending ? NSERROR_OK : NSERROR_BAD_PARAMETER;
 }
 
@@ -4916,6 +6241,7 @@ int zbrowser_lainos_consume_navigation(uint8_t *out, uint32_t capacity) {
     out[i] = 0;
     zbrowser_lainos_pending_url[0] = 0;
     zbrowser_lainos_navigation_pending = false;
+    ++zbrowser_lainos_navigation_consume_count;
     return i != 0u ? 1 : 0;
 }
 
@@ -5255,6 +6581,7 @@ bool js_exec(jsthread *thread, const uint8_t *txt, size_t txtlen, const char *na
     if (ctx == 0) {
         return false;
     }
+    ++zbrowser_lainos_js_exec_count;
     duk_set_top(ctx, 0);
     thread->heap->exec_start_ms = (uint64_t)time(0) * 1000u;
     if (thread->heap->exec_start_ms == 0u) {
@@ -5267,6 +6594,7 @@ bool js_exec(jsthread *thread, const uint8_t *txt, size_t txtlen, const char *na
                                       (duk_size_t)txtlen) == 0 &&
         duk_pcall(ctx, 0) == 0) {
         ok = true;
+        ++zbrowser_lainos_js_exec_success_count;
     }
     thread->heap->exec_start_ms = 0u;
     duk_set_top(ctx, 0);
