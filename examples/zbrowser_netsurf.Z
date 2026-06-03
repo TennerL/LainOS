@@ -121,8 +121,8 @@ extern int image_probe(const uint8_t *data, uint32_t size, struct ImageInfo *out
 extern int image_decode_rgba32(const uint8_t *data, uint32_t size, uint8_t *rgba, uint32_t rgba_capacity, struct ImageInfo *out_image);
 
 struct NetSurfBrowserView {
-    int x;
-    int y;
+    uint32_t x;
+    uint32_t y;
     uint32_t width;
     uint32_t height;
     uint32_t scroll;

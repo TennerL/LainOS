@@ -89,6 +89,8 @@ static const uint8_t zbrowser_engine_status_initial[] =
     "C engine ABI compiled; NetSurf core integration pending";
 static const uint8_t zbrowser_engine_status_ready[] =
     "C engine ABI prepared raw document";
+static const uint8_t zbrowser_engine_status_bad_prepare_args[] =
+    "NetSurf prepare failed: bad document or viewport";
 #ifdef ZBROWSER_ENGINE_ENABLE_DOM
 static const uint8_t zbrowser_engine_status_dom_ready[] =
     "NetSurf libdom/hubbub parsed document";
@@ -5252,8 +5254,11 @@ int zbrowser_engine_prepare_html_view_c(const uint8_t *url,
                                         const uint8_t *html,
                                         uint32_t size,
                                         const zbrowser_engine_view_t *view) {
+    int prepare_rc;
+
     if (url == 0 || html == 0 || size == 0 || view == 0 ||
         view->width < 16u || view->height < 16u) {
+        zbrowser_engine_status_text = zbrowser_engine_status_bad_prepare_args;
         return -1;
     }
 #ifdef ZBROWSER_ENGINE_ENABLE_DOM
@@ -5273,15 +5278,23 @@ int zbrowser_engine_prepare_html_view_c(const uint8_t *url,
         zbrowser_engine_content_source_url[i] = (char)url[i];
         zbrowser_engine_content_source_url[i + 1u] = 0;
     }
+    prepare_rc = 0;
     if (needs_prepare) {
-        (void)zbrowser_engine_prepare_content_pipeline(url,
-                                                       html,
-                                                       size,
-                                                       view->width,
-                                                       view->height);
+        prepare_rc = zbrowser_engine_prepare_content_pipeline(url,
+                                                              html,
+                                                              size,
+                                                              view->width,
+                                                              view->height);
     }
     if (zbrowser_engine_content == 0 ||
-        zbrowser_engine_content->status == CONTENT_STATUS_ERROR) {
+        zbrowser_engine_content->status == CONTENT_STATUS_ERROR ||
+        prepare_rc != 0) {
+        if (zbrowser_engine_prepare_c(url, html, size) == 0) {
+            return 0;
+        }
+        if (zbrowser_engine_status_text == zbrowser_engine_status_initial) {
+            zbrowser_engine_status_text = zbrowser_engine_status_content_create_failed;
+        }
         return -1;
     }
     if (zbrowser_engine_content->status == CONTENT_STATUS_READY ||
@@ -5299,6 +5312,7 @@ int zbrowser_engine_prepare_html_view_c(const uint8_t *url,
     (void)html;
     (void)size;
     (void)view;
+    zbrowser_engine_status_text = zbrowser_engine_status_ready;
     return -1;
 #endif
 }
@@ -5313,6 +5327,8 @@ int zbrowser_engine_render_html_view_c(const uint8_t *url,
     }
 #ifdef ZBROWSER_ENGINE_ENABLE_DOM
 #ifdef ZBROWSER_ENGINE_USE_NETSURF_CONTENT
+    int render_rc;
+
     if (zbrowser_engine_content == 0 ||
         zbrowser_engine_content_source_html != html ||
         zbrowser_engine_content_source_size != size ||
@@ -5322,11 +5338,25 @@ int zbrowser_engine_render_html_view_c(const uint8_t *url,
             return -1;
         }
     }
-    return zbrowser_engine_redraw_content_view(view->x,
-                                              view->y,
-                                              view->width,
-                                              view->height,
-                                              zbrowser_engine_scroll_lines_to_px(view->scroll));
+    render_rc = zbrowser_engine_redraw_content_view(view->x,
+                                                    view->y,
+                                                    view->width,
+                                                    view->height,
+                                                    zbrowser_engine_scroll_lines_to_px(view->scroll));
+    if (render_rc == 0) {
+        return 0;
+    }
+    if (zbrowser_engine_redraw_html(view->scroll, view->width, view->height) == 0) {
+        return 0;
+    }
+    if (zbrowser_engine_paint_dom(view->scroll, view->width, view->height) == 0) {
+        return 0;
+    }
+    if (zbrowser_engine_paint_raw_html(html, size, view->scroll, view->width, view->height) == 0) {
+        zbrowser_engine_status_text = zbrowser_engine_content_detail_status("raw-fallback");
+        return 0;
+    }
+    return -1;
 #else
     (void)url;
     (void)html;

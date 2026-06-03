@@ -807,6 +807,452 @@ int snprintf(char *str, size_t size, const char *fmt, ...) {
     return ret;
 }
 
+int sprintf(char *str, const char *fmt, ...) {
+    va_list ap;
+    int ret;
+
+    va_start(ap, fmt);
+    ret = vsnprintf(str, (size_t)-1, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
+double fabs(double x) {
+    return x < 0.0 ? -x : x;
+}
+
+double trunc(double x) {
+    return (double)((int64_t)x);
+}
+
+double floor(double x) {
+    int64_t i = (int64_t)x;
+
+    if (x < 0.0 && (double)i != x) {
+        --i;
+    }
+    return (double)i;
+}
+
+double fmod(double x, double y) {
+    int64_t q;
+
+    if (y == 0.0) {
+        return 0.0;
+    }
+    q = (int64_t)(x / y);
+    return x - (double)q * y;
+}
+
+double sqrt(double x) {
+    double guess;
+
+    if (x <= 0.0) {
+        return 0.0;
+    }
+    guess = x > 1.0 ? x : 1.0;
+    for (uint32_t i = 0; i < 32u; ++i) {
+        guess = 0.5 * (guess + x / guess);
+    }
+    return guess;
+}
+
+static double libc_wrap_pi(double x) {
+    const double two_pi = 6.28318530717958647692;
+
+    while (x > 3.14159265358979323846) {
+        x -= two_pi;
+    }
+    while (x < -3.14159265358979323846) {
+        x += two_pi;
+    }
+    return x;
+}
+
+double sin(double x) {
+    double term;
+    double sum;
+
+    x = libc_wrap_pi(x);
+    term = x;
+    sum = x;
+    for (uint32_t n = 1; n < 8u; ++n) {
+        double denom = (double)((2u * n) * (2u * n + 1u));
+        term *= -(x * x) / denom;
+        sum += term;
+    }
+    return sum;
+}
+
+double cos(double x) {
+    double term;
+    double sum;
+
+    x = libc_wrap_pi(x);
+    term = 1.0;
+    sum = 1.0;
+    for (uint32_t n = 1; n < 8u; ++n) {
+        double denom = (double)((2u * n - 1u) * (2u * n));
+        term *= -(x * x) / denom;
+        sum += term;
+    }
+    return sum;
+}
+
+double tan(double x) {
+    double c = cos(x);
+
+    return c == 0.0 ? 0.0 : sin(x) / c;
+}
+
+double atan(double x) {
+    const double pi_over_2 = 1.57079632679489661923;
+    double sign = 1.0;
+    double term;
+    double sum;
+
+    if (x < 0.0) {
+        sign = -1.0;
+        x = -x;
+    }
+    if (x > 1.0) {
+        return sign * (pi_over_2 - atan(1.0 / x));
+    }
+    term = x;
+    sum = x;
+    for (uint32_t n = 1; n < 24u; ++n) {
+        term *= -(x * x);
+        sum += term / (double)(2u * n + 1u);
+    }
+    return sign * sum;
+}
+
+double atan2(double y, double x) {
+    const double pi = 3.14159265358979323846;
+
+    if (x > 0.0) {
+        return atan(y / x);
+    }
+    if (x < 0.0 && y >= 0.0) {
+        return atan(y / x) + pi;
+    }
+    if (x < 0.0 && y < 0.0) {
+        return atan(y / x) - pi;
+    }
+    if (y > 0.0) {
+        return pi * 0.5;
+    }
+    if (y < 0.0) {
+        return -pi * 0.5;
+    }
+    return 0.0;
+}
+
+double asin(double x) {
+    if (x > 1.0) {
+        x = 1.0;
+    } else if (x < -1.0) {
+        x = -1.0;
+    }
+    return atan2(x, sqrt(1.0 - x * x));
+}
+
+double acos(double x) {
+    return 1.57079632679489661923 - asin(x);
+}
+
+double exp(double x) {
+    double term = 1.0;
+    double sum = 1.0;
+
+    for (uint32_t n = 1; n < 32u; ++n) {
+        term *= x / (double)n;
+        sum += term;
+    }
+    return sum;
+}
+
+double log(double x) {
+    double y;
+    double y2;
+    double term;
+    double sum;
+
+    if (x <= 0.0) {
+        return 0.0;
+    }
+    y = (x - 1.0) / (x + 1.0);
+    y2 = y * y;
+    term = y;
+    sum = y;
+    for (uint32_t n = 1; n < 32u; ++n) {
+        term *= y2;
+        sum += term / (double)(2u * n + 1u);
+    }
+    return 2.0 * sum;
+}
+
+double log2(double x) {
+    return log(x) / 0.69314718055994530942;
+}
+
+double log10(double x) {
+    return log(x) / 2.30258509299404568402;
+}
+
+double pow(double x, double y) {
+    int64_t whole = (int64_t)y;
+    double out = 1.0;
+    int negative = 0;
+
+    if ((double)whole != y) {
+        return exp(log(x) * y);
+    }
+    if (whole < 0) {
+        negative = 1;
+        whole = -whole;
+    }
+    while (whole-- > 0) {
+        out *= x;
+    }
+    return negative && out != 0.0 ? 1.0 / out : out;
+}
+
+double cbrt(double x) {
+    double guess;
+    int negative = 0;
+
+    if (x == 0.0) {
+        return 0.0;
+    }
+    if (x < 0.0) {
+        negative = 1;
+        x = -x;
+    }
+    guess = x > 1.0 ? x : 1.0;
+    for (uint32_t i = 0; i < 32u; ++i) {
+        guess = (2.0 * guess + x / (guess * guess)) / 3.0;
+    }
+    return negative ? -guess : guess;
+}
+
+static int libc_is_leap_year(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+static int libc_days_in_month(int year, int month) {
+    static const int days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+    if (month == 1 && libc_is_leap_year(year)) {
+        return 29;
+    }
+    if (month < 0 || month >= 12) {
+        return 30;
+    }
+    return days[month];
+}
+
+static int64_t libc_days_before_year(int year) {
+    int64_t days = 0;
+
+    if (year >= 1970) {
+        for (int y = 1970; y < year; ++y) {
+            days += libc_is_leap_year(y) ? 366 : 365;
+        }
+    } else {
+        for (int y = year; y < 1970; ++y) {
+            days -= libc_is_leap_year(y) ? 366 : 365;
+        }
+    }
+    return days;
+}
+
+double difftime(time_t time1, time_t time0) {
+    return (double)(time1 - time0);
+}
+
+struct tm *gmtime_r(const time_t *timer, struct tm *result) {
+    int64_t seconds;
+    int64_t days;
+    int64_t day_seconds;
+    int year = 1970;
+
+    if (timer == 0 || result == 0) {
+        return 0;
+    }
+    seconds = *timer;
+    days = seconds / 86400;
+    day_seconds = seconds % 86400;
+    if (day_seconds < 0) {
+        day_seconds += 86400;
+        --days;
+    }
+    while (days >= (libc_is_leap_year(year) ? 366 : 365)) {
+        days -= libc_is_leap_year(year) ? 366 : 365;
+        ++year;
+    }
+    while (days < 0) {
+        --year;
+        days += libc_is_leap_year(year) ? 366 : 365;
+    }
+    result->tm_year = year - 1900;
+    result->tm_yday = (int)days;
+    result->tm_mon = 0;
+    while (days >= libc_days_in_month(year, result->tm_mon)) {
+        days -= libc_days_in_month(year, result->tm_mon);
+        ++result->tm_mon;
+    }
+    result->tm_mday = (int)days + 1;
+    result->tm_hour = (int)(day_seconds / 3600);
+    result->tm_min = (int)((day_seconds / 60) % 60);
+    result->tm_sec = (int)(day_seconds % 60);
+    result->tm_wday = (int)((4 + (*timer / 86400)) % 7);
+    if (result->tm_wday < 0) {
+        result->tm_wday += 7;
+    }
+    result->tm_isdst = 0;
+    return result;
+}
+
+struct tm *localtime_r(const time_t *timer, struct tm *result) {
+    return gmtime_r(timer, result);
+}
+
+time_t mktime(struct tm *tm) {
+    int year;
+    int64_t days;
+
+    if (tm == 0) {
+        return (time_t)-1;
+    }
+    year = tm->tm_year + 1900;
+    days = libc_days_before_year(year);
+    for (int month = 0; month < tm->tm_mon; ++month) {
+        days += libc_days_in_month(year, month);
+    }
+    days += tm->tm_mday - 1;
+    return (time_t)(days * 86400 + tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec);
+}
+
+static size_t libc_strftime_append(char *s, size_t max, size_t pos, const char *text) {
+    while (*text != '\0') {
+        if (pos + 1u < max) {
+            s[pos] = *text;
+        }
+        ++pos;
+        ++text;
+    }
+    return pos;
+}
+
+static size_t libc_strftime_number(char *s, size_t max, size_t pos, int value, int width) {
+    char tmp[16];
+    int len = 0;
+
+    if (value < 0) {
+        value = -value;
+    }
+    do {
+        tmp[len++] = (char)('0' + (value % 10));
+        value /= 10;
+    } while (value != 0 && len < (int)sizeof(tmp));
+    while (len < width && len < (int)sizeof(tmp)) {
+        tmp[len++] = '0';
+    }
+    while (len-- > 0) {
+        if (pos + 1u < max) {
+            s[pos] = tmp[len];
+        }
+        ++pos;
+    }
+    return pos;
+}
+
+size_t strftime(char *s, size_t max, const char *format, const struct tm *tm) {
+    size_t pos = 0;
+
+    if (max == 0) {
+        return 0;
+    }
+    while (*format != '\0') {
+        if (*format != '%') {
+            if (pos + 1u < max) {
+                s[pos] = *format;
+            }
+            ++pos;
+            ++format;
+            continue;
+        }
+        ++format;
+        if (*format == 'Y') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_year + 1900, 4);
+        } else if (*format == 'm') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_mon + 1, 2);
+        } else if (*format == 'd') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_mday, 2);
+        } else if (*format == 'H') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_hour, 2);
+        } else if (*format == 'M') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_min, 2);
+        } else if (*format == 'S') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_sec, 2);
+        } else if (*format == 'F') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_year + 1900, 4);
+            pos = libc_strftime_append(s, max, pos, "-");
+            pos = libc_strftime_number(s, max, pos, tm->tm_mon + 1, 2);
+            pos = libc_strftime_append(s, max, pos, "-");
+            pos = libc_strftime_number(s, max, pos, tm->tm_mday, 2);
+        } else if (*format == 'T') {
+            pos = libc_strftime_number(s, max, pos, tm->tm_hour, 2);
+            pos = libc_strftime_append(s, max, pos, ":");
+            pos = libc_strftime_number(s, max, pos, tm->tm_min, 2);
+            pos = libc_strftime_append(s, max, pos, ":");
+            pos = libc_strftime_number(s, max, pos, tm->tm_sec, 2);
+        } else if (*format == 's') {
+            pos = libc_strftime_number(s, max, pos, (int)mktime((struct tm *)tm), 1);
+        } else if (*format == '%') {
+            pos = libc_strftime_append(s, max, pos, "%");
+        } else if (*format != '\0') {
+            pos = libc_strftime_append(s, max, pos, "%");
+            if (pos + 1u < max) {
+                s[pos] = *format;
+            }
+            ++pos;
+        }
+        if (*format != '\0') {
+            ++format;
+        }
+    }
+    if (pos >= max) {
+        s[max - 1u] = '\0';
+        return 0;
+    }
+    s[pos] = '\0';
+    return pos;
+}
+
+char *strptime(const char *s, const char *format, struct tm *tm) {
+    char *endptr;
+    long seconds;
+    time_t parsed_time;
+
+    if (s == 0 || format == 0 || tm == 0) {
+        return 0;
+    }
+    if (strcmp(format, "%s") != 0) {
+        return (char *)s;
+    }
+    seconds = strtol(s, &endptr, 10);
+    if (endptr == s) {
+        return 0;
+    }
+    parsed_time = (time_t)seconds;
+    if (gmtime_r(&parsed_time, tm) == 0) {
+        return 0;
+    }
+    return endptr;
+}
+
 void *bsearch(const void *key,
               const void *base,
               size_t nmemb,
