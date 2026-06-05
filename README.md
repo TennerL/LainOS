@@ -12,6 +12,8 @@ tools, small graphical applications, and incremental kernel infrastructure.
 For day-to-day development practices, module/app workflows, debugging checklists,
 and desktop rendering rules, see `DEVELOPMENT_HANDBOOK.md`.
 
+![preview](/docs/vb.png "Screenshot")
+
 ## Current Highlights
 
 - UEFI `BOOTX64.EFI` loader written in C with ELF64 kernel loading.
