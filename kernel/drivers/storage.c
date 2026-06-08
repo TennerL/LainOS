@@ -2,9 +2,9 @@
 #include "storage.h"
 
 #define SECTOR_SIZE 512u
-#define RAMDISK_BLOCKS 131072ull
+#define RAMDISK_BLOCKS 1048576ull
 #define RAMDISK_PARTITION_START_LBA 2048u
-#define RAMDISK_OVERLAY_SECTORS 65536u
+#define RAMDISK_OVERLAY_SECTORS ((uint32_t)RAMDISK_BLOCKS)
 #define GPT_HEADER_LBA 1ull
 #define GPT_HEADER_MIN_SIZE 92u
 #define GPT_ENTRY_TYPE_GUID_OFFSET 0u
@@ -35,7 +35,6 @@ static uint8_t ramdisk_mbr[SECTOR_SIZE];
 static uint8_t zero_sector[SECTOR_SIZE];
 typedef struct {
     int used;
-    uint64_t lba;
     uint8_t data[SECTOR_SIZE];
 } ramdisk_overlay_sector_t;
 static ramdisk_overlay_sector_t ramdisk_overlay[RAMDISK_OVERLAY_SECTORS];
@@ -226,26 +225,22 @@ static void create_demo_mbr(void) {
 }
 
 static ramdisk_overlay_sector_t *find_ramdisk_overlay(uint64_t lba, int create_if_missing) {
-    ramdisk_overlay_sector_t *free_slot = 0;
-
-    for (uint32_t i = 0; i < RAMDISK_OVERLAY_SECTORS; ++i) {
-        if (ramdisk_overlay[i].used && ramdisk_overlay[i].lba == lba) {
-            return &ramdisk_overlay[i];
-        }
-
-        if (!ramdisk_overlay[i].used && !free_slot) {
-            free_slot = &ramdisk_overlay[i];
-        }
-    }
-
-    if (!create_if_missing || !free_slot) {
+    if (lba >= RAMDISK_OVERLAY_SECTORS) {
         return 0;
     }
 
-    free_slot->used = 1;
-    free_slot->lba = lba;
-    mem_zero(free_slot->data, sizeof(free_slot->data));
-    return free_slot;
+    ramdisk_overlay_sector_t *slot = &ramdisk_overlay[(uint32_t)lba];
+    if (slot->used) {
+        return slot;
+    }
+
+    if (!create_if_missing) {
+        return 0;
+    }
+
+    slot->used = 1;
+    mem_zero(slot->data, sizeof(slot->data));
+    return slot;
 }
 
 static int ramdisk_read(void *ctx, uint64_t lba, uint32_t count, void *buffer) {
@@ -758,6 +753,25 @@ int storage_mount(char drive_letter, const char *partition_name) {
     return 0;
 }
 
+void storage_unmount_block_device(uint32_t device_index) {
+    for (uint32_t i = 0; i < STORAGE_MAX_MOUNTS; ++i) {
+        mount_t *mount = &mounts[i];
+        const partition_t *part;
+
+        if (!mount->present) {
+            continue;
+        }
+
+        part = storage_get_partition(mount->partition_index);
+        if (part && part->device_index == device_index) {
+            mount->present = 0;
+            mount->partition_index = 0;
+            mount->partition_name[0] = '\0';
+            mount->fs_name[0] = '\0';
+        }
+    }
+}
+
 const mount_t *storage_get_mount_by_drive(char drive_letter) {
     drive_letter = to_upper(drive_letter);
     if (drive_letter < 'A' || drive_letter > 'Z') {
@@ -894,10 +908,6 @@ int storage_create_mbr_partition(uint32_t device_index, uint8_t mbr_type, uint32
 
     if (!storage_block_device_is_writable(device_index)) {
         return -2;
-    }
-
-    if (storage_device_has_mounted_partitions(device_index)) {
-        return -3;
     }
 
     if (dev->block_count <= MBR_PARTITION_ALIGNMENT_LBA + 64u ||

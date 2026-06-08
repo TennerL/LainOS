@@ -1,0 +1,38 @@
+extern uint8_t ccompat_is_even(uint32_t value);
+extern uint32_t ccompat_sum_bytes(const uint8_t *data, uint64_t len);
+extern uint32_t ccompat_constructs(uint32_t seed);
+extern uint32_t ccompat_table_probe(void);
+extern uint32_t ccompat_pointer_probe(void);
+
+uint8_t data[4] = "ABC";
+uint32_t sum;
+
+if (ccompat_is_even(8) != 1) {
+    print("browser_c ccompat: even failed\n");
+    return 30;
+}
+if (ccompat_is_even(7) != 0) {
+    print("browser_c ccompat: odd failed\n");
+    return 31;
+}
+
+sum = ccompat_sum_bytes(data, 3);
+if (sum != 399) {
+    print("browser_c ccompat: sum failed\n");
+    return 32;
+}
+if (ccompat_constructs(6) != 145) {
+    print("browser_c ccompat: constructs failed\n");
+    return 33;
+}
+if (ccompat_table_probe() != 125) {
+    print("browser_c ccompat: table constructs failed\n");
+    return 34;
+}
+if (ccompat_pointer_probe() != 80) {
+    print("browser_c ccompat: pointer constructs failed\n");
+    return 35;
+}
+
+print("browser_c ccompat: ok generic C frontend\n");
+return 0;

@@ -1,7 +1,8 @@
 output browser_c_tier1.bin
 test-return 0
 src src
-selfhost_base64.zo selfhost_base64.zo
-selfhost_time.zo selfhost_time.zo
-selfhost_unistd.zo selfhost_unistd.zo
+build src
+../../browser_c/third_party/netsurf/src/libnsutils/src/base64.c selfhost_base64.zo
+../../browser_c/third_party/netsurf/src/libnsutils/src/time.c selfhost_time.zo
+../../browser_c/third_party/netsurf/src/libnsutils/src/unistd.c selfhost_unistd.zo
 browser_c_tier1_test.Z browser_c_tier1_test.zo

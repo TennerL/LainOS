@@ -1,3 +1,4 @@
 include .
+include ..
 objects-only
 objects_only_alias_module.Z

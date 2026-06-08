@@ -57,6 +57,7 @@ const partition_t *storage_get_partition(uint32_t index);
 const partition_t *storage_find_partition(const char *name, uint32_t *out_index);
 
 int storage_mount(char drive_letter, const char *partition_name);
+void storage_unmount_block_device(uint32_t device_index);
 const mount_t *storage_get_mount_by_drive(char drive_letter);
 const mount_t *storage_get_mount(uint32_t index);
 int storage_drive_is_mounted(char drive_letter);

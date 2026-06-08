@@ -1,0 +1,20 @@
+extern void free(void *ptr);
+
+uint64_t accept_any(void *ptr) {
+    if (ptr == 0) {
+        return 0;
+    }
+    return 1;
+}
+
+export uint64_t void_pointer_compat(uint8_t *bytes, uint8_t **vector) {
+    void *opaque;
+    uint64_t score;
+
+    opaque = bytes;
+    score = accept_any(bytes);
+    score = score + accept_any(vector);
+    score = score + accept_any(opaque);
+    free(vector);
+    return score;
+}

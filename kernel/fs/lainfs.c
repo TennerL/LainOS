@@ -4,7 +4,7 @@
 #include "storage.h"
 
 #define LAINFS_BLOCK_SIZE 512u
-#define LAINFS_DIR_BLOCKS 128u
+#define LAINFS_DIR_BLOCKS 256u
 #define LAINFS_ENTRY_SIZE 64u
 #define LAINFS_MAX_FILES ((LAINFS_DIR_BLOCKS * LAINFS_BLOCK_SIZE) / LAINFS_ENTRY_SIZE)
 #define LAINFS_MAX_FILE_BLOCKS (LAINFS_FILE_CAPACITY / LAINFS_BLOCK_SIZE)
@@ -975,6 +975,19 @@ static int extent_is_free(const lainfs_superblock_t *super,
     return 1;
 }
 
+static int extent_overlaps_selected(uint32_t start_lba,
+                                    uint32_t blocks,
+                                    const lainfs_extent_t *selected,
+                                    uint32_t selected_count) {
+    for (uint32_t i = 0; i < selected_count; ++i) {
+        if (ranges_overlap(start_lba, blocks, selected[i].start_lba, selected[i].blocks)) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static int find_free_extents(uint32_t partition_index,
                              const lainfs_superblock_t *super,
                              uint32_t blocks,
@@ -990,55 +1003,47 @@ static int find_free_extents(uint32_t partition_index,
         return -1;
     }
 
-    for (uint64_t start = super->data_start_lba; start < data_end && remaining != 0; ++start) {
-        uint32_t run = 0;
+    while (remaining != 0) {
+        uint32_t best_start = 0;
+        uint32_t best_run = 0;
 
-        while (start + run < data_end &&
-               run < remaining &&
-               extent_is_free(super, (uint32_t)(start + run), 1, ignore)) {
-            ++run;
+        for (uint64_t start = super->data_start_lba; start < data_end;) {
+            while (start < data_end &&
+                   (!extent_is_free(super, (uint32_t)start, 1, ignore) ||
+                    extent_overlaps_selected((uint32_t)start, 1, out_extents, extent_count))) {
+                ++start;
+            }
+
+            uint32_t run_start = (uint32_t)start;
+            uint32_t run = 0;
+            while (start < data_end &&
+                   run < remaining &&
+                   extent_is_free(super, (uint32_t)start, 1, ignore) &&
+                   !extent_overlaps_selected((uint32_t)start, 1, out_extents, extent_count)) {
+                ++run;
+                ++start;
+            }
+
+            if (run > best_run) {
+                best_start = run_start;
+                best_run = run;
+                if (best_run == remaining) {
+                    break;
+                }
+            }
         }
 
-        if (run == 0) {
-            continue;
-        }
-
-        if (extent_count >= LAINFS_MAX_EXTENTS) {
+        if (best_run == 0 || extent_count >= LAINFS_MAX_EXTENTS) {
             return -1;
         }
 
-        out_extents[extent_count].start_lba = (uint32_t)start;
-        out_extents[extent_count].blocks = run;
+        out_extents[extent_count].start_lba = best_start;
+        out_extents[extent_count].blocks = best_run;
         ++extent_count;
-        remaining -= run;
-        start += run - 1u;
-    }
-
-    if (remaining != 0) {
-        return -1;
+        remaining -= best_run;
     }
 
     *out_extent_count = extent_count;
-    return 0;
-}
-
-static int clear_file_blocks(uint32_t partition_index, const lainfs_dirent_t *entry) {
-    lainfs_extent_t extents[LAINFS_MAX_EXTENTS];
-    uint32_t extent_count = 0;
-
-    if (entry_extents(entry, extents, &extent_count) != 0) {
-        return -1;
-    }
-
-    mem_zero(sector, sizeof(sector));
-    for (uint32_t extent_index = 0; extent_index < extent_count; ++extent_index) {
-        for (uint32_t i = 0; i < extents[extent_index].blocks; ++i) {
-            if (cached_write_block(partition_index, extents[extent_index].start_lba + i, sector) != 0) {
-                return -1;
-            }
-        }
-    }
-
     return 0;
 }
 
@@ -1130,7 +1135,23 @@ int lainfs_format_block_device(const char *device_name, char *out_partition_name
         return -1;
     }
 
-    if (storage_create_mbr_partition(device_index, 0x99u, &partition_index) != 0) {
+    if (lainfs_flush_all() != 0) {
+        return -5;
+    }
+
+    storage_unmount_block_device(device_index);
+
+    status = storage_create_mbr_partition(device_index, 0x99u, &partition_index);
+    if (status == -2) {
+        return -4;
+    }
+    if (status == -4) {
+        return -6;
+    }
+    if (status == -5) {
+        return -5;
+    }
+    if (status != 0) {
         return -2;
     }
 
@@ -1605,13 +1626,6 @@ int lainfs_delete_in_dir(char drive_letter, uint32_t parent_id, const char *name
         return -9;
     }
 
-    if (entry->used == LAINFS_ENTRY_FILE) {
-        if (clear_file_blocks(mount->partition_index, entry) != 0) {
-            lainfs_unlock();
-            return -6;
-        }
-    }
-
     mem_zero(entry, sizeof(*entry));
     if (save_directory(mount->partition_index, &super) != 0) {
         lainfs_unlock();
@@ -1974,7 +1988,6 @@ int lainfs_save_file_in_dir(char drive_letter,
     uint32_t required_blocks = new_blocks == 0 ? 1u : new_blocks;
     lainfs_extent_t new_extents[LAINFS_MAX_EXTENTS];
     uint32_t new_extent_count = 0;
-    lainfs_dirent_t old_entry = *slot;
 
     if (find_free_extents(mount->partition_index,
                           &super,
@@ -1984,11 +1997,6 @@ int lainfs_save_file_in_dir(char drive_letter,
                           &new_extent_count) != 0) {
         lainfs_unlock();
         return -9;
-    }
-
-    if (old_entry.start_lba && clear_file_blocks(mount->partition_index, &old_entry) != 0) {
-        lainfs_unlock();
-        return -6;
     }
 
     copy_name(slot->name, name);

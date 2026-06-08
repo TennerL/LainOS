@@ -5,6 +5,7 @@
 #define AHCI_MAX_DISKS 4
 #define AHCI_SECTOR_SIZE 512u
 #define AHCI_DEFAULT_BLOCKS 131072ull
+#define AHCI_MAX_TRANSFER_BLOCKS 128u
 
 #define PCI_CLASS_MASS_STORAGE 0x01u
 #define PCI_SUBCLASS_SATA 0x06u
@@ -21,6 +22,7 @@
 #define HBA_GHC_AE (1u << 31)
 
 #define FIS_TYPE_REG_H2D 0x27u
+#define ATA_CMD_IDENTIFY_DEVICE 0xECu
 #define ATA_CMD_READ_DMA_EXT 0x25u
 #define ATA_CMD_WRITE_DMA_EXT 0x35u
 
@@ -201,7 +203,7 @@ static int ahci_transfer(void *ctx, uint64_t lba, uint32_t count, void *buffer, 
     hba_port_t *port = disk->port;
     int slot = find_command_slot(port);
 
-    if (slot < 0 || count == 0 || count > 128u || lba > 0x0000FFFFFFFFFFFFull) {
+    if (slot < 0 || count == 0 || count > AHCI_MAX_TRANSFER_BLOCKS || lba > 0x0000FFFFFFFFFFFFull) {
         return -1;
     }
 
@@ -264,11 +266,124 @@ static int ahci_transfer(void *ctx, uint64_t lba, uint32_t count, void *buffer, 
 }
 
 static int ahci_read(void *ctx, uint64_t lba, uint32_t count, void *buffer) {
-    return ahci_transfer(ctx, lba, count, buffer, 0);
+    uint8_t *out = (uint8_t *)buffer;
+
+    while (count != 0) {
+        uint32_t chunk = count > AHCI_MAX_TRANSFER_BLOCKS ? AHCI_MAX_TRANSFER_BLOCKS : count;
+        if (ahci_transfer(ctx, lba, chunk, out, 0) != 0) {
+            return -1;
+        }
+        lba += chunk;
+        count -= chunk;
+        out += (uint64_t)chunk * AHCI_SECTOR_SIZE;
+    }
+
+    return 0;
 }
 
 static int ahci_write(void *ctx, uint64_t lba, uint32_t count, const void *buffer) {
-    return ahci_transfer(ctx, lba, count, (void *)buffer, 1);
+    const uint8_t *in = (const uint8_t *)buffer;
+
+    while (count != 0) {
+        uint32_t chunk = count > AHCI_MAX_TRANSFER_BLOCKS ? AHCI_MAX_TRANSFER_BLOCKS : count;
+        if (ahci_transfer(ctx, lba, chunk, (void *)in, 1) != 0) {
+            return -1;
+        }
+        lba += chunk;
+        count -= chunk;
+        in += (uint64_t)chunk * AHCI_SECTOR_SIZE;
+    }
+
+    return 0;
+}
+
+static uint16_t identify_word(const uint8_t *identify, uint32_t index) {
+    uint32_t offset = index * 2u;
+    return (uint16_t)identify[offset] | ((uint16_t)identify[offset + 1u] << 8);
+}
+
+static uint64_t identify_qword(const uint8_t *identify, uint32_t index) {
+    uint64_t value = 0;
+
+    for (uint32_t i = 0; i < 4u; ++i) {
+        value |= (uint64_t)identify_word(identify, index + i) << (i * 16u);
+    }
+
+    return value;
+}
+
+static uint64_t ahci_identify_block_count(ahci_disk_t *disk) {
+    uint8_t identify[AHCI_SECTOR_SIZE] __attribute__((aligned(16)));
+    hba_port_t *port = disk->port;
+    int slot = find_command_slot(port);
+
+    if (slot < 0) {
+        return AHCI_DEFAULT_BLOCKS;
+    }
+
+    port->is = 0xFFFFFFFFu;
+
+    hba_cmd_header_t *headers = (hba_cmd_header_t *)(uintptr_t)command_lists[disk->port_index % AHCI_MAX_DISKS];
+    hba_cmd_header_t *header = &headers[slot];
+    hba_cmd_table_t *table = &command_tables[disk->port_index % AHCI_MAX_DISKS];
+
+    mem_zero(identify, sizeof(identify));
+    mem_zero(header, sizeof(*header));
+    mem_zero(table, sizeof(*table));
+
+    header->command_fis_length = sizeof(fis_reg_h2d_t) / sizeof(uint32_t);
+    header->write = 0;
+    header->prdt_length = 1;
+    header->command_table_base = (uint32_t)(phys_addr(table) & 0xFFFFFFFFu);
+    header->command_table_base_upper = (uint32_t)(phys_addr(table) >> 32);
+
+    table->prdt_entry[0].data_base = (uint32_t)(phys_addr(identify) & 0xFFFFFFFFu);
+    table->prdt_entry[0].data_base_upper = (uint32_t)(phys_addr(identify) >> 32);
+    table->prdt_entry[0].byte_count_interrupt = AHCI_SECTOR_SIZE - 1u;
+
+    fis_reg_h2d_t *fis = (fis_reg_h2d_t *)table->command_fis;
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->command_control = 1;
+    fis->command = ATA_CMD_IDENTIFY_DEVICE;
+    fis->device = 0;
+
+    for (uint32_t i = 0; i < 1000000u; ++i) {
+        if ((port->tfd & (0x80u | 0x08u)) == 0) {
+            break;
+        }
+
+        if (i == 999999u) {
+            return AHCI_DEFAULT_BLOCKS;
+        }
+    }
+
+    port->ci = 1u << slot;
+
+    for (uint32_t i = 0; i < 10000000u; ++i) {
+        if ((port->ci & (1u << slot)) == 0) {
+            uint64_t lba48_blocks;
+            uint32_t lba28_blocks;
+
+            if (port->is & HBA_PxIS_TFES) {
+                return AHCI_DEFAULT_BLOCKS;
+            }
+
+            lba48_blocks = identify_qword(identify, 100u);
+            if (lba48_blocks != 0) {
+                return lba48_blocks;
+            }
+
+            lba28_blocks = (uint32_t)identify_word(identify, 60u) |
+                           ((uint32_t)identify_word(identify, 61u) << 16);
+            return lba28_blocks != 0 ? (uint64_t)lba28_blocks : AHCI_DEFAULT_BLOCKS;
+        }
+
+        if (port->is & HBA_PxIS_TFES) {
+            return AHCI_DEFAULT_BLOCKS;
+        }
+    }
+
+    return AHCI_DEFAULT_BLOCKS;
 }
 
 static void configure_port(hba_mem_t *hba, uint32_t port_index) {
@@ -304,8 +419,9 @@ static void configure_port(hba_mem_t *hba, uint32_t port_index) {
     disks[disk_index].port_index = disk_index;
 
     char name[8];
+    uint64_t block_count = ahci_identify_block_count(&disks[disk_index]);
     copy_name(name, disk_index);
-    if (storage_register_block_device(name, AHCI_SECTOR_SIZE, AHCI_DEFAULT_BLOCKS, ahci_read, ahci_write, &disks[disk_index]) == 0) {
+    if (storage_register_block_device(name, AHCI_SECTOR_SIZE, block_count, ahci_read, ahci_write, &disks[disk_index]) == 0) {
         ++disk_count;
     }
 }

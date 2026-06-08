@@ -1,4 +1,5 @@
 include .
+include ..
 module
 browser_compat_stub.Z browser_compat_stub.zo
 zbrowser_html.Z zbrowser_html.zo

@@ -131,6 +131,8 @@ void registry_init(void) {
     (void)registry_set("desktop.button", "0x8f3f62");
     (void)registry_set("desktop.task.active", "0x4b2347");
     (void)registry_set("desktop.task.inactive", "0x2d2038");
+    (void)registry_set("desktop.title.left", "0x7c3a78");
+    (void)registry_set("desktop.title.right", "0xe05f4f");
 }
 
 void registry_set_save_hook(void (*hook)(void)) {

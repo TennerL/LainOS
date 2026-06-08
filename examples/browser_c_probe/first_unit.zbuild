@@ -1,5 +1,6 @@
 output browser_c_first_unit.bin
 test-return 0
 src src
-selfhost_base64.zo selfhost_base64.zo
+build src
+../../browser_c/third_party/netsurf/src/libnsutils/src/base64.c selfhost_base64.zo
 browser_c_first_unit_test.Z browser_c_first_unit_test.zo

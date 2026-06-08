@@ -1,4 +1,5 @@
 include .
+include ..
 output zbrowser_css_repro.bin
 install-name zbrowser_css_repro.bin
 test-return 0

@@ -31,8 +31,8 @@ ZBROWSER_FULL_PACKAGE_STAMP := $(ZBROWSER_FULL_PACKAGE_DIR)/.stamp
 RAMDISK_SEED_MANIFEST := scripts/ramdisk-seed-files.txt
 RAMDISK_SEED_EXAMPLE_FILES := $(shell if [ -f $(RAMDISK_SEED_MANIFEST) ]; then sed '/^[[:space:]]*$$/d;/^[[:space:]]*#/d' $(RAMDISK_SEED_MANIFEST); else find examples -type f | sort; fi)
 ZBROWSER_FULL_SEED_ARGS = $(shell if [ -f $(ZBROWSER_FULL_PACKAGE_DIR)/seed-args.txt ]; then sed '/^[[:space:]]*$$/d' $(ZBROWSER_FULL_PACKAGE_DIR)/seed-args.txt; fi)
-RAMDISK_SEED_FILES := $(RAMDISK_SEED_MANIFEST) $(RAMDISK_SEED_EXAMPLE_FILES) $(ZBROWSER_C_ENGINE_ZO) $(ZBROWSER_FULL_PACKAGE_STAMP)
-RAMDISK_SEED_ARGS = $(RAMDISK_SEED_EXAMPLE_FILES) $(ZBROWSER_C_ENGINE_ZO)=examples/zbrowser_engine_module.zo $(ZBROWSER_FULL_SEED_ARGS)
+RAMDISK_SEED_FILES := $(RAMDISK_SEED_MANIFEST) $(RAMDISK_SEED_EXAMPLE_FILES) $(ZBROWSER_FULL_PACKAGE_STAMP)
+RAMDISK_SEED_ARGS = $(RAMDISK_SEED_EXAMPLE_FILES) $(ZBROWSER_FULL_SEED_ARGS)
 KERNEL_FONT_TTF := third_party/fonts/DejaVuSans.ttf
 KERNEL_FONT_TTF_H := build/dejavu_sans_ttf.h
 NETSURF_DEFAULT_CSS := third_party/netsurf/src/netsurf/resources/default.css
@@ -393,7 +393,64 @@ build:
 
 FORCE:
 
-$(ZBROWSER_FULL_PACKAGE_STAMP): scripts/zbrowser-netsurf-full-package.sh scripts/zbrowser-c-queue-module-link-probe.sh scripts/browser-selfhost-c-units.txt examples/browser_c_probe/src/zbrowser_engine_bridge.c examples/browser_c_probe/src/zbrowser_engine_platform.c examples/zbrowser_netsurf.Z | build
+$(ZBROWSER_FULL_PACKAGE_STAMP): scripts/zbrowser-netsurf-full-package.sh scripts/zbuild-host-lib.sh scripts/zbrowser-c-queue-module-link-probe.sh scripts/browser-selfhost-c-units.txt examples/browser_c_probe/src/zbrowser_engine_bridge.c examples/browser_c_probe/src/zbrowser_engine_platform.c examples/zbrowser_netsurf.Z \
+	third_party/netsurf/src/libnsutils/src/base64.c \
+	third_party/netsurf/src/libnsutils/src/time.c \
+	third_party/netsurf/src/libnsutils/src/unistd.c \
+	third_party/netsurf/src/libparserutils/src/charset/encodings/utf8.c \
+	third_party/netsurf/src/libwapcaplet/src/libwapcaplet.c \
+	third_party/netsurf/src/libdom/src/core/string.c \
+	third_party/netsurf/src/libdom/src/utils/namespace.c \
+	third_party/netsurf/src/libdom/src/core/nodelist.c \
+	third_party/netsurf/src/libdom/src/core/implementation.c \
+	third_party/netsurf/src/libdom/src/core/document.c \
+	third_party/netsurf/src/libdom/src/html/html_button_element.c \
+	third_party/netsurf/src/libdom/src/html/html_input_element.c \
+	third_party/netsurf/src/libdom/src/html/html_select_element.c \
+	third_party/netsurf/src/libdom/src/html/html_script_element.c \
+	third_party/netsurf/src/libdom/src/html/html_text_area_element.c \
+	third_party/netsurf/src/libhubbub/src/utils/errors.c \
+	third_party/netsurf/src/libhubbub/src/utils/string.c \
+	third_party/netsurf/src/libhubbub/src/charset/detect.c \
+	third_party/netsurf/src/netsurf/content/handlers/css/internal.c \
+	third_party/netsurf/src/netsurf/content/handlers/html/font.c \
+	third_party/netsurf/src/netsurf/content/handlers/html/redraw_border.c \
+	third_party/netsurf/src/netsurf/utils/bloom.c \
+	third_party/netsurf/src/netsurf/utils/corestrings.c \
+	third_party/netsurf/src/netsurf/utils/libdom.c \
+	third_party/netsurf/src/netsurf/desktop/bitmap.c \
+	third_party/netsurf/src/netsurf/desktop/mouse.c \
+	third_party/netsurf/src/netsurf/desktop/plot_style.c \
+	third_party/netsurf/src/netsurf/desktop/search.c \
+	third_party/netsurf/src/netsurf/desktop/searchweb.c \
+	third_party/netsurf/src/netsurf/desktop/scrollbar.c \
+	third_party/netsurf/src/netsurf/desktop/system_colour.c \
+	third_party/netsurf/src/netsurf/desktop/version.c \
+	third_party/netsurf/src/netsurf/utils/hashmap.c \
+	third_party/netsurf/src/netsurf/utils/hashtable.c \
+	third_party/netsurf/src/netsurf/utils/punycode.c \
+	third_party/netsurf/src/netsurf/utils/file.c \
+	third_party/netsurf/src/netsurf/utils/filepath.c \
+	third_party/netsurf/src/netsurf/utils/http/generics.c \
+	third_party/netsurf/src/netsurf/utils/http/primitives.c \
+	third_party/netsurf/src/netsurf/utils/http/parameter.c \
+	third_party/netsurf/src/netsurf/utils/http/content-disposition.c \
+	third_party/netsurf/src/netsurf/utils/http/content-type.c \
+	third_party/netsurf/src/netsurf/utils/http/cache-control.c \
+	third_party/netsurf/src/netsurf/utils/http/challenge.c \
+	third_party/netsurf/src/netsurf/utils/http/strict-transport-security.c \
+	third_party/netsurf/src/netsurf/utils/http/www-authenticate.c \
+	third_party/netsurf/src/netsurf/utils/idna.c \
+	third_party/netsurf/src/netsurf/utils/log.c \
+	third_party/netsurf/src/netsurf/utils/messages.c \
+	third_party/netsurf/src/netsurf/utils/nscolour.c \
+	third_party/netsurf/src/netsurf/utils/time.c \
+	third_party/netsurf/src/netsurf/utils/url.c \
+	third_party/netsurf/src/netsurf/utils/useragent.c \
+	third_party/netsurf/src/netsurf/utils/utf8.c \
+	third_party/netsurf/src/netsurf/utils/utils.c \
+	third_party/netsurf/src/netsurf/utils/nsurl/nsurl.c \
+	third_party/netsurf/src/netsurf/utils/nsurl/parse.c | build
 	scripts/zbrowser-netsurf-full-package.sh build/browser-selfhost-c-stage build/browser-selfhost-c-queue-module-link $(ZBROWSER_FULL_PACKAGE_DIR)
 	@touch $@
 

@@ -12,6 +12,7 @@ extern void draw_text_at_pixel(uint32_t x, uint32_t y, const uint8_t *text, uint
 extern int os_strlen(const uint8_t *text);
 extern int registry_set(const uint8_t *key, const uint8_t *value);
 extern const uint8_t *registry_get(const uint8_t *key);
+extern int registry_get_u32(const uint8_t *key, uint32_t default_value, uint32_t *out_value);
 
 global uint32_t personalize_enabled;
 global uint32_t personalize_editing;
@@ -66,6 +67,8 @@ void set_lain(void) {
     registry_set("desktop.button", "0x8f3f62");
     registry_set("desktop.task.active", "0x4b2347");
     registry_set("desktop.task.inactive", "0x2d2038");
+    registry_set("desktop.title.left", "0x7c3a78");
+    registry_set("desktop.title.right", "0xe05f4f");
 }
 
 void set_midnight(void) {
@@ -82,6 +85,8 @@ void set_midnight(void) {
     registry_set("desktop.button", "0x2b5f8a");
     registry_set("desktop.task.active", "0x1f415c");
     registry_set("desktop.task.inactive", "0x182330");
+    registry_set("desktop.title.left", "0x1d5274");
+    registry_set("desktop.title.right", "0x33aaff");
 }
 
 void set_olive(void) {
@@ -98,6 +103,8 @@ void set_olive(void) {
     registry_set("desktop.button", "0x546832");
     registry_set("desktop.task.active", "0x45552e");
     registry_set("desktop.task.inactive", "0x26301f");
+    registry_set("desktop.title.left", "0x4f612f");
+    registry_set("desktop.title.right", "0xb6c46a");
 }
 
 void set_plum(void) {
@@ -114,12 +121,63 @@ void set_plum(void) {
     registry_set("desktop.button", "0x7b4c8f");
     registry_set("desktop.task.active", "0x4b2347");
     registry_set("desktop.task.inactive", "0x2d2038");
+    registry_set("desktop.title.left", "0x613273");
+    registry_set("desktop.title.right", "0xd16b9a");
+}
+
+uint32_t theme_color(const uint8_t *key, uint32_t fallback) {
+    uint32_t value;
+
+    value = fallback;
+    registry_get_u32(key, fallback, &value);
+    return value;
+}
+
+void draw_title_shade(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t left, uint32_t right) {
+    uint32_t i;
+    uint32_t r1;
+    uint32_t g1;
+    uint32_t b1;
+    uint32_t r2;
+    uint32_t g2;
+    uint32_t b2;
+    uint32_t r;
+    uint32_t g;
+    uint32_t b;
+    uint32_t denom;
+    uint32_t color;
+
+    if (w == 0 || h == 0) {
+        return;
+    }
+    r1 = (left >> 16) & 255;
+    g1 = (left >> 8) & 255;
+    b1 = left & 255;
+    r2 = (right >> 16) & 255;
+    g2 = (right >> 8) & 255;
+    b2 = right & 255;
+    denom = w - 1;
+    if (denom == 0) {
+        denom = 1;
+    }
+    i = 0;
+    while (i < w) {
+        r = ((r1 * (denom - i)) + (r2 * i)) / denom;
+        g = ((g1 * (denom - i)) + (g2 * i)) / denom;
+        b = ((b1 * (denom - i)) + (b2 * i)) / denom;
+        color = (r << 16) | (g << 8) | b;
+        gfx_fill_rect(x + i, y, 1, h, color);
+        i = i + 1;
+    }
 }
 
 void draw_button(uint32_t x, uint32_t y, uint32_t w, const uint8_t *label, uint32_t color) {
+    uint32_t text;
+
+    text = theme_color("desktop.text", 0xf6eadb);
     gfx_fill_rect(x, y, w, 24, color);
-    gfx_draw_rect(x, y, w, 24, 0xf6eadb);
-    draw_text_at_pixel(x + 8, y + 7, label, 0xf6eadb, color);
+    gfx_draw_rect(x, y, w, 24, text);
+    draw_text_at_pixel(x + 8, y + 7, label, text, color);
 }
 
 void apply_image(void) {
@@ -133,6 +191,13 @@ export void zmodule_redraw(void) {
     uint32_t w;
     uint32_t h;
     uint32_t input_bg;
+    uint32_t bg;
+    uint32_t panel_inner;
+    uint32_t accent;
+    uint32_t accent_soft;
+    uint32_t text;
+    uint32_t title_left;
+    uint32_t title_right;
 
     if (personalize_enabled == 0) {
         return;
@@ -142,44 +207,55 @@ export void zmodule_redraw(void) {
     h = gfx_height();
     theme = registry_get("desktop.theme");
     image = registry_get("desktop.bg.image");
-    input_bg = 0x202b33;
+    bg = theme_color("desktop.bg.bottom", 0x101820);
+    panel_inner = theme_color("desktop.panel.inner", 0x202b33);
+    accent = theme_color("desktop.accent", 0xe05f4f);
+    accent_soft = theme_color("desktop.accent.soft", 0xb98556);
+    text = theme_color("desktop.text", 0xe8f1f7);
+    title_left = theme_color("desktop.title.left", 0x7c3a78);
+    title_right = theme_color("desktop.title.right", 0xe05f4f);
+    input_bg = panel_inner;
     if (personalize_editing != 0) {
-        input_bg = 0x2f3d48;
+        input_bg = accent_soft;
     }
 
-    gfx_fill_rect(0, 0, w, h, 0x101820);
-    gfx_fill_rect(0, 0, w, 34, 0x151c22);
-    gfx_fill_rect(0, 32, w, 2, 0xe05f4f);
-    draw_text_at_pixel(10, 10, "Personalize", 0xf7d154, 0x151c22);
+    gfx_fill_rect(0, 0, w, h, bg);
+    draw_title_shade(0, 0, w, 34, title_left, title_right);
+    gfx_fill_rect(0, 32, w, 2, accent);
+    draw_text_at_pixel(10, 10, "Personalize", text, title_left);
 
-    draw_text_at_pixel(10, 48, "Theme", 0xe8f1f7, 0x101820);
+    draw_text_at_pixel(10, 48, "Theme", text, bg);
     draw_button(10, 68, 82, "Lain", 0x8f3f62);
     draw_button(100, 68, 82, "Midnight", 0x2b5f8a);
     draw_button(190, 68, 82, "Olive", 0x546832);
     draw_button(280, 68, 82, "Plum", 0x7b4c8f);
 
-    draw_text_at_pixel(10, 108, "Background image path", 0xe8f1f7, 0x101820);
+    draw_text_at_pixel(10, 108, "Background image path", text, bg);
     gfx_fill_rect(10, 128, w - 20, 24, input_bg);
-    gfx_draw_rect(10, 128, w - 20, 24, 0x718096);
-    draw_text_at_pixel(16, 135, personalize_image_path, 0xf5fbf7, input_bg);
+    gfx_draw_rect(10, 128, w - 20, 24, accent_soft);
+    draw_text_at_pixel(16, 135, personalize_image_path, text, input_bg);
     if (personalize_editing != 0 && w > 40) {
-        draw_text_at_pixel(w - 24, 135, "_", 0xf7d154, input_bg);
+        draw_text_at_pixel(w - 24, 135, "_", accent, input_bg);
     }
 
-    draw_button(10, 162, 98, "Set image", 0x2b5f8a);
-    draw_button(116, 162, 98, "Clear image", 0x4b2347);
+    draw_button(10, 162, 98, "Set image", theme_color("desktop.button", 0x2b5f8a));
+    draw_button(116, 162, 98, "Clear image", theme_color("desktop.task.active", 0x4b2347));
 
-    draw_text_at_pixel(10, 204, "Current theme:", 0xbdd7d0, 0x101820);
+    draw_text_at_pixel(10, 204, "Current theme:", accent_soft, bg);
     if (theme != 0) {
-        draw_text_at_pixel(124, 204, theme, 0xf5fbf7, 0x101820);
+        draw_text_at_pixel(124, 204, theme, text, bg);
     }
-    draw_text_at_pixel(10, 222, "Current image:", 0xbdd7d0, 0x101820);
+    draw_text_at_pixel(10, 222, "Current image:", accent_soft, bg);
     if (image != 0 && image[0] != 0) {
-        draw_text_at_pixel(124, 222, image, 0xf5fbf7, 0x101820);
+        draw_text_at_pixel(124, 222, image, text, bg);
     } else {
-        draw_text_at_pixel(124, 222, "none", 0xf5fbf7, 0x101820);
+        draw_text_at_pixel(124, 222, "none", text, bg);
     }
-    draw_text_at_pixel(10, h - 18, personalize_status, 0xbdd7d0, 0x101820);
+    draw_text_at_pixel(10, 244, "Title shade preview", accent_soft, bg);
+    draw_title_shade(10, 264, w - 20, 22, title_left, title_right);
+    gfx_draw_rect(10, 264, w - 20, 22, text);
+    draw_text_at_pixel(18, 271, "Active title bar", text, title_left);
+    draw_text_at_pixel(10, h - 18, personalize_status, accent_soft, bg);
 }
 
 export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t wheel) {
@@ -191,31 +267,38 @@ export void zmodule_mouse(uint32_t x, uint32_t y, uint32_t buttons, int32_t whee
         if (x >= 10 && x < 92) {
             set_lain();
             copy_text(personalize_status, 80, "theme set to lain");
+            zmodule_redraw();
         } else if (x >= 100 && x < 182) {
             set_midnight();
             copy_text(personalize_status, 80, "theme set to midnight");
+            zmodule_redraw();
         } else if (x >= 190 && x < 272) {
             set_olive();
             copy_text(personalize_status, 80, "theme set to olive");
+            zmodule_redraw();
         } else if (x >= 280 && x < 362) {
             set_plum();
             copy_text(personalize_status, 80, "theme set to plum");
+            zmodule_redraw();
         }
         return;
     }
     if (y >= 128 && y < 152) {
         personalize_editing = 1;
         copy_text(personalize_status, 80, "type image path, press enter");
+        zmodule_redraw();
         return;
     }
     if (y >= 162 && y < 186) {
         personalize_editing = 0;
         if (x >= 10 && x < 108) {
             apply_image();
+            zmodule_redraw();
         } else if (x >= 116 && x < 214) {
             personalize_image_path[0] = 0;
             registry_set("desktop.bg.image", "");
             copy_text(personalize_status, 80, "background image cleared");
+            zmodule_redraw();
         }
     }
 }
@@ -227,15 +310,19 @@ export void zmodule_key(uint32_t key_type, uint32_t ch) {
     if (key_type == KEY_CHAR) {
         if (ch >= 32 && ch < 127) {
             append_char(personalize_image_path, 128, ch);
+            zmodule_redraw();
         }
     } else if (key_type == KEY_BACKSPACE) {
         backspace_text(personalize_image_path);
+        zmodule_redraw();
     } else if (key_type == KEY_ENTER) {
         personalize_editing = 0;
         apply_image();
+        zmodule_redraw();
     } else if (key_type == KEY_ESC) {
         personalize_editing = 0;
         copy_text(personalize_status, 80, "edit cancelled");
+        zmodule_redraw();
     }
 }
 

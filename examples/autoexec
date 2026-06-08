@@ -6,45 +6,18 @@ cp R:/examples/taskmgr_module.Z taskmgr_module.Z
 cp R:/examples/taskmgr_module.zbuild taskmgr_module.zbuild
 cp R:/examples/filemgr_module.Z filemgr_module.Z
 cp R:/examples/filemgr_module.zbuild filemgr_module.zbuild
-
-rm zbrowser_module.Z
-rm zbrowser_module.zo
-rm zbrowser_html.Z
-rm zbrowser_html.zo
-rm zbrowser_html_api.Z
-rm zbrowser_module.zbuild
-rm zbrowser_engine_module.zo
-rm zbrowser_netsurf.Z
-rm zbrowser_netsurf.zo
-rm zbrowser_netsurf_engine.zo
-rm zbrowser_netsurf.zbuild
-rm zbrowser_netsurf.zp00
-rm zbrowser_netsurf.zp01
-rm zbrowser_netsurf.zp02
-rm zbrowser_netsurf.zp03
-rm zbrowser_smoke.html
-rm zbrowser.autostart
-
-cp R:/examples/zbrowser_netsurf.Z zbrowser_netsurf.Z
-cp R:/examples/zbrowser_netsurf.zbuild zbrowser_netsurf.zbuild
-cp R:/examples/zbrowser_netsurf.zp00 zbrowser_netsurf.zp00
-cp R:/examples/zbrowser_netsurf.zp01 zbrowser_netsurf.zp01
-cp R:/examples/zbrowser_netsurf.zp02 zbrowser_netsurf.zp02
-cp R:/examples/zbrowser_netsurf.zp03 zbrowser_netsurf.zp03
 cp R:/examples/personalize_module.Z personalize_module.Z
 cp R:/examples/personalize_module.zbuild personalize_module.zbuild
 cp R:/examples/kernel_api.Z kernel_api.Z
 
 zinstall taskmgr_module
 zinstall filemgr_module
-// zbrowser_netsurf is a large staged NetSurf package; load it on demand.
-// zmod zbrowser_netsurf
 zinstall personalize_module
 
 clear
 
 //net reset
-// net ip 192.168.2.84 255.255.255.0 192.168.2.1
+//net ip 192.168.2.84 255.255.255.0 192.168.2.1
 //net ip 192.168.178.96 255.255.255.0 192.168.178.1
 //net dns 1.1.1.1
 net dhcp

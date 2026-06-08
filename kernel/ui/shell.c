@@ -1962,6 +1962,8 @@ static void theme_set_lain(void) {
     (void)registry_set("desktop.button", "0x8f3f62");
     (void)registry_set("desktop.task.active", "0x4b2347");
     (void)registry_set("desktop.task.inactive", "0x2d2038");
+    (void)registry_set("desktop.title.left", "0x7c3a78");
+    (void)registry_set("desktop.title.right", "0xe05f4f");
 }
 
 static void theme_set_midnight(void) {
@@ -1978,6 +1980,8 @@ static void theme_set_midnight(void) {
     (void)registry_set("desktop.button", "0x2b5f8a");
     (void)registry_set("desktop.task.active", "0x1f415c");
     (void)registry_set("desktop.task.inactive", "0x182330");
+    (void)registry_set("desktop.title.left", "0x1d5274");
+    (void)registry_set("desktop.title.right", "0x33aaff");
 }
 
 static void theme_set_olive(void) {
@@ -1994,6 +1998,8 @@ static void theme_set_olive(void) {
     (void)registry_set("desktop.button", "0x546832");
     (void)registry_set("desktop.task.active", "0x45552e");
     (void)registry_set("desktop.task.inactive", "0x26301f");
+    (void)registry_set("desktop.title.left", "0x4f612f");
+    (void)registry_set("desktop.title.right", "0xb6c46a");
 }
 
 static void theme_set_plum(void) {
@@ -2010,6 +2016,8 @@ static void theme_set_plum(void) {
     (void)registry_set("desktop.button", "0x7b4c8f");
     (void)registry_set("desktop.task.active", "0x4b2347");
     (void)registry_set("desktop.task.inactive", "0x2d2038");
+    (void)registry_set("desktop.title.left", "0x613273");
+    (void)registry_set("desktop.title.right", "0xd16b9a");
 }
 
 static void cmd_theme(const char *args, const boot_info_t *info) {
@@ -3273,6 +3281,22 @@ static int mount_formatted_system_partition(const char *partition_name) {
     return 0;
 }
 
+static void clear_drives_for_block_device(uint32_t device_index) {
+    for (uint32_t i = 0; i < MAX_DRIVES; ++i) {
+        const mount_t *mount = storage_get_mount(i);
+        const partition_t *part;
+
+        if (!mount) {
+            continue;
+        }
+
+        part = storage_get_partition(mount->partition_index);
+        if (part && part->device_index == device_index) {
+            drives[i].present = 0;
+        }
+    }
+}
+
 static int live_seed_parent_for_path(char drive_letter,
                                      const char *path,
                                      uint32_t *out_parent,
@@ -3528,9 +3552,20 @@ static void cmd_format(const char *args, const boot_info_t *info) {
 
     if (storage_find_block_device(target, 0)) {
         char partition_name[12];
+        uint32_t device_index = 0;
+        storage_find_block_device(target, &device_index);
+        clear_drives_for_block_device(device_index);
         int status = lainfs_format_block_device(target, partition_name, sizeof(partition_name));
         if (status == -2) {
-            console_puts("format failed: disk is not writable, mounted, or too small\n");
+            console_puts("format failed: could not create partition\n");
+            return;
+        }
+        if (status == -4) {
+            console_puts("format failed: disk is read-only\n");
+            return;
+        }
+        if (status == -6) {
+            console_puts("format failed: disk is too small\n");
             return;
         }
         if (status == -3 || status == -5) {
@@ -6565,6 +6600,49 @@ static void print_zscript_compile_failure(const char *command, const char *sourc
     console_puts("\n");
 }
 
+static void print_zscript_source_line(const char *source, uint32_t source_size, uint32_t line_number) {
+    uint32_t pos = 0;
+    uint32_t current_line = 1;
+    uint32_t target_line;
+
+    if (source == 0 || source_size == 0u || line_number == 0u) {
+        return;
+    }
+    target_line = line_number > 2u ? line_number - 2u : 1u;
+
+    while (pos < source_size && current_line < target_line) {
+        if (source[pos] == '\n') {
+            ++current_line;
+        }
+        ++pos;
+    }
+    if (current_line != target_line || pos >= source_size) {
+        return;
+    }
+
+    while (pos < source_size && current_line <= line_number + 2u) {
+        console_puts(current_line == line_number ? "generated line: " : "generated context: ");
+        console_put_dec64(current_line);
+        console_puts(": ");
+        while (pos < source_size && source[pos] != '\n') {
+            char ch = source[pos++];
+            if (ch == '\t') {
+                console_puts("    ");
+            } else {
+                char text[2];
+                text[0] = ch;
+                text[1] = '\0';
+                console_puts(text);
+            }
+        }
+        console_puts("\n");
+        if (pos < source_size && source[pos] == '\n') {
+            ++pos;
+        }
+        ++current_line;
+    }
+}
+
 static void cmd_zc(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -6669,668 +6747,6 @@ static void cmd_zc(const char *args, const boot_info_t *info) {
     console_puts(" bytes=");
     console_put_dec64(output_size);
     console_puts("\n");
-}
-
-static int zcc_emit_base64_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
-    uint32_t pos = 0;
-
-    if (append_text_limited(out, out_capacity, &pos,
-        "enum {\n"
-        "    NSUERROR_OK = 0,\n"
-        "    NSUERROR_NOSPACE = 24\n"
-        "};\n"
-        "\n"
-        "uint8_t nsu_base64_char(uint32_t value) {\n"
-        "    if (value < 26) {\n"
-        "        return (uint8_t)(65 + value);\n"
-        "    }\n"
-        "    if (value < 52) {\n"
-        "        return (uint8_t)(97 + value - 26);\n"
-        "    }\n"
-        "    if (value < 62) {\n"
-        "        return (uint8_t)(48 + value - 52);\n"
-        "    }\n"
-        "    if (value == 62) {\n"
-        "        return 43;\n"
-        "    }\n"
-        "    return 47;\n"
-        "}\n"
-        "\n"
-        "uint32_t nsu_base64_pad_count(uint64_t input_length) {\n"
-        "    uint64_t mod;\n"
-        "    mod = input_length % 3;\n"
-        "    if (mod == 1) {\n"
-        "        return 2;\n"
-        "    }\n"
-        "    if (mod == 2) {\n"
-        "        return 1;\n"
-        "    }\n"
-        "    return 0;\n"
-        "}\n"
-        "\n"
-        "export int nsu_base64_encode(const uint8_t *input,\n"
-        "                             uint64_t input_length,\n"
-        "                             uint8_t *output,\n"
-        "                             uint64_t *output_length) {\n"
-        "    uint64_t encoded_len;\n"
-        "    uint64_t i;\n"
-        "    uint64_t j;\n"
-        "    uint32_t octet_a;\n"
-        "    uint32_t octet_b;\n"
-        "    uint32_t octet_c;\n"
-        "    uint32_t triple;\n"
-        "    uint32_t pad;\n"
-        "\n"
-        "    encoded_len = 4 * ((input_length + 2) / 3);\n"
-        "    if (encoded_len > *output_length) {\n"
-        "        return NSUERROR_NOSPACE;\n"
-        "    }\n"
-        "\n"
-        "    i = 0;\n"
-        "    j = 0;\n"
-        "    while (i < input_length) {\n"
-        "        octet_a = 0;\n"
-        "        octet_b = 0;\n"
-        "        octet_c = 0;\n"
-        "        if (i < input_length) {\n"
-        "            octet_a = input[i];\n"
-        "            i = i + 1;\n"
-        "        }\n"
-        "        if (i < input_length) {\n"
-        "            octet_b = input[i];\n"
-        "            i = i + 1;\n"
-        "        }\n"
-        "        if (i < input_length) {\n"
-        "            octet_c = input[i];\n"
-        "            i = i + 1;\n"
-        "        }\n"
-        "        triple = (octet_a << 16) + (octet_b << 8) + octet_c;\n"
-        "        output[j] = nsu_base64_char((triple >> 18) & 63);\n"
-        "        j = j + 1;\n"
-        "        output[j] = nsu_base64_char((triple >> 12) & 63);\n"
-        "        j = j + 1;\n"
-        "        output[j] = nsu_base64_char((triple >> 6) & 63);\n"
-        "        j = j + 1;\n"
-        "        output[j] = nsu_base64_char(triple & 63);\n"
-        "        j = j + 1;\n"
-        "    }\n"
-        "\n"
-        "    pad = nsu_base64_pad_count(input_length);\n"
-        "    while (pad > 0) {\n"
-        "        output[encoded_len - pad] = 61;\n"
-        "        pad = pad - 1;\n"
-        "    }\n"
-        "    *output_length = encoded_len;\n"
-        "    return NSUERROR_OK;\n"
-        "}\n") != 0) {
-        return -1;
-    }
-
-    *out_size = pos;
-    return 0;
-}
-
-static int zcc_emit_time_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
-    uint32_t pos = 0;
-
-    if (append_text_limited(out, out_capacity, &pos,
-        "extern uint64_t ticks(void);\n"
-        "\n"
-        "enum {\n"
-        "    NSUERROR_OK = 0\n"
-        "};\n"
-        "\n"
-        "global uint64_t nsu_time_prev;\n"
-        "\n"
-        "export int nsu_getmonotonic_ms(uint64_t *current_out) {\n"
-        "    uint64_t current;\n"
-        "\n"
-        "    current = ticks();\n"
-        "    if (current >= nsu_time_prev) {\n"
-        "        *current_out = current;\n"
-        "        nsu_time_prev = current;\n"
-        "    } else {\n"
-        "        *current_out = nsu_time_prev;\n"
-        "    }\n"
-        "    return NSUERROR_OK;\n"
-        "}\n") != 0) {
-        return -1;
-    }
-
-    *out_size = pos;
-    return 0;
-}
-
-static int zcc_emit_unistd_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
-    uint32_t pos = 0;
-
-    if (append_text_limited(out, out_capacity, &pos,
-        "export int nsu_pwrite(int fd,\n"
-        "                       const uint8_t *buf,\n"
-        "                       uint64_t count,\n"
-        "                       uint64_t offset) {\n"
-        "    return -1;\n"
-        "}\n"
-        "\n"
-        "export int nsu_pread(int fd,\n"
-        "                      uint8_t *buf,\n"
-        "                      uint64_t count,\n"
-        "                      uint64_t offset) {\n"
-        "    return -1;\n"
-        "}\n"
-) != 0) {
-        return -1;
-    }
-
-    *out_size = pos;
-    return 0;
-}
-
-static int zcc_emit_parserutils_utf8_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
-    uint32_t pos = 0;
-
-    if (append_text_limited(out, out_capacity, &pos,
-        "enum {\n"
-        "    PARSERUTILS_OK = 0,\n"
-        "    PARSERUTILS_NOMEM = 1,\n"
-        "    PARSERUTILS_BADPARM = 2,\n"
-        "    PARSERUTILS_INVALID = 3,\n"
-        "    PARSERUTILS_NEEDDATA = 5\n"
-        "};\n"
-        "\n"
-        "uint32_t pu_utf8_continuations(uint8_t c) {\n"
-        "    if (c < 192) {\n"
-        "        return 0;\n"
-        "    }\n"
-        "    if (c < 224) {\n"
-        "        return 1;\n"
-        "    }\n"
-        "    if (c < 240) {\n"
-        "        return 2;\n"
-        "    }\n"
-        "    if (c < 248) {\n"
-        "        return 3;\n"
-        "    }\n"
-        "    if (c < 252) {\n"
-        "        return 4;\n"
-        "    }\n"
-        "    return 5;\n"
-        "}\n"
-        "\n"
-        "int pu_utf8_is_continuation(uint8_t c) {\n"
-        "    if (c >= 128 && c < 192) {\n"
-        "        return 1;\n"
-        "    }\n"
-        "    return 0;\n"
-        "}\n"
-        "\n"
-        "export int parserutils_charset_utf8_char_byte_length(const uint8_t *s,\n"
-        "                                                     uint64_t *len) {\n"
-        "    if (s == 0 || len == 0) {\n"
-        "        return PARSERUTILS_BADPARM;\n"
-        "    }\n"
-        "    *len = pu_utf8_continuations(s[0]) + 1;\n"
-        "    return PARSERUTILS_OK;\n"
-        "}\n"
-        "\n"
-        "export int parserutils_charset_utf8_length(const uint8_t *s,\n"
-        "                                          uint64_t max,\n"
-        "                                          uint64_t *len) {\n"
-        "    uint64_t off;\n"
-        "    uint64_t count;\n"
-        "    uint8_t c;\n"
-        "\n"
-        "    if (s == 0 || len == 0) {\n"
-        "        return PARSERUTILS_BADPARM;\n"
-        "    }\n"
-        "    off = 0;\n"
-        "    count = 0;\n"
-        "    while (off < max) {\n"
-        "        c = s[off];\n"
-        "        if (c < 128) {\n"
-        "            off = off + 1;\n"
-        "        } else if (c >= 192 && c < 224) {\n"
-        "            off = off + 2;\n"
-        "        } else if (c >= 224 && c < 240) {\n"
-        "            off = off + 3;\n"
-        "        } else if (c >= 240 && c < 248) {\n"
-        "            off = off + 4;\n"
-        "        } else if (c >= 248 && c < 252) {\n"
-        "            off = off + 5;\n"
-        "        } else if (c >= 252 && c < 254) {\n"
-        "            off = off + 6;\n"
-        "        } else {\n"
-        "            return PARSERUTILS_INVALID;\n"
-        "        }\n"
-        "        count = count + 1;\n"
-        "    }\n"
-        "    *len = count;\n"
-        "    return PARSERUTILS_OK;\n"
-        "}\n"
-        "\n"
-        "export int parserutils_charset_utf8_prev(const uint8_t *s,\n"
-        "                                        uint32_t off,\n"
-        "                                        uint32_t *prevoff) {\n"
-        "    if (s == 0 || prevoff == 0) {\n"
-        "        return PARSERUTILS_BADPARM;\n"
-        "    }\n"
-        "    while (off != 0 && pu_utf8_is_continuation(s[off - 1]) != 0) {\n"
-        "        off = off - 1;\n"
-        "    }\n"
-        "    if (off != 0) {\n"
-        "        off = off - 1;\n"
-        "    }\n"
-        "    *prevoff = off;\n"
-        "    return PARSERUTILS_OK;\n"
-        "}\n"
-        "\n"
-        "export int parserutils_charset_utf8_next(const uint8_t *s,\n"
-        "                                        uint32_t len,\n"
-        "                                        uint32_t off,\n"
-        "                                        uint32_t *nextoff) {\n"
-        "    if (s == 0 || off >= len || nextoff == 0) {\n"
-        "        return PARSERUTILS_BADPARM;\n"
-        "    }\n"
-        "    if (s[off] < 128 || s[off] >= 192) {\n"
-        "        off = off + 1;\n"
-        "    }\n"
-        "    while (off < len && pu_utf8_is_continuation(s[off]) != 0) {\n"
-        "        off = off + 1;\n"
-        "    }\n"
-        "    *nextoff = off;\n"
-        "    return PARSERUTILS_OK;\n"
-        "}\n"
-        "\n"
-        "export int parserutils_charset_utf8_next_paranoid(const uint8_t *s,\n"
-        "                                                 uint32_t len,\n"
-        "                                                 uint32_t off,\n"
-        "                                                 uint32_t *nextoff) {\n"
-        "    uint32_t n_cont;\n"
-        "    uint32_t skip;\n"
-        "\n"
-        "    if (s == 0 || off >= len || nextoff == 0) {\n"
-        "        return PARSERUTILS_BADPARM;\n"
-        "    }\n"
-        "    if (!(s[off] < 128 || s[off] >= 192)) {\n"
-        "        *nextoff = off + 1;\n"
-        "        return PARSERUTILS_OK;\n"
-        "    }\n"
-        "    n_cont = pu_utf8_continuations(s[off]);\n"
-        "    if (off + n_cont + 1 >= len) {\n"
-        "        return PARSERUTILS_NEEDDATA;\n"
-        "    }\n"
-        "    skip = 1;\n"
-        "    while (skip <= n_cont && pu_utf8_is_continuation(s[off + skip]) != 0) {\n"
-        "        skip = skip + 1;\n"
-        "    }\n"
-        "    *nextoff = off + skip;\n"
-        "    return PARSERUTILS_OK;\n"
-        "}\n"
-        "\n"
-        "export int parserutils_charset_utf8_to_ucs4(const uint8_t *s,\n"
-        "                                           uint64_t len,\n"
-        "                                           uint32_t *ucs4,\n"
-        "                                           uint64_t *clen) {\n"
-        "    uint32_t c;\n"
-        "    uint32_t min;\n"
-        "    uint32_t n;\n"
-        "    uint32_t i;\n"
-        "    uint32_t t;\n"
-        "\n"
-        "    if (s == 0 || ucs4 == 0 || clen == 0) {\n"
-        "        return PARSERUTILS_BADPARM;\n"
-        "    }\n"
-        "    if (len == 0) {\n"
-        "        return PARSERUTILS_NEEDDATA;\n"
-        "    }\n"
-        "    c = s[0];\n"
-        "    if (c < 128) {\n"
-        "        n = 1;\n"
-        "        min = 0;\n"
-        "    } else if (c >= 192 && c < 224) {\n"
-        "        c = c & 31;\n"
-        "        n = 2;\n"
-        "        min = 128;\n"
-        "    } else if (c >= 224 && c < 240) {\n"
-        "        c = c & 15;\n"
-        "        n = 3;\n"
-        "        min = 2048;\n"
-        "    } else if (c >= 240 && c < 248) {\n"
-        "        c = c & 7;\n"
-        "        n = 4;\n"
-        "        min = 65536;\n"
-        "    } else {\n"
-        "        return PARSERUTILS_INVALID;\n"
-        "    }\n"
-        "    if (len < n) {\n"
-        "        return PARSERUTILS_NEEDDATA;\n"
-        "    }\n"
-        "    i = 1;\n"
-        "    while (i < n) {\n"
-        "        t = s[i];\n"
-        "        if (t < 128 || t >= 192) {\n"
-        "            return PARSERUTILS_INVALID;\n"
-        "        }\n"
-        "        c = (c << 6) | (t & 63);\n"
-        "        i = i + 1;\n"
-        "    }\n"
-        "    if (c < min || (c >= 55296 && c <= 57343) || c == 65534 || c == 65535) {\n"
-        "        return PARSERUTILS_INVALID;\n"
-        "    }\n"
-        "    *ucs4 = c;\n"
-        "    *clen = n;\n"
-        "    return PARSERUTILS_OK;\n"
-        "}\n"
-        "\n"
-        "export int parserutils_charset_utf8_from_ucs4(uint32_t ucs4,\n"
-        "                                             uint8_t **s,\n"
-        "                                             uint64_t *len) {\n"
-        "    uint8_t *buf;\n"
-        "    uint32_t l;\n"
-        "    uint32_t i;\n"
-        "\n"
-        "    if (s == 0 || *s == 0 || len == 0) {\n"
-        "        return PARSERUTILS_BADPARM;\n"
-        "    }\n"
-        "    if (ucs4 < 128) {\n"
-        "        l = 1;\n"
-        "    } else if (ucs4 < 2048) {\n"
-        "        l = 2;\n"
-        "    } else if (ucs4 < 65536) {\n"
-        "        l = 3;\n"
-        "    } else if (ucs4 < 2097152) {\n"
-        "        l = 4;\n"
-        "    } else {\n"
-        "        return PARSERUTILS_INVALID;\n"
-        "    }\n"
-        "    if (l > *len) {\n"
-        "        return PARSERUTILS_NOMEM;\n"
-        "    }\n"
-        "    buf = *s;\n"
-        "    if (l == 1) {\n"
-        "        buf[0] = (uint8_t)ucs4;\n"
-        "    } else {\n"
-        "        i = l;\n"
-        "        while (i > 1) {\n"
-        "            buf[i - 1] = (uint8_t)(128 | (ucs4 & 63));\n"
-        "            ucs4 = ucs4 >> 6;\n"
-        "            i = i - 1;\n"
-        "        }\n"
-        "        buf[0] = (uint8_t)((255 << (8 - l)) | ucs4);\n"
-        "    }\n"
-        "    *s = *s + l;\n"
-        "    *len = *len - l;\n"
-        "    return PARSERUTILS_OK;\n"
-        "}\n"
-) != 0) {
-        return -1;
-    }
-
-    *out_size = pos;
-    return 0;
-}
-
-static int zcc_emit_lwc_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
-    uint32_t pos = 0;
-
-    if (append_text_limited(out, out_capacity, &pos,
-        "extern uint8_t *malloc(uint64_t size);\n"
-        "extern void free(uint8_t *ptr);\n"
-        "\n"
-        "enum {\n"
-        "    lwc_error_ok = 0,\n"
-        "    lwc_error_oom = 1,\n"
-        "    lwc_error_range = 2\n"
-        "};\n"
-        "\n"
-        "struct lwc_string_s {\n"
-        "    struct lwc_string_s *next;\n"
-        "    uint64_t len;\n"
-        "    uint32_t hash;\n"
-        "    uint32_t refcnt;\n"
-        "};\n"
-        "\n"
-        "typedef struct lwc_string_s lwc_string;\n"
-        "\n"
-        "global lwc_string *lwc_head;\n"
-        "\n"
-        "uint8_t *lwc_data(lwc_string *str) {\n"
-        "    return (uint8_t *)(str + 1);\n"
-        "}\n"
-        "\n"
-        "uint8_t lwc_lower(uint8_t c) {\n"
-        "    if (c >= 65 && c <= 90) {\n"
-        "        return c + 32;\n"
-        "    }\n"
-        "    return c;\n"
-        "}\n"
-        "\n"
-        "uint32_t lwc_hash_bytes(const uint8_t *s, uint64_t len, int fold_case) {\n"
-        "    uint32_t h;\n"
-        "    uint64_t i;\n"
-        "    uint8_t c;\n"
-        "\n"
-        "    h = 2166136261;\n"
-        "    i = 0;\n"
-        "    while (i < len) {\n"
-        "        c = s[i];\n"
-        "        if (fold_case != 0) {\n"
-        "            c = lwc_lower(c);\n"
-        "        }\n"
-        "        h = h * 16777619;\n"
-        "        h = h ^ c;\n"
-        "        i = i + 1;\n"
-        "    }\n"
-        "    return h;\n"
-        "}\n"
-        "\n"
-        "int lwc_bytes_equal(const uint8_t *a, const uint8_t *b, uint64_t len, int fold_b) {\n"
-        "    uint64_t i;\n"
-        "    uint8_t bc;\n"
-        "\n"
-        "    i = 0;\n"
-        "    while (i < len) {\n"
-        "        bc = b[i];\n"
-        "        if (fold_b != 0) {\n"
-        "            bc = lwc_lower(bc);\n"
-        "        }\n"
-        "        if (a[i] != bc) {\n"
-        "            return 0;\n"
-        "        }\n"
-        "        i = i + 1;\n"
-        "    }\n"
-        "    return 1;\n"
-        "}\n"
-        "\n"
-        "lwc_string *lwc_find(const uint8_t *s, uint64_t slen, uint32_t hash, int fold_source) {\n"
-        "    lwc_string *cur;\n"
-        "\n"
-        "    cur = lwc_head;\n"
-        "    while (cur != 0) {\n"
-        "        if (cur->hash == hash && cur->len == slen) {\n"
-        "            if (lwc_bytes_equal(lwc_data(cur), s, slen, fold_source) != 0) {\n"
-        "                return cur;\n"
-        "            }\n"
-        "        }\n"
-        "        cur = cur->next;\n"
-        "    }\n"
-        "    return 0;\n"
-        "}\n"
-        "\n"
-        "int lwc_intern_bytes(const uint8_t *s, uint64_t slen, lwc_string **ret, int fold_source) {\n"
-        "    uint32_t hash;\n"
-        "    lwc_string *str;\n"
-        "    uint8_t *raw;\n"
-        "    uint8_t *data;\n"
-        "    uint64_t i;\n"
-        "\n"
-        "    if (ret == 0 || (s == 0 && slen != 0)) {\n"
-        "        return lwc_error_oom;\n"
-        "    }\n"
-        "    hash = lwc_hash_bytes(s, slen, fold_source);\n"
-        "    str = lwc_find(s, slen, hash, fold_source);\n"
-        "    if (str != 0) {\n"
-        "        str->refcnt = str->refcnt + 1;\n"
-        "        *ret = str;\n"
-        "        return lwc_error_ok;\n"
-        "    }\n"
-        "\n"
-        "    raw = malloc(24 + slen + 1);\n"
-        "    if (raw == 0) {\n"
-        "        return lwc_error_oom;\n"
-        "    }\n"
-        "    str = (lwc_string *)raw;\n"
-        "    str->next = lwc_head;\n"
-        "    str->len = slen;\n"
-        "    str->hash = hash;\n"
-        "    str->refcnt = 1;\n"
-        "    lwc_head = str;\n"
-        "\n"
-        "    data = lwc_data(str);\n"
-        "    i = 0;\n"
-        "    while (i < slen) {\n"
-        "        if (fold_source != 0) {\n"
-        "            data[i] = lwc_lower(s[i]);\n"
-        "        } else {\n"
-        "            data[i] = s[i];\n"
-        "        }\n"
-        "        i = i + 1;\n"
-        "    }\n"
-        "    data[slen] = 0;\n"
-        "    *ret = str;\n"
-        "    return lwc_error_ok;\n"
-        "}\n"
-        "\n"
-        "export int lwc_intern_string(const uint8_t *s, uint64_t slen, lwc_string **ret) {\n"
-        "    return lwc_intern_bytes(s, slen, ret, 0);\n"
-        "}\n"
-        "\n"
-        "export int lwc_intern_substring(lwc_string *str,\n"
-        "                                uint64_t ssoffset,\n"
-        "                                uint64_t sslen,\n"
-        "                                lwc_string **ret) {\n"
-        "    if (str == 0 || ret == 0) {\n"
-        "        return lwc_error_range;\n"
-        "    }\n"
-        "    if (ssoffset >= str->len || ssoffset + sslen > str->len) {\n"
-        "        return lwc_error_range;\n"
-        "    }\n"
-        "    return lwc_intern_string(lwc_data(str) + ssoffset, sslen, ret);\n"
-        "}\n"
-        "\n"
-        "int lwc_intern_lower_string(lwc_string *str, lwc_string **ret) {\n"
-        "    if (str == 0 || ret == 0) {\n"
-        "        return lwc_error_oom;\n"
-        "    }\n"
-        "    return lwc_intern_bytes(lwc_data(str), str->len, ret, 1);\n"
-        "}\n"
-        "\n"
-        "export int lwc_string_tolower(lwc_string *str, lwc_string **ret) {\n"
-        "    if (str == 0 || ret == 0) {\n"
-        "        return lwc_error_oom;\n"
-        "    }\n"
-        "    return lwc_intern_lower_string(str, ret);\n"
-        "}\n"
-        "\n"
-        "export lwc_string *lwc_string_ref(lwc_string *str) {\n"
-        "    if (str != 0) {\n"
-        "        str->refcnt = str->refcnt + 1;\n"
-        "    }\n"
-        "    return str;\n"
-        "}\n"
-        "\n"
-        "export void lwc_string_unref(lwc_string *str) {\n"
-        "    if (str == 0) {\n"
-        "        return;\n"
-        "    }\n"
-        "    if (str->refcnt > 0) {\n"
-        "        str->refcnt = str->refcnt - 1;\n"
-        "    }\n"
-        "}\n"
-        "\n"
-        "export void lwc_string_destroy(lwc_string *str) {\n"
-        "    lwc_string_unref(str);\n"
-        "}\n"
-        "\n"
-        "export uint8_t *lwc_string_data(lwc_string *str) {\n"
-        "    if (str == 0) {\n"
-        "        return 0;\n"
-        "    }\n"
-        "    return lwc_data(str);\n"
-        "}\n"
-        "\n"
-        "export uint64_t lwc_string_length(lwc_string *str) {\n"
-        "    if (str == 0) {\n"
-        "        return 0;\n"
-        "    }\n"
-        "    return str->len;\n"
-        "}\n"
-        "\n"
-        "export uint32_t lwc_string_hash_value(lwc_string *str) {\n"
-        "    if (str == 0) {\n"
-        "        return 0;\n"
-        "    }\n"
-        "    return str->hash;\n"
-        "}\n"
-        "\n"
-        "export int lwc_string_isequal(lwc_string *a, lwc_string *b, int *ret) {\n"
-        "    if (ret == 0) {\n"
-        "        return lwc_error_oom;\n"
-        "    }\n"
-        "    if (a == b) {\n"
-        "        *ret = 1;\n"
-        "    } else {\n"
-        "        *ret = 0;\n"
-        "    }\n"
-        "    return lwc_error_ok;\n"
-        "}\n"
-        "\n"
-        "export int lwc_string_caseless_isequal(lwc_string *a, lwc_string *b, int *ret) {\n"
-        "    int rc;\n"
-        "    lwc_string *lower_a;\n"
-        "    lwc_string *lower_b;\n"
-        "    if (a == 0 || b == 0 || ret == 0) {\n"
-        "        return lwc_error_oom;\n"
-        "    }\n"
-        "    rc = lwc_intern_lower_string(a, &lower_a);\n"
-        "    if (rc != lwc_error_ok) {\n"
-        "        return rc;\n"
-        "    }\n"
-        "    rc = lwc_intern_lower_string(b, &lower_b);\n"
-        "    if (rc != lwc_error_ok) {\n"
-        "        return rc;\n"
-        "    }\n"
-        "    if (lower_a == lower_b) {\n"
-        "        *ret = 1;\n"
-        "    } else {\n"
-        "        *ret = 0;\n"
-        "    }\n"
-        "    return lwc_error_ok;\n"
-        "}\n"
-        "\n"
-        "export int lwc_string_caseless_hash_value(lwc_string *str, uint32_t *hash) {\n"
-        "    int rc;\n"
-        "    lwc_string *lower;\n"
-        "    if (str == 0 || hash == 0) {\n"
-        "        return lwc_error_oom;\n"
-        "    }\n"
-        "    rc = lwc_intern_lower_string(str, &lower);\n"
-        "    if (rc != lwc_error_ok) {\n"
-        "        return rc;\n"
-        "    }\n"
-        "    *hash = lower->hash;\n"
-        "    return lwc_error_ok;\n"
-        "}\n"
-        "\n"
-        "export void lwc_iterate_strings(uint8_t *cb, uint8_t *pw) {\n"
-        "    return;\n"
-        "}\n"
-) != 0) {
-        return -1;
-    }
-
-    *out_size = pos;
-    return 0;
 }
 
 static int zcc_emit_hubbub_errors_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
@@ -10508,6 +9924,2241 @@ static int zcc_emit_netsurf_mouse_z_source(char *out, uint32_t out_capacity, uin
     return 0;
 }
 
+static int zcc_emit_netsurf_searchweb_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "struct nsurl_s { uint32_t opaque; };\n"
+        "struct bitmap_s { uint32_t opaque; };\n"
+        "\n"
+        "extern int nsurl_create(uint8_t *url, struct nsurl_s **url_out);\n"
+        "\n"
+        "enum { NSERROR_OK = 0, NSERROR_NOMEM = 2, NSERROR_INIT_FAILED = 8, NSERROR_BAD_PARAMETER = 18, NSERROR_BAD_URL = 25 };\n"
+        "enum { SEARCH_WEB_OMNI_NONE = 0, SEARCH_WEB_OMNI_SEARCHONLY = 1 };\n"
+        "\n"
+        "global uint8_t *searchweb_provider_name = \"DuckDuckGo\";\n"
+        "global uint8_t *searchweb_search_prefix = \"https://www.duckduckgo.com/html/?q=\";\n"
+        "global uint8_t searchweb_initialized = 0;\n"
+        "\n"
+        "uint64_t searchweb_strlen(uint8_t *s) {\n"
+        "    uint64_t len;\n"
+        "    len = 0;\n"
+        "    if (s == 0) { return 0; }\n"
+        "    while (s[len] != 0) { len = len + 1; }\n"
+        "    return len;\n"
+        "}\n"
+        "\n"
+        "int searchweb_make_default_url(uint8_t *term, struct nsurl_s **url_out) {\n"
+        "    uint8_t url[512];\n"
+        "    uint64_t i;\n"
+        "    uint64_t j;\n"
+        "    if (term == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    if (url_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    i = 0;\n"
+        "    while (searchweb_search_prefix[i] != 0 && i < 511) {\n"
+        "        url[i] = searchweb_search_prefix[i];\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    j = 0;\n"
+        "    while (term[j] != 0 && i < 511) {\n"
+        "        if (term[j] == 32) { url[i] = 43; } else { url[i] = term[j]; }\n"
+        "        i = i + 1;\n"
+        "        j = j + 1;\n"
+        "    }\n"
+        "    url[i] = 0;\n"
+        "    return nsurl_create(url, url_out);\n"
+        "}\n"
+        "\n"
+        "export int search_web_init(uint8_t *provider_fname) {\n"
+        "    searchweb_initialized = 1;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int search_web_finalise(void) {\n"
+        "    if (searchweb_initialized == 0) { return NSERROR_INIT_FAILED; }\n"
+        "    searchweb_initialized = 0;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int64_t search_web_iterate_providers(int64_t iter, uint8_t **name) {\n"
+        "    if (searchweb_initialized == 0) { searchweb_initialized = 1; }\n"
+        "    if (name == 0) { return -1; }\n"
+        "    if (iter < 0) {\n"
+        "        *name = searchweb_provider_name;\n"
+        "        return 0;\n"
+        "    }\n"
+        "    return -1;\n"
+        "}\n"
+        "\n"
+        "export int search_web_select_provider(uint8_t *selection) {\n"
+        "    if (searchweb_initialized == 0) { return NSERROR_INIT_FAILED; }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int search_web_get_provider_bitmap(struct bitmap_s **bitmap_out) {\n"
+        "    if (searchweb_initialized == 0) { return NSERROR_INIT_FAILED; }\n"
+        "    if (bitmap_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    *bitmap_out = 0;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int search_web_omni(uint8_t *term, int flags, struct nsurl_s **url_out) {\n"
+        "    int ret;\n"
+        "    if (term == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    if (url_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    if (flags == SEARCH_WEB_OMNI_NONE) {\n"
+        "        ret = nsurl_create(term, url_out);\n"
+        "        if (ret == NSERROR_OK) { return NSERROR_OK; }\n"
+        "    }\n"
+        "    if (searchweb_initialized == 0) { searchweb_initialized = 1; }\n"
+        "    return searchweb_make_default_url(term, url_out);\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_scrollbar_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *messages_get(uint8_t *key);\n"
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(uint8_t *ptr);\n"
+        "\n"
+        "struct rect_s { int x0; int y0; int x1; int y1; };\n"
+        "struct redraw_context_s { uint32_t opaque; };\n"
+        "struct scrollbar_msg_data_s {\n"
+        "    struct scrollbar_s *scrollbar;\n"
+        "    int msg;\n"
+        "    int scroll_offset;\n"
+        "    int x0;\n"
+        "    int y0;\n"
+        "    int x1;\n"
+        "    int y1;\n"
+        "};\n"
+        "struct scrollbar_s {\n"
+        "    uint8_t horizontal;\n"
+        "    int length;\n"
+        "    int full_size;\n"
+        "    int visible_size;\n"
+        "    int offset;\n"
+        "    int bar_pos;\n"
+        "    int bar_len;\n"
+        "    uint8_t *client_callback;\n"
+        "    uint8_t *client_data;\n"
+        "    uint8_t dragging;\n"
+        "    int drag_start_coord;\n"
+        "    int drag_start_pos;\n"
+        "    uint8_t drag_content;\n"
+        "    struct scrollbar_s *pair;\n"
+        "    uint8_t pair_drag;\n"
+        "};\n"
+        "\n"
+        "enum { NSERROR_OK = 0, NSERROR_NOMEM = 2 };\n"
+        "enum { SCROLLBAR_WIDTH = 16, SCROLLBAR_MSG_MOVED = 0, SCROLLBAR_MSG_SCROLL_START = 1, SCROLLBAR_MSG_SCROLL_FINISHED = 2 };\n"
+        "enum { SCROLLBAR_MOUSE_NONE = 0, SCROLLBAR_MOUSE_USED = 1, SCROLLBAR_MOUSE_BOTH = 2, SCROLLBAR_MOUSE_UP = 4, SCROLLBAR_MOUSE_PUP = 8, SCROLLBAR_MOUSE_VRT = 16, SCROLLBAR_MOUSE_PDWN = 32, SCROLLBAR_MOUSE_DWN = 64, SCROLLBAR_MOUSE_LFT = 128, SCROLLBAR_MOUSE_PLFT = 256, SCROLLBAR_MOUSE_HRZ = 512, SCROLLBAR_MOUSE_PRGT = 1024, SCROLLBAR_MOUSE_RGT = 2048 };\n"
+        "\n"
+        "int scrollbar_clamp_offset(struct scrollbar_s *s, int value) {\n"
+        "    int max_offset;\n"
+        "    if (s == 0) { return 0; }\n"
+        "    max_offset = s->full_size - s->visible_size;\n"
+        "    if (max_offset < 0) { max_offset = 0; }\n"
+        "    if (value < 0) { return 0; }\n"
+        "    if (value > max_offset) { return max_offset; }\n"
+        "    return value;\n"
+        "}\n"
+        "\n"
+        "void scrollbar_recompute_bar(struct scrollbar_s *s) {\n"
+        "    int well_length;\n"
+        "    int max_offset;\n"
+        "    if (s == 0) { return; }\n"
+        "    well_length = s->length - 32;\n"
+        "    if (well_length < 0) { well_length = 0; }\n"
+        "    if (s->full_size <= 0) { s->bar_len = 0; s->bar_pos = 0; return; }\n"
+        "    s->bar_len = (well_length * s->visible_size) / s->full_size;\n"
+        "    if (s->bar_len < 1 && s->visible_size > 0) { s->bar_len = 1; }\n"
+        "    if (s->bar_len > well_length) { s->bar_len = well_length; }\n"
+        "    max_offset = s->full_size - s->visible_size;\n"
+        "    if (max_offset <= 0) { s->bar_pos = 0; return; }\n"
+        "    s->bar_pos = ((well_length - s->bar_len) * s->offset) / max_offset;\n"
+        "}\n"
+        "\n"
+        "void scrollbar_emit_moved(struct scrollbar_s *s) {\n"
+        "    struct scrollbar_msg_data_s data;\n"
+        "    if (s == 0) { return; }\n"
+        "    return;\n"
+        "}\n"
+        "\n"
+        "export int scrollbar_create(uint8_t horizontal, int length, int full_size, int visible_size, uint8_t *client_data, uint8_t *client_callback, struct scrollbar_s **out) {\n"
+        "    struct scrollbar_s *s;\n"
+        "    if (out == 0) { return NSERROR_NOMEM; }\n"
+        "    s = (struct scrollbar_s *)malloc(128);\n"
+        "    if (s == 0) { *out = 0; return NSERROR_NOMEM; }\n"
+        "    s->horizontal = horizontal;\n"
+        "    s->length = length;\n"
+        "    s->full_size = full_size;\n"
+        "    s->visible_size = visible_size;\n"
+        "    s->offset = 0;\n"
+        "    s->bar_pos = 0;\n"
+        "    s->bar_len = 0;\n"
+        "    s->client_callback = client_callback;\n"
+        "    s->client_data = client_data;\n"
+        "    s->dragging = 0;\n"
+        "    s->drag_start_coord = 0;\n"
+        "    s->drag_start_pos = 0;\n"
+        "    s->drag_content = 0;\n"
+        "    s->pair = (struct scrollbar_s *)0;\n"
+        "    s->pair_drag = 0;\n"
+        "    scrollbar_recompute_bar(s);\n"
+        "    *out = s;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export void scrollbar_destroy(struct scrollbar_s *s) {\n"
+        "    struct scrollbar_s *pair;\n"
+        "    if (s == 0) { return; }\n"
+        "    pair = s->pair;\n"
+        "    if (pair != 0) { pair->pair = (struct scrollbar_s *)0; }\n"
+        "    free((uint8_t *)s);\n"
+        "}\n"
+        "\n"
+        "export int scrollbar_redraw(struct scrollbar_s *s, int x, int y, struct rect_s *clip, int scale, struct redraw_context_s *ctx) { return NSERROR_OK; }\n"
+        "\n"
+        "export void scrollbar_set(struct scrollbar_s *s, int value, uint8_t bar_pos) {\n"
+        "    int well_length;\n"
+        "    int max_offset;\n"
+        "    if (s == 0) { return; }\n"
+        "    if (bar_pos != 0) {\n"
+        "        well_length = s->length - 32;\n"
+        "        max_offset = s->full_size - s->visible_size;\n"
+        "        if (well_length <= s->bar_len || max_offset <= 0) { s->offset = 0; }\n"
+        "        else { s->offset = (value * max_offset) / (well_length - s->bar_len); }\n"
+        "    } else {\n"
+        "        s->offset = value;\n"
+        "    }\n"
+        "    s->offset = scrollbar_clamp_offset(s, s->offset);\n"
+        "    scrollbar_recompute_bar(s);\n"
+        "    scrollbar_emit_moved(s);\n"
+        "}\n"
+        "\n"
+        "export uint8_t scrollbar_scroll(struct scrollbar_s *s, int change) {\n"
+        "    int old_offset;\n"
+        "    if (s == 0) { return 0; }\n"
+        "    old_offset = s->offset;\n"
+        "    s->offset = scrollbar_clamp_offset(s, s->offset + change);\n"
+        "    scrollbar_recompute_bar(s);\n"
+        "    if (s->offset != old_offset) { scrollbar_emit_moved(s); return 1; }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "export int scrollbar_get_offset(struct scrollbar_s *s) { if (s == 0) { return 0; } return s->offset; }\n"
+        "\n"
+        "export void scrollbar_set_extents(struct scrollbar_s *s, int length, int visible_size, int full_size) {\n"
+        "    if (s == 0) { return; }\n"
+        "    if (length >= 0) { s->length = length; }\n"
+        "    if (visible_size >= 0) { s->visible_size = visible_size; }\n"
+        "    if (full_size >= 0) { s->full_size = full_size; }\n"
+        "    s->offset = scrollbar_clamp_offset(s, s->offset);\n"
+        "    scrollbar_recompute_bar(s);\n"
+        "}\n"
+        "\n"
+        "export uint8_t scrollbar_is_horizontal(struct scrollbar_s *s) { if (s == 0) { return 0; } return s->horizontal; }\n"
+        "\n"
+        "export int scrollbar_mouse_action(struct scrollbar_s *s, uint32_t mouse, int x, int y) {\n"
+        "    if (s == 0) { return SCROLLBAR_MOUSE_NONE; }\n"
+        "    if (mouse == 0) { return SCROLLBAR_MOUSE_NONE; }\n"
+        "    if (s->horizontal != 0) { return SCROLLBAR_MOUSE_USED | SCROLLBAR_MOUSE_HRZ; }\n"
+        "    return SCROLLBAR_MOUSE_USED | SCROLLBAR_MOUSE_VRT;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *scrollbar_mouse_status_to_message(int status) {\n"
+        "    if (status == SCROLLBAR_MOUSE_UP) { return messages_get(\"ScrollUp\"); }\n"
+        "    if (status == SCROLLBAR_MOUSE_DWN) { return messages_get(\"ScrollDown\"); }\n"
+        "    if (status == SCROLLBAR_MOUSE_LFT) { return messages_get(\"ScrollLeft\"); }\n"
+        "    if (status == SCROLLBAR_MOUSE_RGT) { return messages_get(\"ScrollRight\"); }\n"
+        "    if (status == SCROLLBAR_MOUSE_HRZ) { return messages_get(\"ScrollHorizontal\"); }\n"
+        "    if (status == SCROLLBAR_MOUSE_VRT) { return messages_get(\"ScrollVertical\"); }\n"
+        "    if (status == 513) { return messages_get(\"ScrollHorizontal\"); }\n"
+        "    if (status == 17) { return messages_get(\"ScrollVertical\"); }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "export void scrollbar_mouse_drag_end(struct scrollbar_s *s, uint32_t mouse, int x, int y) { if (s != 0) { s->dragging = 0; s->pair_drag = 0; } }\n"
+        "\n"
+        "export void scrollbar_start_content_drag(struct scrollbar_s *s, int x, int y) { if (s != 0) { s->dragging = 1; s->drag_content = 1; s->drag_start_coord = x; s->drag_start_pos = s->offset; } }\n"
+        "\n"
+        "export void scrollbar_make_pair(struct scrollbar_s *horizontal, struct scrollbar_s *vertical) { if (horizontal != 0) { horizontal->pair = vertical; } if (vertical != 0) { vertical->pair = horizontal; } }\n"
+        "\n"
+        "export uint8_t *scrollbar_get_data(struct scrollbar_s *s) { if (s == 0) { return 0; } return s->client_data; }\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_file_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(uint8_t *ptr);\n"
+        "extern uint8_t *strdup(uint8_t *s);\n"
+        "extern uint64_t strlen(uint8_t *s);\n"
+        "extern uint8_t *strrchr(uint8_t *s, int ch);\n"
+        "extern int nsurl_create(uint8_t *url, struct nsurl_s **url_out);\n"
+        "extern int url_escape(uint8_t *str, uint8_t sptoplus, uint8_t *escexceptions, uint8_t **result);\n"
+        "extern int url_unescape(uint8_t *str, uint64_t length, uint8_t *skip, uint8_t **result);\n"
+        "extern uint8_t *nsurl_get_component(struct nsurl_s *url, int component);\n"
+        "extern uint8_t *lwc_string_data(uint8_t *s);\n"
+        "extern uint64_t lwc_string_length(uint8_t *s);\n"
+        "extern void lwc_string_unref(uint8_t *s);\n"
+        "extern int rmdir(uint8_t *path);\n"
+        "\n"
+        "struct nsurl_s { uint32_t opaque; };\n"
+        "struct gui_file_table_s {\n"
+        "    uint8_t *mkpath;\n"
+        "    uint8_t *basename;\n"
+        "    uint8_t *nsurl_to_path;\n"
+        "    uint8_t *path_to_nsurl;\n"
+        "    uint8_t *mkdir_all;\n"
+        "};\n"
+        "\n"
+        "enum { NSERROR_OK = 0, NSERROR_NOMEM = 2, NSERROR_NOT_FOUND = 3, NSERROR_BAD_PARAMETER = 18, NSERROR_NOT_DIRECTORY = 24, NSERROR_UNKNOWN = 32 };\n"
+        "enum { NSURL_PATH = 2 };\n"
+        "\n"
+        "global struct gui_file_table_s file_table;\n"
+        "global struct gui_file_table_s *default_file_table = &file_table;\n"
+        "\n"
+        "uint64_t file_copy_component(uint8_t *out, uint64_t pos, uint8_t *component) {\n"
+        "    uint64_t i;\n"
+        "    if (component == 0) { return pos; }\n"
+        "    i = 0;\n"
+        "    while (component[i] != 0) { out[pos] = component[i]; pos = pos + 1; i = i + 1; }\n"
+        "    return pos;\n"
+        "}\n"
+        "\n"
+        "int posix_basename(uint8_t *path, uint8_t **str, uint64_t *size) {\n"
+        "    uint8_t *leafname;\n"
+        "    uint8_t *fname;\n"
+        "    if (path == 0 || str == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    leafname = strrchr(path, 47);\n"
+        "    if (leafname == 0) { leafname = path; } else { leafname = leafname + 1; }\n"
+        "    fname = strdup(leafname);\n"
+        "    if (fname == 0) { return NSERROR_NOMEM; }\n"
+        "    *str = fname;\n"
+        "    if (size != 0) { *size = strlen(fname); }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "int posix_nsurl_to_path(struct nsurl_s *url, uint8_t **path_out) {\n"
+        "    uint8_t *urlpath;\n"
+        "    uint8_t *data;\n"
+        "    uint64_t length;\n"
+        "    int ret;\n"
+        "    if (url == 0 || path_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    urlpath = nsurl_get_component(url, NSURL_PATH);\n"
+        "    if (urlpath == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    data = lwc_string_data(urlpath);\n"
+        "    length = lwc_string_length(urlpath);\n"
+        "    ret = url_unescape(data, length, (uint8_t *)0, path_out);\n"
+        "    lwc_string_unref(urlpath);\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "int posix_path_to_nsurl(uint8_t *path, struct nsurl_s **url_out) {\n"
+        "    uint8_t *escpath;\n"
+        "    uint8_t *urlstr;\n"
+        "    uint64_t prefix_len;\n"
+        "    uint64_t path_len;\n"
+        "    uint64_t pos;\n"
+        "    int ret;\n"
+        "    if (path == 0 || url_out == 0 || path[0] == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    ret = url_escape(path, 0, \"/\", &escpath);\n"
+        "    if (ret != NSERROR_OK) { return ret; }\n"
+        "    while (escpath[0] == 47) { escpath = escpath + 1; }\n"
+        "    prefix_len = 8;\n"
+        "    path_len = strlen(escpath);\n"
+        "    urlstr = malloc(prefix_len + path_len + 1);\n"
+        "    if (urlstr == 0) { return NSERROR_NOMEM; }\n"
+        "    urlstr[0] = 102; urlstr[1] = 105; urlstr[2] = 108; urlstr[3] = 101;\n"
+        "    urlstr[4] = 58; urlstr[5] = 47; urlstr[6] = 47; urlstr[7] = 47;\n"
+        "    pos = file_copy_component(urlstr, prefix_len, escpath);\n"
+        "    urlstr[pos] = 0;\n"
+        "    ret = nsurl_create(urlstr, url_out);\n"
+        "    free(urlstr);\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "int posix_mkdir_all(uint8_t *fname) {\n"
+        "    if (fname == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "int posix_vmkpath(uint8_t **str, uint64_t *size, uint64_t nelm, uint8_t *ap) {\n"
+        "    return NSERROR_BAD_PARAMETER;\n"
+        "}\n"
+        "\n"
+        "export int netsurf_mkpath(uint8_t **str, uint64_t *size, uint64_t nelm, uint8_t *a, uint8_t *b, uint8_t *c, uint8_t *d, uint8_t *e) {\n"
+        "    uint64_t total;\n"
+        "    uint64_t pos;\n"
+        "    uint8_t *out;\n"
+        "    if (str == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    total = 0;\n"
+        "    if (nelm > 0 && a != 0) { total = total + strlen(a); }\n"
+        "    if (nelm > 1 && b != 0) { total = total + 1 + strlen(b); }\n"
+        "    if (nelm > 2 && c != 0) { total = total + 1 + strlen(c); }\n"
+        "    if (nelm > 3 && d != 0) { total = total + 1 + strlen(d); }\n"
+        "    if (nelm > 4 && e != 0) { total = total + 1 + strlen(e); }\n"
+        "    if (*str == 0) { out = malloc(total + 1); if (out == 0) { return NSERROR_NOMEM; } *str = out; } else { out = *str; }\n"
+        "    pos = 0;\n"
+        "    if (nelm > 0 && a != 0) { pos = file_copy_component(out, pos, a); }\n"
+        "    if (nelm > 1 && b != 0) { if (pos > 0) { out[pos] = 47; pos = pos + 1; } pos = file_copy_component(out, pos, b); }\n"
+        "    if (nelm > 2 && c != 0) { if (pos > 0) { out[pos] = 47; pos = pos + 1; } pos = file_copy_component(out, pos, c); }\n"
+        "    if (nelm > 3 && d != 0) { if (pos > 0) { out[pos] = 47; pos = pos + 1; } pos = file_copy_component(out, pos, d); }\n"
+        "    if (nelm > 4 && e != 0) { if (pos > 0) { out[pos] = 47; pos = pos + 1; } pos = file_copy_component(out, pos, e); }\n"
+        "    out[pos] = 0;\n"
+        "    if (size != 0) { *size = pos; }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int netsurf_nsurl_to_path(struct nsurl_s *url, uint8_t **path_out) { return posix_nsurl_to_path(url, path_out); }\n"
+        "export int netsurf_path_to_nsurl(uint8_t *path, struct nsurl_s **url) { return posix_path_to_nsurl(path, url); }\n"
+        "export int netsurf_mkdir_all(uint8_t *fname) { return posix_mkdir_all(fname); }\n"
+        "export int netsurf_recursive_rm(uint8_t *path) { if (path == 0) { return NSERROR_BAD_PARAMETER; } if (rmdir(path) != 0) { return NSERROR_UNKNOWN; } return NSERROR_OK; }\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_filepath_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern uint8_t **calloc(uint64_t count, uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern uint8_t *strdup(uint8_t *s);\n"
+        "extern uint64_t strlen(uint8_t *s);\n"
+        "extern uint8_t *getenv(uint8_t *name);\n"
+        "extern uint8_t *realpath(uint8_t *path, uint8_t *resolved_path);\n"
+        "extern int access(uint8_t *path, int amode);\n"
+        "\n"
+        "enum { PATH_MAX = 4096, MAX_RESPATH = 128, R_OK = 4 };\n"
+        "\n"
+        "uint64_t filepath_copy(uint8_t *out, uint64_t pos, uint8_t *src, uint64_t cap) {\n"
+        "    uint64_t i;\n"
+        "    if (out == 0 || src == 0 || cap == 0) { return pos; }\n"
+        "    i = 0;\n"
+        "    while (src[i] != 0 && pos + 1 < cap) { out[pos] = src[i]; pos = pos + 1; i = i + 1; }\n"
+        "    out[pos] = 0;\n"
+        "    return pos;\n"
+        "}\n"
+        "\n"
+        "uint64_t filepath_copy_n(uint8_t *out, uint64_t pos, uint8_t *src, uint64_t len, uint64_t cap) {\n"
+        "    uint64_t i;\n"
+        "    if (out == 0 || src == 0 || cap == 0) { return pos; }\n"
+        "    i = 0;\n"
+        "    while (i < len && pos + 1 < cap) { out[pos] = src[i]; pos = pos + 1; i = i + 1; }\n"
+        "    out[pos] = 0;\n"
+        "    return pos;\n"
+        "}\n"
+        "\n"
+        "uint8_t *filepath_join(uint8_t *out, uint64_t cap, uint8_t *a, uint8_t *b) {\n"
+        "    uint64_t pos;\n"
+        "    if (out == 0 || cap == 0) { return (uint8_t *)0; }\n"
+        "    out[0] = 0;\n"
+        "    pos = filepath_copy(out, 0, a, cap);\n"
+        "    if (pos > 0 && out[pos - 1] != 47 && b != 0 && b[0] != 0 && pos + 1 < cap) { out[pos] = 47; pos = pos + 1; out[pos] = 0; }\n"
+        "    pos = filepath_copy(out, pos, b, cap);\n"
+        "    return out;\n"
+        "}\n"
+        "\n"
+        "uint8_t *filepath_join3(uint8_t *out, uint64_t cap, uint8_t *a, uint8_t *b, uint8_t *c) {\n"
+        "    uint64_t pos;\n"
+        "    if (out == 0 || cap == 0) { return (uint8_t *)0; }\n"
+        "    filepath_join(out, cap, a, b);\n"
+        "    pos = strlen(out);\n"
+        "    if (pos > 0 && out[pos - 1] != 47 && c != 0 && c[0] != 0 && pos + 1 < cap) { out[pos] = 47; pos = pos + 1; out[pos] = 0; }\n"
+        "    pos = filepath_copy(out, pos, c, cap);\n"
+        "    return out;\n"
+        "}\n"
+        "\n"
+        "uint8_t *filepath_strdup_range(uint8_t *start, uint64_t len) {\n"
+        "    uint8_t *out;\n"
+        "    if (start == 0) { return (uint8_t *)0; }\n"
+        "    out = malloc(len + 1);\n"
+        "    if (out == 0) { return (uint8_t *)0; }\n"
+        "    filepath_copy_n(out, 0, start, len, len + 1);\n"
+        "    return out;\n"
+        "}\n"
+        "\n"
+        "uint8_t *filepath_expand_path(uint8_t *path, int pathlen) {\n"
+        "    uint8_t *out;\n"
+        "    uint8_t *home;\n"
+        "    uint64_t home_len;\n"
+        "    uint64_t pos;\n"
+        "    if (path == 0 || pathlen <= 0) { return (uint8_t *)0; }\n"
+        "    if (path[0] == 126) {\n"
+        "        home = getenv(\"HOME\");\n"
+        "        if (home == 0) { home = \"\"; }\n"
+        "        home_len = strlen(home);\n"
+        "        out = malloc(home_len + pathlen + 1);\n"
+        "        if (out == 0) { return (uint8_t *)0; }\n"
+        "        pos = filepath_copy(out, 0, home, home_len + pathlen + 1);\n"
+        "        filepath_copy_n(out, pos, path + 1, pathlen - 1, home_len + pathlen + 1);\n"
+        "        return out;\n"
+        "    }\n"
+        "    return filepath_strdup_range(path, pathlen);\n"
+        "}\n"
+        "\n"
+        "uint8_t *filepath_try_real(uint8_t *path, uint8_t *str) {\n"
+        "    uint8_t *ret;\n"
+        "    uint8_t *out;\n"
+        "    if (path == 0) { return (uint8_t *)0; }\n"
+        "    if (str == 0) { out = malloc(PATH_MAX); } else { out = str; }\n"
+        "    if (out == 0) { return (uint8_t *)0; }\n"
+        "    ret = realpath(path, out);\n"
+        "    if (ret == 0) { filepath_copy(out, 0, path, PATH_MAX); ret = out; }\n"
+        "    if (access(ret, R_OK) != 0) { if (str == 0) { free(out); } return (uint8_t *)0; }\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *filepath_vsfindfile(uint8_t *str, uint8_t *format, uint8_t *ap) {\n"
+        "    uint8_t *tmp;\n"
+        "    uint8_t *ret;\n"
+        "    if (format == 0) { return (uint8_t *)0; }\n"
+        "    tmp = malloc(PATH_MAX);\n"
+        "    if (tmp == 0) { return (uint8_t *)0; }\n"
+        "    filepath_copy(tmp, 0, format, PATH_MAX);\n"
+        "    ret = filepath_try_real(tmp, str);\n"
+        "    free(tmp);\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *filepath_sfindfile(uint8_t *str, uint8_t *format, uint8_t *a, uint8_t *b, uint8_t *c) {\n"
+        "    uint8_t *tmp;\n"
+        "    uint8_t *ret;\n"
+        "    if (format == 0) { return (uint8_t *)0; }\n"
+        "    tmp = malloc(PATH_MAX);\n"
+        "    if (tmp == 0) { return (uint8_t *)0; }\n"
+        "    if (a != 0 && b != 0) { filepath_join(tmp, PATH_MAX, a, b); } else { filepath_copy(tmp, 0, format, PATH_MAX); }\n"
+        "    ret = filepath_try_real(tmp, str);\n"
+        "    free(tmp);\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *filepath_findfile(uint8_t *format, uint8_t *a, uint8_t *b, uint8_t *c) {\n"
+        "    return filepath_sfindfile((uint8_t *)0, format, a, b, c);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *filepath_sfind(uint8_t **respathv, uint8_t *filepath, uint8_t *filename) {\n"
+        "    int respathc;\n"
+        "    uint8_t *candidate;\n"
+        "    if (respathv == 0 || filepath == 0 || filename == 0) { return (uint8_t *)0; }\n"
+        "    if (respathv[0] == 0) { return (uint8_t *)0; }\n"
+        "    respathc = 0;\n"
+        "    while (respathv[respathc] != 0) {\n"
+        "        candidate = respathv[respathc];\n"
+        "        filepath_join(filepath, PATH_MAX, candidate, filename);\n"
+        "        if (access(filepath, R_OK) == 0) { realpath(filepath, filepath); return filepath; }\n"
+        "        respathc = respathc + 1;\n"
+        "    }\n"
+        "    return (uint8_t *)0;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *filepath_find(uint8_t **respathv, uint8_t *filename) {\n"
+        "    uint8_t *filepath;\n"
+        "    uint8_t *ret;\n"
+        "    if (respathv == 0 || respathv[0] == 0) { return (uint8_t *)0; }\n"
+        "    filepath = malloc(PATH_MAX);\n"
+        "    if (filepath == 0) { return (uint8_t *)0; }\n"
+        "    ret = filepath_sfind(respathv, filepath, filename);\n"
+        "    if (ret == 0) { free(filepath); }\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *filepath_sfinddef(uint8_t **respathv, uint8_t *filepath, uint8_t *filename, uint8_t *def) {\n"
+        "    uint8_t *ret;\n"
+        "    uint8_t *home;\n"
+        "    if (respathv == 0 || respathv[0] == 0 || filepath == 0) { return (uint8_t *)0; }\n"
+        "    ret = filepath_sfind(respathv, filepath, filename);\n"
+        "    if (ret != 0) { return ret; }\n"
+        "    if (def == 0) { return (uint8_t *)0; }\n"
+        "    if (def[0] == 126) { home = getenv(\"HOME\"); if (home == 0) { home = \"\"; } filepath_join3(filepath, PATH_MAX, home, def + 1, filename); }\n"
+        "    else { filepath_join(filepath, PATH_MAX, def, filename); }\n"
+        "    realpath(filepath, filepath);\n"
+        "    return filepath;\n"
+        "}\n"
+        "\n"
+        "export uint8_t **filepath_generate(uint8_t **pathv, uint8_t **langv) {\n"
+        "    uint8_t **respath;\n"
+        "    int pathc;\n"
+        "    int langc;\n"
+        "    int respathc;\n"
+        "    uint8_t *tmp;\n"
+        "    respath = calloc(MAX_RESPATH, 8);\n"
+        "    if (respath == 0) { return 0; }\n"
+        "    if (pathv == 0) { return respath; }\n"
+        "    pathc = 0;\n"
+        "    respathc = 0;\n"
+        "    while (pathv[pathc] != 0 && respathc + 1 < MAX_RESPATH) {\n"
+        "        if (langv != 0) {\n"
+        "            langc = 0;\n"
+        "            while (langv[langc] != 0 && respathc + 1 < MAX_RESPATH) {\n"
+        "                tmp = malloc(PATH_MAX);\n"
+        "                if (tmp != 0) { filepath_join(tmp, PATH_MAX, pathv[pathc], langv[langc]); respath[respathc] = tmp; respathc = respathc + 1; }\n"
+        "                langc = langc + 1;\n"
+        "            }\n"
+        "        }\n"
+        "        respath[respathc] = strdup(pathv[pathc]);\n"
+        "        if (respath[respathc] != 0) { respathc = respathc + 1; }\n"
+        "        pathc = pathc + 1;\n"
+        "    }\n"
+        "    return respath;\n"
+        "}\n"
+        "\n"
+        "export uint8_t **filepath_path_to_strvec(uint8_t *path) {\n"
+        "    uint8_t **vec;\n"
+        "    uint64_t start;\n"
+        "    uint64_t i;\n"
+        "    int outc;\n"
+        "    int len;\n"
+        "    if (path == 0) { return 0; }\n"
+        "    vec = calloc(MAX_RESPATH, 8);\n"
+        "    if (vec == 0) { return 0; }\n"
+        "    start = 0;\n"
+        "    i = 0;\n"
+        "    outc = 0;\n"
+        "    while (path[i] != 0 && outc + 1 < MAX_RESPATH) {\n"
+        "        if (path[i] == 58) { len = i - start; vec[outc] = filepath_expand_path(path + start, len); if (vec[outc] != 0) { outc = outc + 1; } start = i + 1; }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    if (outc + 1 < MAX_RESPATH && i > start) { len = i - start; vec[outc] = filepath_expand_path(path + start, len); }\n"
+        "    return vec;\n"
+        "}\n"
+        "\n"
+        "export void filepath_free_strvec(uint8_t **pathv) {\n"
+        "    int pathc;\n"
+        "    if (pathv == 0) { return; }\n"
+        "    pathc = 0;\n"
+        "    while (pathv[pathc] != 0) { free(pathv[pathc]); pathc = pathc + 1; }\n"
+        "    free(pathv);\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_messages_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern uint8_t *strdup(uint8_t *s);\n"
+        "extern struct hash_table *hash_create(uint32_t chains);\n"
+        "extern void hash_destroy(struct hash_table *ht);\n"
+        "extern int hash_add(struct hash_table *ht, const uint8_t *key, const uint8_t *value);\n"
+        "extern uint8_t *hash_get(struct hash_table *ht, const uint8_t *key);\n"
+        "extern int hash_add_file(struct hash_table *ht, const uint8_t *path);\n"
+        "extern int hash_add_inline(struct hash_table *ht, const uint8_t *data, uint64_t size);\n"
+        "\n"
+        "struct hash_table { uint32_t opaque; };\n"
+        "\n"
+        "enum { HASH_SIZE = 101 };\n"
+        "enum { NSERROR_OK = 0, NSERROR_UNKNOWN = 1, NSERROR_NOMEM = 2, NSERROR_NO_FETCH_HANDLER = 3, NSERROR_NOT_FOUND = 4, NSERROR_NOT_DIRECTORY = 5, NSERROR_SAVE_FAILED = 6, NSERROR_CLONE_FAILED = 7, NSERROR_INIT_FAILED = 8, NSERROR_BMP_ERROR = 9, NSERROR_GIF_ERROR = 10, NSERROR_ICO_ERROR = 11, NSERROR_PNG_ERROR = 12, NSERROR_SPRITE_ERROR = 13, NSERROR_SVG_ERROR = 14, NSERROR_BAD_ENCODING = 15, NSERROR_NEED_DATA = 16, NSERROR_ENCODING_CHANGE = 17, NSERROR_BAD_PARAMETER = 18, NSERROR_INVALID = 19, NSERROR_BOX_CONVERT = 20, NSERROR_STOPPED = 21, NSERROR_DOM = 22, NSERROR_CSS = 23, NSERROR_CSS_BASE = 24, NSERROR_BAD_URL = 25, NSERROR_BAD_CONTENT = 26, NSERROR_FRAME_DEPTH = 27, NSERROR_PERMISSION = 28, NSERROR_NOSPACE = 29, NSERROR_BAD_SIZE = 30, NSERROR_NOT_IMPLEMENTED = 31, NSERROR_BAD_REDIRECT = 32, NSERROR_CYCLIC_REDIRECT = 33, NSERROR_UNSAFE_REDIRECT = 34, NSERROR_BAD_AUTH = 35, NSERROR_BAD_CERTS = 36, NSERROR_TIMEOUT = 37 };\n"
+        "enum { SSL_CERT_ERR_OK = 0, SSL_CERT_ERR_UNKNOWN = 1, SSL_CERT_ERR_BAD_ISSUER = 2, SSL_CERT_ERR_BAD_SIG = 3, SSL_CERT_ERR_TOO_YOUNG = 4, SSL_CERT_ERR_TOO_OLD = 5, SSL_CERT_ERR_SELF_SIGNED = 6, SSL_CERT_ERR_CHAIN_SELF_SIGNED = 7, SSL_CERT_ERR_REVOKED = 8, SSL_CERT_ERR_HOSTNAME_MISMATCH = 9, SSL_CERT_ERR_CERT_MISSING = 10 };\n"
+        "\n"
+        "global struct hash_table *messages_hash;\n"
+        "\n"
+        "struct hash_table *messages_create_ctx(int hash_size) {\n"
+        "    struct hash_table *ctx;\n"
+        "    ctx = hash_create(hash_size);\n"
+        "    if (ctx == 0) { return (struct hash_table *)0; }\n"
+        "    hash_add(ctx, \"LoginDescription\", \"The site is requesting your username and password.\");\n"
+        "    hash_add(ctx, \"PrivacyDescription\", \"A privacy error occurred while communicating with this site.\");\n"
+        "    hash_add(ctx, \"TimeoutDescription\", \"A connection to this site could not be established.\");\n"
+        "    hash_add(ctx, \"FetchErrorDescription\", \"An error occurred when connecting to this site.\");\n"
+        "    return ctx;\n"
+        "}\n"
+        "\n"
+        "void messages_destroy_ctx(struct hash_table *ctx) {\n"
+        "    if (ctx != 0) { hash_destroy(ctx); }\n"
+        "}\n"
+        "\n"
+        "int messages_ensure_hash(void) {\n"
+        "    if (messages_hash == 0) { messages_hash = messages_create_ctx(HASH_SIZE); }\n"
+        "    if (messages_hash == 0) { return NSERROR_NOMEM; }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "uint8_t *messages_get_ctx(uint8_t *key, struct hash_table *ctx) {\n"
+        "    uint8_t *value;\n"
+        "    if (key == 0) { return \"\"; }\n"
+        "    value = (uint8_t *)0;\n"
+        "    if (ctx != 0) { value = hash_get(ctx, key); }\n"
+        "    if (value == 0) { value = key; }\n"
+        "    return value;\n"
+        "}\n"
+        "\n"
+        "int messages_load_ctx(uint8_t *path, struct hash_table **ctx) {\n"
+        "    struct hash_table *nctx;\n"
+        "    int res;\n"
+        "    if (path == 0 || ctx == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    if (*ctx != 0) { return hash_add_file(*ctx, path); }\n"
+        "    nctx = messages_create_ctx(HASH_SIZE);\n"
+        "    if (nctx == 0) { return NSERROR_NOMEM; }\n"
+        "    res = hash_add_file(nctx, path);\n"
+        "    if (res == NSERROR_OK) { *ctx = nctx; } else { hash_destroy(nctx); }\n"
+        "    return res;\n"
+        "}\n"
+        "\n"
+        "export int messages_add_from_file(uint8_t *path) {\n"
+        "    if (path == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    return messages_load_ctx(path, &messages_hash);\n"
+        "}\n"
+        "\n"
+        "export int messages_add_from_inline(uint8_t *data, uint64_t size) {\n"
+        "    int res;\n"
+        "    if (data == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    res = messages_ensure_hash();\n"
+        "    if (res != NSERROR_OK) { return res; }\n"
+        "    return hash_add_inline(messages_hash, data, size);\n"
+        "}\n"
+        "\n"
+        "export int messages_add_key_value(uint8_t *key, uint8_t *value) {\n"
+        "    int res;\n"
+        "    if (key == 0 || value == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    res = messages_ensure_hash();\n"
+        "    if (res != NSERROR_OK) { return res; }\n"
+        "    return hash_add(messages_hash, key, value);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *messages_get_buff(uint8_t *key, uint8_t *a, uint8_t *b, uint8_t *c) {\n"
+        "    uint8_t *msg;\n"
+        "    if (messages_hash == 0 || key == 0) { return (uint8_t *)0; }\n"
+        "    msg = hash_get(messages_hash, key);\n"
+        "    if (msg == 0) { return (uint8_t *)0; }\n"
+        "    return strdup(msg);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *messages_get(uint8_t *key) {\n"
+        "    return messages_get_ctx(key, messages_hash);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *messages_get_errorcode(int code) {\n"
+        "    if (code == NSERROR_OK) { return messages_get_ctx(\"OK\", messages_hash); }\n"
+        "    if (code == NSERROR_NOMEM) { return messages_get_ctx(\"NoMemory\", messages_hash); }\n"
+        "    if (code == NSERROR_NO_FETCH_HANDLER) { return messages_get_ctx(\"NoHandler\", messages_hash); }\n"
+        "    if (code == NSERROR_NOT_FOUND) { return messages_get_ctx(\"NotFound\", messages_hash); }\n"
+        "    if (code == NSERROR_NOT_DIRECTORY) { return messages_get_ctx(\"NotDirectory\", messages_hash); }\n"
+        "    if (code == NSERROR_SAVE_FAILED) { return messages_get_ctx(\"SaveFailed\", messages_hash); }\n"
+        "    if (code == NSERROR_CLONE_FAILED) { return messages_get_ctx(\"CloneFailed\", messages_hash); }\n"
+        "    if (code == NSERROR_INIT_FAILED) { return messages_get_ctx(\"InitFailed\", messages_hash); }\n"
+        "    if (code == NSERROR_BMP_ERROR) { return messages_get_ctx(\"BMPError\", messages_hash); }\n"
+        "    if (code == NSERROR_GIF_ERROR) { return messages_get_ctx(\"GIFError\", messages_hash); }\n"
+        "    if (code == NSERROR_ICO_ERROR) { return messages_get_ctx(\"ICOError\", messages_hash); }\n"
+        "    if (code == NSERROR_PNG_ERROR) { return messages_get_ctx(\"PNGError\", messages_hash); }\n"
+        "    if (code == NSERROR_SPRITE_ERROR) { return messages_get_ctx(\"SpriteError\", messages_hash); }\n"
+        "    if (code == NSERROR_SVG_ERROR) { return messages_get_ctx(\"SVGError\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_ENCODING) { return messages_get_ctx(\"BadEncoding\", messages_hash); }\n"
+        "    if (code == NSERROR_NEED_DATA) { return messages_get_ctx(\"NeedData\", messages_hash); }\n"
+        "    if (code == NSERROR_ENCODING_CHANGE) { return messages_get_ctx(\"EncodingChanged\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_PARAMETER) { return messages_get_ctx(\"BadParameter\", messages_hash); }\n"
+        "    if (code == NSERROR_INVALID) { return messages_get_ctx(\"Invalid\", messages_hash); }\n"
+        "    if (code == NSERROR_BOX_CONVERT) { return messages_get_ctx(\"BoxConvert\", messages_hash); }\n"
+        "    if (code == NSERROR_STOPPED) { return messages_get_ctx(\"Stopped\", messages_hash); }\n"
+        "    if (code == NSERROR_DOM) { return messages_get_ctx(\"ParsingFail\", messages_hash); }\n"
+        "    if (code == NSERROR_CSS) { return messages_get_ctx(\"CSSGeneric\", messages_hash); }\n"
+        "    if (code == NSERROR_CSS_BASE) { return messages_get_ctx(\"CSSBase\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_URL) { return messages_get_ctx(\"BadURL\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_CONTENT) { return messages_get_ctx(\"BadContent\", messages_hash); }\n"
+        "    if (code == NSERROR_FRAME_DEPTH) { return messages_get_ctx(\"FrameDepth\", messages_hash); }\n"
+        "    if (code == NSERROR_PERMISSION) { return messages_get_ctx(\"PermissionError\", messages_hash); }\n"
+        "    if (code == NSERROR_NOSPACE) { return messages_get_ctx(\"NoSpace\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_SIZE) { return messages_get_ctx(\"BadSize\", messages_hash); }\n"
+        "    if (code == NSERROR_NOT_IMPLEMENTED) { return messages_get_ctx(\"NotImplemented\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_REDIRECT) { return messages_get_ctx(\"UnsupportedRedirect\", messages_hash); }\n"
+        "    if (code == NSERROR_CYCLIC_REDIRECT) { return messages_get_ctx(\"CyclicRedirect\", messages_hash); }\n"
+        "    if (code == NSERROR_UNSAFE_REDIRECT) { return messages_get_ctx(\"UnsafeRedirect\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_AUTH) { return messages_get_ctx(\"BadAuth\", messages_hash); }\n"
+        "    if (code == NSERROR_BAD_CERTS) { return messages_get_ctx(\"CertificateVerificationNeeded\", messages_hash); }\n"
+        "    if (code == NSERROR_TIMEOUT) { return messages_get_ctx(\"Timeout\", messages_hash); }\n"
+        "    return messages_get_ctx(\"Unknown\", messages_hash);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *messages_get_sslcode(int code) {\n"
+        "    if (code == SSL_CERT_ERR_OK) { return messages_get_ctx(\"SSLCertErrOk\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_UNKNOWN) { return messages_get_ctx(\"SSLCertErrUnknown\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_BAD_ISSUER) { return messages_get_ctx(\"SSLCertErrBadIssuer\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_BAD_SIG) { return messages_get_ctx(\"SSLCertErrBadSig\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_TOO_YOUNG) { return messages_get_ctx(\"SSLCertErrTooYoung\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_TOO_OLD) { return messages_get_ctx(\"SSLCertErrTooOld\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_SELF_SIGNED) { return messages_get_ctx(\"SSLCertErrSelfSigned\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_CHAIN_SELF_SIGNED) { return messages_get_ctx(\"SSLCertErrChainSelfSigned\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_REVOKED) { return messages_get_ctx(\"SSLCertErrRevoked\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_HOSTNAME_MISMATCH) { return messages_get_ctx(\"SSLCertErrHostnameMismatch\", messages_hash); }\n"
+        "    if (code == SSL_CERT_ERR_CERT_MISSING) { return messages_get_ctx(\"SSLCertErrCertMissing\", messages_hash); }\n"
+        "    return messages_get_ctx(\"Unknown\", messages_hash);\n"
+        "}\n"
+        "\n"
+        "export void messages_destroy(void) {\n"
+        "    messages_destroy_ctx(messages_hash);\n"
+        "    messages_hash = (struct hash_table *)0;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_nsoption_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *strdup(uint8_t *s);\n"
+        "extern void free(void *ptr);\n"
+        "\n"
+        "enum { NSERROR_OK = 0, NSERROR_NOMEM = 2, NSERROR_BAD_PARAMETER = 18, NSERROR_NOT_FOUND = 4 };\n"
+        "enum { OPTION_BOOL = 0, OPTION_INTEGER = 1, OPTION_UINT = 2, OPTION_STRING = 3, OPTION_COLOUR = 4 };\n"
+        "enum { NSOPTION_http_proxy = 0, NSOPTION_http_proxy_host = 1, NSOPTION_http_proxy_port = 2, NSOPTION_http_proxy_auth = 3, NSOPTION_http_proxy_auth_user = 4, NSOPTION_http_proxy_auth_pass = 5, NSOPTION_http_proxy_noproxy = 6, NSOPTION_treeview_font_size = 7, NSOPTION_font_size = 8, NSOPTION_font_min_size = 9, NSOPTION_font_sans = 10, NSOPTION_font_serif = 11, NSOPTION_font_mono = 12, NSOPTION_font_cursive = 13, NSOPTION_font_fantasy = 14, NSOPTION_accept_language = 15, NSOPTION_accept_charset = 16, NSOPTION_memory_cache_size = 17, NSOPTION_disc_cache_path = 18, NSOPTION_disc_cache_size = 19, NSOPTION_disc_cache_age = 20, NSOPTION_block_advertisements = 21, NSOPTION_disable_popups = 22, NSOPTION_do_not_track = 23, NSOPTION_send_referer = 24, NSOPTION_foreground_images = 25, NSOPTION_background_images = 26, NSOPTION_animate_images = 27, NSOPTION_enable_javascript = 28, NSOPTION_author_level_css = 29, NSOPTION_script_timeout = 30, NSOPTION_expire_url = 31, NSOPTION_font_default = 32, NSOPTION_ca_bundle = 33, NSOPTION_ca_path = 34, NSOPTION_cookie_file = 35, NSOPTION_cookie_jar = 36, NSOPTION_homepage_url = 37, NSOPTION_search_url_bar = 38, NSOPTION_search_web_provider = 39, NSOPTION_url_suggestion = 40, NSOPTION_window_x = 41, NSOPTION_window_y = 42, NSOPTION_window_width = 43, NSOPTION_window_height = 44, NSOPTION_toolbar_status_size = 45, NSOPTION_scale = 46, NSOPTION_incremental_reflow = 47, NSOPTION_min_reflow_period = 48, NSOPTION_core_select_menu = 49, NSOPTION_display_decoded_idn = 50, NSOPTION_max_fetchers = 51, NSOPTION_max_fetchers_per_host = 52, NSOPTION_max_cached_fetch_handles = 53, NSOPTION_max_retried_fetches = 54, NSOPTION_curl_fetch_timeout = 55, NSOPTION_fetch_redirect_limit = 56, NSOPTION_suppress_curl_debug = 57, NSOPTION_target_blank = 58, NSOPTION_button_2_tab = 59, NSOPTION_foreground_new = 60, NSOPTION_margin_top = 61, NSOPTION_margin_bottom = 62, NSOPTION_margin_left = 63, NSOPTION_margin_right = 64, NSOPTION_export_scale = 65, NSOPTION_suppress_images = 66, NSOPTION_remove_backgrounds = 67, NSOPTION_enable_loosening = 68, NSOPTION_enable_PDF_compression = 69, NSOPTION_enable_PDF_password = 70, NSOPTION_prefer_dark_mode = 71, NSOPTION_sys_colour_AccentColor = 72, NSOPTION_sys_colour_VisitedText = 90, NSOPTION_log_filter = 91, NSOPTION_verbose_filter = 92, NSOPTION_LISTEND = 93 };\n"
+        "enum { NSOPTION_TABLE_COUNT = 94, NSOPTION_GENERATE_CHANGED = 1 };\n"
+        "\n"
+        "struct nsoption_s { uint8_t *key; int key_len; int type; uint64_t value; };\n"
+        "\n"
+        "global struct nsoption_s nsoption_active[94];\n"
+        "global struct nsoption_s nsoption_defaults[94];\n"
+        "global struct nsoption_s *nsoptions;\n"
+        "global struct nsoption_s *nsoptions_default;\n"
+        "\n"
+        "uint32_t nsoption_strlen(uint8_t *s) { uint32_t n; n = 0; if (s == 0) { return 0; } while (s[n] != 0) { n = n + 1; } return n; }\n"
+        "void nsoption_set_entry(struct nsoption_s *table, int idx, uint8_t *key, int type, uint64_t value) {\n"
+        "    struct nsoption_s *entry;\n"
+        "    entry = table + idx;\n"
+        "    entry->key = key;\n"
+        "    entry->key_len = nsoption_strlen(key);\n"
+        "    entry->type = type;\n"
+        "    entry->value = value;\n"
+        "}\n"
+        "void nsoption_copy_table(struct nsoption_s *dst, struct nsoption_s *src) {\n"
+        "    int i;\n"
+        "    struct nsoption_s *d;\n"
+        "    struct nsoption_s *s;\n"
+        "    i = 0;\n"
+        "    while (i < NSOPTION_TABLE_COUNT) { d = dst + i; s = src + i; d->key = s->key; d->key_len = s->key_len; d->type = s->type; d->value = s->value; i = i + 1; }\n"
+        "}\n"
+        "void nsoption_init_defaults(void) {\n"
+        "    int i;\n"
+        "    i = 0;\n"
+        "    while (i < NSOPTION_TABLE_COUNT) { nsoption_set_entry(nsoption_defaults, i, \"\", OPTION_INTEGER, 0); i = i + 1; }\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_http_proxy, \"http_proxy\", OPTION_BOOL, 0);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_http_proxy_host, \"http_proxy_host\", OPTION_STRING, (uint64_t)\"localhost\");\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_http_proxy_port, \"http_proxy_port\", OPTION_INTEGER, 8080);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_treeview_font_size, \"treeview_font_size\", OPTION_INTEGER, 100);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_font_size, \"font_size\", OPTION_INTEGER, 100);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_font_min_size, \"font_min_size\", OPTION_INTEGER, 85);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_font_sans, \"font_sans\", OPTION_STRING, (uint64_t)\"sans-serif\");\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_font_serif, \"font_serif\", OPTION_STRING, (uint64_t)\"serif\");\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_font_mono, \"font_mono\", OPTION_STRING, (uint64_t)\"monospace\");\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_accept_language, \"accept_language\", OPTION_STRING, (uint64_t)\"en\");\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_memory_cache_size, \"memory_cache_size\", OPTION_INTEGER, 8388608);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_disc_cache_size, \"disc_cache_size\", OPTION_UINT, 0);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_block_advertisements, \"block_advertisements\", OPTION_BOOL, 0);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_foreground_images, \"foreground_images\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_background_images, \"background_images\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_animate_images, \"animate_images\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_enable_javascript, \"enable_javascript\", OPTION_BOOL, 0);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_author_level_css, \"author_level_css\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_script_timeout, \"script_timeout\", OPTION_INTEGER, 10);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_font_default, \"font_default\", OPTION_INTEGER, 0);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_search_url_bar, \"search_url_bar\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_search_web_provider, \"search_web_provider\", OPTION_INTEGER, 0);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_window_width, \"window_width\", OPTION_INTEGER, 1024);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_window_height, \"window_height\", OPTION_INTEGER, 768);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_scale, \"scale\", OPTION_INTEGER, 100);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_incremental_reflow, \"incremental_reflow\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_min_reflow_period, \"min_reflow_period\", OPTION_INTEGER, 25);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_core_select_menu, \"core_select_menu\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_display_decoded_idn, \"display_decoded_idn\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_max_fetchers, \"max_fetchers\", OPTION_INTEGER, 8);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_max_fetchers_per_host, \"max_fetchers_per_host\", OPTION_INTEGER, 4);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_max_cached_fetch_handles, \"max_cached_fetch_handles\", OPTION_INTEGER, 6);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_max_retried_fetches, \"max_retried_fetches\", OPTION_UINT, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_curl_fetch_timeout, \"curl_fetch_timeout\", OPTION_UINT, 30);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_fetch_redirect_limit, \"fetch_redirect_limit\", OPTION_INTEGER, 10);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_target_blank, \"target_blank\", OPTION_BOOL, 1);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_margin_top, \"margin_top\", OPTION_INTEGER, 10);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_margin_bottom, \"margin_bottom\", OPTION_INTEGER, 10);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_margin_left, \"margin_left\", OPTION_INTEGER, 10);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_margin_right, \"margin_right\", OPTION_INTEGER, 10);\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_prefer_dark_mode, \"prefer_dark_mode\", OPTION_BOOL, 0);\n"
+        "    i = NSOPTION_sys_colour_AccentColor;\n"
+        "    while (i <= NSOPTION_sys_colour_VisitedText) { nsoption_set_entry(nsoption_defaults, i, \"sys_colour\", OPTION_COLOUR, 16777215); i = i + 1; }\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_log_filter, \"log_filter\", OPTION_STRING, (uint64_t)\"(level:WARNING||cat:jserrors)\");\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_verbose_filter, \"verbose_filter\", OPTION_STRING, (uint64_t)\"(level:VERBOSE||cat:jserrors)\");\n"
+        "    nsoption_set_entry(nsoption_defaults, NSOPTION_LISTEND, \"\", OPTION_INTEGER, 0);\n"
+        "}\n"
+        "\n"
+        "export int nsoption_init(int (*set_defaults)(struct nsoption_s *defaults), struct nsoption_s **popts, struct nsoption_s **pdefs) {\n"
+        "    struct nsoption_s *saved;\n"
+        "    int res;\n"
+        "    nsoption_init_defaults();\n"
+        "    nsoptions_default = nsoption_defaults;\n"
+        "    saved = nsoptions;\n"
+        "    nsoptions = nsoptions_default;\n"
+        "    if (set_defaults != 0) { res = set_defaults(nsoptions_default); if (res != NSERROR_OK) { nsoptions = saved; return res; } }\n"
+        "    nsoption_copy_table(nsoption_active, nsoptions_default);\n"
+        "    nsoptions = nsoption_active;\n"
+        "    if (popts != 0) { *popts = nsoptions; }\n"
+        "    if (pdefs != 0) { *pdefs = nsoptions_default; }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int nsoption_finalise(struct nsoption_s *opts, struct nsoption_s *defs) { nsoptions = (struct nsoption_s *)0; nsoptions_default = (struct nsoption_s *)0; return NSERROR_OK; }\n"
+        "export int nsoption_read(uint8_t *path, struct nsoption_s *opts) { return NSERROR_OK; }\n"
+        "\n"
+        "export int nsoption_generate(uint8_t *generate_cb, uint8_t *ctx, int flags, struct nsoption_s *opts, struct nsoption_s *defs) { return NSERROR_OK; }\n"
+        "\n"
+        "export int nsoption_write(uint8_t *path, struct nsoption_s *opts, struct nsoption_s *defs) { return NSERROR_OK; }\n"
+        "export int nsoption_dump(uint8_t *outf, struct nsoption_s *opts) { return NSERROR_OK; }\n"
+        "export int nsoption_commandline(int *pargc, uint8_t **argv, struct nsoption_s *opts) { return NSERROR_OK; }\n"
+        "export int nsoption_snoptionf(uint8_t *string, uint64_t size, int option_idx, uint8_t *fmt) {\n"
+        "    uint64_t i;\n"
+        "    if (string == 0 || size == 0) { return -1; }\n"
+        "    if (fmt == 0) { string[0] = 0; return 0; }\n"
+        "    i = 0;\n"
+        "    while (i + 1 < size && fmt[i] != 0) { string[i] = fmt[i]; i = i + 1; }\n"
+        "    string[i] = 0;\n"
+        "    return i;\n"
+        "}\n"
+        "export int nsoption_set_tbl_charp(struct nsoption_s *opts, int option_idx, uint8_t *s) {\n"
+        "    if (opts == 0 || option_idx < 0 || option_idx >= NSOPTION_LISTEND) { return NSERROR_BAD_PARAMETER; }\n"
+        "    opts = opts + option_idx;\n"
+        "    opts->type = OPTION_STRING;\n"
+        "    opts->value = (uint64_t)s;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_ssl_certs_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern int nsurl_create(uint8_t *url, struct nsurl_s **url_out);\n"
+        "\n"
+        "struct nsurl_s { uint32_t opaque; };\n"
+        "struct cert_info_s { int err; uint8_t *der; uint64_t der_length; };\n"
+        "struct cert_chain { uint64_t depth; struct cert_info_s certs[10]; };\n"
+        "\n"
+        "enum { NSERROR_OK = 0, NSERROR_UNKNOWN = 1, NSERROR_NOMEM = 2, NSERROR_NEED_DATA = 16, NSERROR_BAD_PARAMETER = 18, NSERROR_INVALID = 19 };\n"
+        "enum { SSL_CERT_ERR_OK = 0, SSL_CERT_ERR_CERT_MISSING = 10, MAX_CERT_DEPTH = 10, CERT_CHAIN_SIZE = 248 };\n"
+        "\n"
+        "struct cert_info_s *cert_chain_cert_at(struct cert_chain *chain, uint64_t idx) {\n"
+        "    uint8_t *base;\n"
+        "    base = (uint8_t *)chain;\n"
+        "    return (struct cert_info_s *)(base + 8 + (idx * 24));\n"
+        "}\n"
+        "\n"
+        "void cert_chain_zero(struct cert_chain *chain) {\n"
+        "    uint64_t i;\n"
+        "    struct cert_info_s *cert;\n"
+        "    if (chain == 0) { return; }\n"
+        "    chain->depth = 0;\n"
+        "    i = 0;\n"
+        "    while (i < MAX_CERT_DEPTH) {\n"
+        "        cert = cert_chain_cert_at(chain, i);\n"
+        "        cert->err = SSL_CERT_ERR_OK;\n"
+        "        cert->der = (uint8_t *)0;\n"
+        "        cert->der_length = 0;\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "void cert_chain_free_der(struct cert_chain *chain) {\n"
+        "    uint64_t i;\n"
+        "    struct cert_info_s *cert;\n"
+        "    if (chain == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < chain->depth && i < MAX_CERT_DEPTH) {\n"
+        "        cert = cert_chain_cert_at(chain, i);\n"
+        "        if (cert->der != 0) { free(cert->der); cert->der = (uint8_t *)0; }\n"
+        "        cert->der_length = 0;\n"
+        "        cert->err = SSL_CERT_ERR_OK;\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "void cert_chain_copy_bytes(uint8_t *dst, uint8_t *src, uint64_t len) {\n"
+        "    uint64_t i;\n"
+        "    i = 0;\n"
+        "    while (i < len) { dst[i] = src[i]; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "export int cert_chain_alloc(uint64_t depth, struct cert_chain **chain_out) {\n"
+        "    struct cert_chain *chain;\n"
+        "    if (chain_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    if (depth > MAX_CERT_DEPTH) { depth = MAX_CERT_DEPTH; }\n"
+        "    chain = (struct cert_chain *)malloc(CERT_CHAIN_SIZE);\n"
+        "    if (chain == 0) { *chain_out = (struct cert_chain *)0; return NSERROR_NOMEM; }\n"
+        "    cert_chain_zero(chain);\n"
+        "    chain->depth = depth;\n"
+        "    *chain_out = chain;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int cert_chain_dup_into(struct cert_chain *src, struct cert_chain *dst) {\n"
+        "    uint64_t i;\n"
+        "    struct cert_info_s *scert;\n"
+        "    struct cert_info_s *dcert;\n"
+        "    if (src == 0 || dst == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    cert_chain_free_der(dst);\n"
+        "    dst->depth = src->depth;\n"
+        "    if (dst->depth > MAX_CERT_DEPTH) { dst->depth = MAX_CERT_DEPTH; }\n"
+        "    i = 0;\n"
+        "    while (i < dst->depth) {\n"
+        "        scert = cert_chain_cert_at(src, i);\n"
+        "        dcert = cert_chain_cert_at(dst, i);\n"
+        "        dcert->err = scert->err;\n"
+        "        dcert->der_length = scert->der_length;\n"
+        "        dcert->der = (uint8_t *)0;\n"
+        "        if (scert->der != 0 && scert->der_length > 0) {\n"
+        "            dcert->der = malloc(scert->der_length);\n"
+        "            if (dcert->der == 0) { return NSERROR_NOMEM; }\n"
+        "            cert_chain_copy_bytes(dcert->der, scert->der, scert->der_length);\n"
+        "        }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int cert_chain_dup(struct cert_chain *src, struct cert_chain **dst_out) {\n"
+        "    struct cert_chain *dst;\n"
+        "    int res;\n"
+        "    if (src == 0 || dst_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    res = cert_chain_alloc(src->depth, &dst);\n"
+        "    if (res != NSERROR_OK) { return res; }\n"
+        "    res = cert_chain_dup_into(src, dst);\n"
+        "    if (res != NSERROR_OK) { cert_chain_free(dst); return res; }\n"
+        "    *dst_out = dst;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int cert_chain_from_query(struct nsurl_s *url, struct cert_chain **chain_out) {\n"
+        "    if (url == 0 || chain_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    *chain_out = (struct cert_chain *)0;\n"
+        "    return NSERROR_INVALID;\n"
+        "}\n"
+        "\n"
+        "export int cert_chain_to_query(struct cert_chain *chain, struct nsurl_s **url_out) {\n"
+        "    if (chain == 0 || url_out == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    return nsurl_create(\"about:certificate\", url_out);\n"
+        "}\n"
+        "\n"
+        "export int cert_chain_free(struct cert_chain *chain) {\n"
+        "    if (chain != 0) { cert_chain_free_der(chain); free(chain); }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export uint64_t cert_chain_size(struct cert_chain *chain) {\n"
+        "    uint64_t size;\n"
+        "    uint64_t i;\n"
+        "    struct cert_info_s *cert;\n"
+        "    if (chain == 0) { return 0; }\n"
+        "    size = CERT_CHAIN_SIZE;\n"
+        "    i = 0;\n"
+        "    while (i < chain->depth && i < MAX_CERT_DEPTH) {\n"
+        "        cert = cert_chain_cert_at(chain, i);\n"
+        "        if (cert->der != 0) { size = size + cert->der_length; }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return size;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_talloc_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern uint8_t *realloc(void *ptr, uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "\n"
+        "enum { TALLOC_HDR_SIZE = 32, TALLOC_MAGIC = 3893689456, TALLOC_MAX_SIZE = 268435456 };\n"
+        "struct talloc_hdr { uint64_t magic; uint64_t size; uint8_t *name; uint8_t *parent; };\n"
+        "\n"
+        "uint64_t talloc_strlen(uint8_t *s) {\n"
+        "    uint64_t len;\n"
+        "    len = 0;\n"
+        "    if (s == 0) { return 0; }\n"
+        "    while (s[len] != 0) { len = len + 1; }\n"
+        "    return len;\n"
+        "}\n"
+        "\n"
+        "void talloc_memzero(uint8_t *p, uint64_t size) {\n"
+        "    uint64_t i;\n"
+        "    if (p == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < size) { p[i] = 0; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "void talloc_memcopy(uint8_t *dst, uint8_t *src, uint64_t size) {\n"
+        "    uint64_t i;\n"
+        "    if (dst == 0 || src == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < size) { dst[i] = src[i]; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "struct talloc_hdr *talloc_hdr_from_ptr(void *ptr) {\n"
+        "    uint8_t *p;\n"
+        "    if (ptr == 0) { return (struct talloc_hdr *)0; }\n"
+        "    p = (uint8_t *)ptr;\n"
+        "    return (struct talloc_hdr *)(p - TALLOC_HDR_SIZE);\n"
+        "}\n"
+        "\n"
+        "uint8_t *talloc_ptr_from_hdr(struct talloc_hdr *hdr) {\n"
+        "    uint8_t *p;\n"
+        "    if (hdr == 0) { return (uint8_t *)0; }\n"
+        "    p = (uint8_t *)hdr;\n"
+        "    return p + TALLOC_HDR_SIZE;\n"
+        "}\n"
+        "\n"
+        "uint8_t *talloc_alloc_raw(void *context, uint64_t size, uint8_t *name) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    if (size >= TALLOC_MAX_SIZE) { return (uint8_t *)0; }\n"
+        "    hdr = (struct talloc_hdr *)malloc(size + TALLOC_HDR_SIZE);\n"
+        "    if (hdr == 0) { return (uint8_t *)0; }\n"
+        "    hdr->magic = TALLOC_MAGIC;\n"
+        "    hdr->size = size;\n"
+        "    hdr->name = name;\n"
+        "    hdr->parent = (uint8_t *)context;\n"
+        "    return talloc_ptr_from_hdr(hdr);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *_talloc(void *context, uint64_t size) {\n"
+        "    return talloc_alloc_raw(context, size, \"talloc\");\n"
+        "}\n"
+        "\n"
+        "export void _talloc_set_destructor(void *ptr, uint8_t *destructor) {\n"
+        "    return;\n"
+        "}\n"
+        "\n"
+        "export int talloc_increase_ref_count(void *ptr) { if (ptr == 0) { return -1; } return 0; }\n"
+        "export uint64_t talloc_reference_count(void *ptr) { if (ptr == 0) { return 0; } return 1; }\n"
+        "export uint8_t *_talloc_reference(void *context, void *ptr) { return (uint8_t *)ptr; }\n"
+        "export int talloc_unlink(void *context, void *ptr) { return talloc_free(ptr); }\n"
+        "\n"
+        "export uint8_t *talloc_set_name(void *ptr, uint8_t *fmt) {\n"
+        "    talloc_set_name_const(ptr, fmt);\n"
+        "    return fmt;\n"
+        "}\n"
+        "\n"
+        "export void talloc_set_name_const(void *ptr, uint8_t *name) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    hdr = talloc_hdr_from_ptr(ptr);\n"
+        "    if (hdr != 0 && hdr->magic == TALLOC_MAGIC) { hdr->name = name; }\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_named(void *context, uint64_t size, uint8_t *fmt) {\n"
+        "    return talloc_alloc_raw(context, size, fmt);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_named_const(void *context, uint64_t size, uint8_t *name) {\n"
+        "    return talloc_alloc_raw(context, size, name);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_get_name(void *ptr) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    hdr = talloc_hdr_from_ptr(ptr);\n"
+        "    if (hdr == 0 || hdr->magic != TALLOC_MAGIC || hdr->name == 0) { return \"UNNAMED\"; }\n"
+        "    return hdr->name;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_check_name(void *ptr, uint8_t *name) { return (uint8_t *)ptr; }\n"
+        "\n"
+        "export uint8_t *talloc_parent(void *ptr) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    hdr = talloc_hdr_from_ptr(ptr);\n"
+        "    if (hdr == 0 || hdr->magic != TALLOC_MAGIC) { return (uint8_t *)0; }\n"
+        "    return hdr->parent;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_parent_name(void *ptr) { return talloc_get_name(talloc_parent(ptr)); }\n"
+        "\n"
+        "export uint8_t *talloc_init(uint8_t *fmt) { return talloc_named_const((void *)0, 0, fmt); }\n"
+        "\n"
+        "export int talloc_free(void *ptr) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    hdr = talloc_hdr_from_ptr(ptr);\n"
+        "    if (hdr == 0) { return -1; }\n"
+        "    if (hdr->magic != TALLOC_MAGIC) { return -1; }\n"
+        "    hdr->magic = 0;\n"
+        "    free(hdr);\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "export void talloc_free_children(void *ptr) { return; }\n"
+        "\n"
+        "export uint8_t *_talloc_realloc(void *context, void *ptr, uint64_t size, uint8_t *name) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    struct talloc_hdr *nhdr;\n"
+        "    if (ptr == 0) { return talloc_alloc_raw(context, size, name); }\n"
+        "    if (size == 0) { talloc_free(ptr); return (uint8_t *)0; }\n"
+        "    if (size >= TALLOC_MAX_SIZE) { return (uint8_t *)0; }\n"
+        "    hdr = talloc_hdr_from_ptr(ptr);\n"
+        "    if (hdr == 0 || hdr->magic != TALLOC_MAGIC) { return (uint8_t *)0; }\n"
+        "    nhdr = (struct talloc_hdr *)realloc(hdr, size + TALLOC_HDR_SIZE);\n"
+        "    if (nhdr == 0) { return (uint8_t *)0; }\n"
+        "    nhdr->magic = TALLOC_MAGIC;\n"
+        "    nhdr->size = size;\n"
+        "    if (name != 0) { nhdr->name = name; }\n"
+        "    return talloc_ptr_from_hdr(nhdr);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *_talloc_steal(void *new_ctx, void *ptr) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    hdr = talloc_hdr_from_ptr(ptr);\n"
+        "    if (hdr != 0 && hdr->magic == TALLOC_MAGIC) { hdr->parent = (uint8_t *)new_ctx; }\n"
+        "    return (uint8_t *)ptr;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *_talloc_move(void *new_ctx, void *pptr) {\n"
+        "    uint8_t **slot;\n"
+        "    uint8_t *ret;\n"
+        "    if (pptr == 0) { return (uint8_t *)0; }\n"
+        "    slot = (uint8_t **)pptr;\n"
+        "    ret = _talloc_steal(new_ctx, *slot);\n"
+        "    *slot = (uint8_t *)0;\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint64_t talloc_total_size(void *ptr) { return talloc_get_size(ptr); }\n"
+        "export uint64_t talloc_total_blocks(void *ptr) { if (ptr == 0) { return 0; } return 1; }\n"
+        "export void talloc_report_depth_cb(void *ptr, int depth, int max_depth, uint8_t *callback, void *private_data) { return; }\n"
+        "export void talloc_report_depth_file(void *ptr, int depth, int max_depth, void *f) { return; }\n"
+        "export void talloc_report_full(void *ptr, void *f) { return; }\n"
+        "export void talloc_report(void *ptr, void *f) { return; }\n"
+        "export void talloc_enable_null_tracking(void) { return; }\n"
+        "export void talloc_disable_null_tracking(void) { return; }\n"
+        "export void talloc_enable_leak_report(void) { return; }\n"
+        "export void talloc_enable_leak_report_full(void) { return; }\n"
+        "\n"
+        "export uint8_t *_talloc_zero(void *ctx, uint64_t size, uint8_t *name) {\n"
+        "    uint8_t *p;\n"
+        "    p = talloc_alloc_raw(ctx, size, name);\n"
+        "    talloc_memzero(p, size);\n"
+        "    return p;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *_talloc_memdup(void *t, uint8_t *p, uint64_t size, uint8_t *name) {\n"
+        "    uint8_t *newp;\n"
+        "    if (p == 0) { return (uint8_t *)0; }\n"
+        "    newp = talloc_alloc_raw(t, size, name);\n"
+        "    talloc_memcopy(newp, p, size);\n"
+        "    return newp;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_strdup(void *t, uint8_t *p) {\n"
+        "    uint64_t len;\n"
+        "    uint8_t *ret;\n"
+        "    if (p == 0) { return (uint8_t *)0; }\n"
+        "    len = talloc_strlen(p) + 1;\n"
+        "    ret = _talloc_memdup(t, p, len, p);\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_strndup(void *t, uint8_t *p, uint64_t n) {\n"
+        "    uint64_t len;\n"
+        "    uint8_t *ret;\n"
+        "    if (p == 0) { return (uint8_t *)0; }\n"
+        "    len = 0;\n"
+        "    while (len < n && p[len] != 0) { len = len + 1; }\n"
+        "    ret = talloc_alloc_raw(t, len + 1, p);\n"
+        "    talloc_memcopy(ret, p, len);\n"
+        "    ret[len] = 0;\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_append_string(void *t, uint8_t *orig, uint8_t *append) {\n"
+        "    uint64_t olen;\n"
+        "    uint64_t alen;\n"
+        "    uint8_t *ret;\n"
+        "    if (orig == 0) { return talloc_strdup(t, append); }\n"
+        "    if (append == 0) { return orig; }\n"
+        "    olen = talloc_strlen(orig);\n"
+        "    alen = talloc_strlen(append) + 1;\n"
+        "    ret = _talloc_realloc(t, orig, olen + alen, orig);\n"
+        "    if (ret == 0) { return (uint8_t *)0; }\n"
+        "    talloc_memcopy(ret + olen, append, alen);\n"
+        "    return ret;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_vasprintf(void *t, uint8_t *fmt, void *ap) { return talloc_strdup(t, fmt); }\n"
+        "export uint8_t *talloc_vasprintf_append(uint8_t *s, uint8_t *fmt, void *ap) { return talloc_append_string((void *)0, s, fmt); }\n"
+        "export uint8_t *talloc_asprintf(void *t, uint8_t *fmt) { return talloc_strdup(t, fmt); }\n"
+        "export uint8_t *talloc_asprintf_append(uint8_t *s, uint8_t *fmt) { return talloc_append_string((void *)0, s, fmt); }\n"
+        "\n"
+        "export uint8_t *_talloc_array(void *ctx, uint64_t el_size, uint32_t count, uint8_t *name) {\n"
+        "    if (el_size != 0 && count >= TALLOC_MAX_SIZE / el_size) { return (uint8_t *)0; }\n"
+        "    return talloc_alloc_raw(ctx, el_size * count, name);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *_talloc_zero_array(void *ctx, uint64_t el_size, uint32_t count, uint8_t *name) {\n"
+        "    uint8_t *p;\n"
+        "    if (el_size != 0 && count >= TALLOC_MAX_SIZE / el_size) { return (uint8_t *)0; }\n"
+        "    p = talloc_alloc_raw(ctx, el_size * count, name);\n"
+        "    talloc_memzero(p, el_size * count);\n"
+        "    return p;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *_talloc_realloc_array(void *ctx, void *ptr, uint64_t el_size, uint32_t count, uint8_t *name) {\n"
+        "    if (el_size != 0 && count >= TALLOC_MAX_SIZE / el_size) { return (uint8_t *)0; }\n"
+        "    return _talloc_realloc(ctx, ptr, el_size * count, name);\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_realloc_fn(void *context, void *ptr, uint64_t size) { return _talloc_realloc(context, ptr, size, \"realloc\"); }\n"
+        "export uint8_t *talloc_autofree_context(void) { return talloc_named_const((void *)0, 0, \"autofree_context\"); }\n"
+        "\n"
+        "export uint64_t talloc_get_size(void *context) {\n"
+        "    struct talloc_hdr *hdr;\n"
+        "    hdr = talloc_hdr_from_ptr(context);\n"
+        "    if (hdr == 0 || hdr->magic != TALLOC_MAGIC) { return 0; }\n"
+        "    return hdr->size;\n"
+        "}\n"
+        "\n"
+        "export uint8_t *talloc_find_parent_byname(void *context, uint8_t *name) { return (uint8_t *)0; }\n"
+        "export void talloc_show_parents(void *context, void *file) { return; }\n"
+        "export int talloc_is_parent(void *context, void *ptr) { if (context != 0 && context == ptr) { return 1; } return 0; }\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_libdom_attr_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern int _dom_node_initialise(struct dom_node_internal *node, struct dom_document *doc, int type, struct dom_string *name, struct dom_string *value, struct dom_string *ns_uri, struct dom_string *prefix);\n"
+        "extern void _dom_node_finalise(struct dom_node_internal *node);\n"
+        "extern int _dom_node_readonly(struct dom_node_internal *node);\n"
+        "extern int _dom_node_get_node_name(struct dom_node_internal *node, struct dom_string **result);\n"
+        "extern int _dom_node_get_node_value(struct dom_node_internal *node, struct dom_string **result);\n"
+        "extern int _dom_node_set_node_value(struct dom_node_internal *node, struct dom_string *value);\n"
+        "extern int _dom_node_set_prefix(struct dom_node_internal *node, struct dom_string *prefix);\n"
+        "extern int _dom_node_copy_internal(struct dom_node_internal *old_node, struct dom_node_internal *new_node);\n"
+        "extern struct dom_string *dom_string_ref(struct dom_string *str);\n"
+        "extern void dom_string_unref(struct dom_string *str);\n"
+        "extern int dom_string_create(const uint8_t *ptr, uint64_t len, struct dom_string **str);\n"
+        "\n"
+        "struct dom_node_internal { uint8_t bytes[144]; };\n"
+        "struct dom_document { uint32_t opaque; };\n"
+        "struct dom_string { uint32_t opaque; };\n"
+        "struct dom_element { uint32_t opaque; };\n"
+        "struct dom_type_info { uint32_t opaque; };\n"
+        "struct dom_attr { uint8_t node_bytes[144]; struct dom_type_info *schema_type_info; int type; uint32_t value; uint8_t specified; uint8_t is_id; uint8_t read_only; };\n"
+        "\n"
+        "enum { DOM_NO_ERR = 0, DOM_NO_MODIFICATION_ALLOWED_ERR = 7, DOM_NOT_SUPPORTED_ERR = 9, DOM_NO_MEM_ERR = 131072, DOM_ATTR_WRONG_TYPE_ERR = 131073 };\n"
+        "enum { DOM_ATTRIBUTE_NODE = 2, DOM_ATTR_UNSET = 0, DOM_ATTR_STRING = 1, DOM_ATTR_BOOL = 2, DOM_ATTR_SHORT = 3, DOM_ATTR_INTEGER = 4 };\n"
+        "enum { DOM_ATTR_SIZE = 168 };\n"
+        "\n"
+        "void dom_attr_zero_bytes(uint8_t *ptr, uint64_t size) {\n"
+        "    uint64_t i;\n"
+        "    if (ptr == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < size) { ptr[i] = 0; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "struct dom_node_internal *dom_attr_as_node(struct dom_attr *attr) { return (struct dom_node_internal *)attr; }\n"
+        "int dom_attr_readonly_now(struct dom_attr *attr) { if (attr == 0) { return 1; } if (attr->read_only != 0) { return 1; } if (_dom_node_readonly(dom_attr_as_node(attr)) != 0) { return 1; } return 0; }\n"
+        "\n"
+        "export int _dom_attr_initialise(struct dom_attr *attr, struct dom_document *doc, struct dom_string *name, struct dom_string *ns_uri, struct dom_string *prefix, uint8_t specified) {\n"
+        "    int err;\n"
+        "    struct dom_node_internal *node;\n"
+        "    struct dom_string *empty_value;\n"
+        "    if (attr == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    dom_attr_zero_bytes((uint8_t *)attr, DOM_ATTR_SIZE);\n"
+        "    node = dom_attr_as_node(attr);\n"
+        "    empty_value = (struct dom_string *)0;\n"
+        "    err = _dom_node_initialise(node, doc, DOM_ATTRIBUTE_NODE, name, empty_value, ns_uri, prefix);\n"
+        "    if (err != DOM_NO_ERR) { return err; }\n"
+        "    attr->schema_type_info = (struct dom_type_info *)0;\n"
+        "    attr->type = DOM_ATTR_UNSET;\n"
+        "    attr->value = 0;\n"
+        "    attr->specified = specified;\n"
+        "    attr->is_id = 0;\n"
+        "    attr->read_only = 0;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "export int _dom_attr_create(struct dom_document *doc, struct dom_string *name, struct dom_string *ns_uri, struct dom_string *prefix, uint8_t specified, struct dom_attr **result) {\n"
+        "    struct dom_attr *attr;\n"
+        "    int err;\n"
+        "    if (result == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    attr = (struct dom_attr *)malloc(DOM_ATTR_SIZE);\n"
+        "    if (attr == 0) { *result = (struct dom_attr *)0; return DOM_NO_MEM_ERR; }\n"
+        "    err = _dom_attr_initialise(attr, doc, name, ns_uri, prefix, specified);\n"
+        "    if (err != DOM_NO_ERR) { free(attr); *result = (struct dom_attr *)0; return err; }\n"
+        "    *result = attr;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "export void _dom_attr_finalise(struct dom_attr *attr) { if (attr != 0) { _dom_node_finalise(dom_attr_as_node(attr)); } }\n"
+        "export void _dom_attr_destroy(struct dom_attr *attr) { if (attr != 0) { _dom_attr_finalise(attr); free(attr); } }\n"
+        "export void __dom_attr_destroy(struct dom_attr *attr) { _dom_attr_destroy(attr); }\n"
+        "\n"
+        "export int dom_attr_get_type(struct dom_attr *attr, int *type) { if (type != 0) { *type = attr->type; } return DOM_NO_ERR; }\n"
+        "export int dom_attr_get_integer(struct dom_attr *attr, int32_t *value) { if (attr->type != DOM_ATTR_INTEGER) { return DOM_ATTR_WRONG_TYPE_ERR; } if (value != 0) { *value = (int32_t)attr->value; } return DOM_NO_ERR; }\n"
+        "export int dom_attr_get_short(struct dom_attr *attr, int16_t *value) { if (attr->type != DOM_ATTR_SHORT) { return DOM_ATTR_WRONG_TYPE_ERR; } if (value != 0) { *value = (int16_t)attr->value; } return DOM_NO_ERR; }\n"
+        "export int dom_attr_get_bool(struct dom_attr *attr, uint8_t *value) { if (attr->type != DOM_ATTR_BOOL) { return DOM_ATTR_WRONG_TYPE_ERR; } if (value != 0) { *value = (uint8_t)attr->value; } return DOM_NO_ERR; }\n"
+        "\n"
+        "int dom_attr_accept_type(struct dom_attr *attr, int type) { if (dom_attr_readonly_now(attr) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; } if (attr->type != DOM_ATTR_UNSET && attr->type != type) { return DOM_ATTR_WRONG_TYPE_ERR; } attr->type = type; attr->specified = 1; return DOM_NO_ERR; }\n"
+        "export int dom_attr_set_integer(struct dom_attr *attr, int32_t value) { int err; err = dom_attr_accept_type(attr, DOM_ATTR_INTEGER); if (err != DOM_NO_ERR) { return err; } attr->value = (uint32_t)value; return DOM_NO_ERR; }\n"
+        "export int dom_attr_set_short(struct dom_attr *attr, int16_t value) { int err; err = dom_attr_accept_type(attr, DOM_ATTR_SHORT); if (err != DOM_NO_ERR) { return err; } attr->value = (uint32_t)value; return DOM_NO_ERR; }\n"
+        "export int dom_attr_set_bool(struct dom_attr *attr, uint8_t value) { int err; err = dom_attr_accept_type(attr, DOM_ATTR_BOOL); if (err != DOM_NO_ERR) { return err; } attr->value = (uint32_t)value; return DOM_NO_ERR; }\n"
+        "export void dom_attr_mark_readonly(struct dom_attr *attr) { if (attr != 0) { attr->read_only = 1; } }\n"
+        "\n"
+        "export int _dom_attr_get_name(struct dom_attr *attr, struct dom_string **result) { return _dom_node_get_node_name(dom_attr_as_node(attr), result); }\n"
+        "export int _dom_attr_get_node_value(struct dom_attr *attr, struct dom_string **result) { return _dom_attr_get_value(attr, result); }\n"
+        "export int _dom_attr_get_value(struct dom_attr *attr, struct dom_string **result) {\n"
+        "    int err;\n"
+        "    if (result == 0) { return DOM_NO_ERR; }\n"
+        "    err = _dom_node_get_node_value(dom_attr_as_node(attr), result);\n"
+        "    if (err != DOM_NO_ERR) { return err; }\n"
+        "    if (*result == 0) { return dom_string_create(\"\", 0, result); }\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "export int _dom_attr_set_value(struct dom_attr *attr, struct dom_string *value) { if (dom_attr_readonly_now(attr) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; } attr->type = DOM_ATTR_STRING; attr->specified = 1; return _dom_node_set_node_value(dom_attr_as_node(attr), value); }\n"
+        "export int _dom_attr_set_prefix(struct dom_attr *attr, struct dom_string *prefix) { if (dom_attr_readonly_now(attr) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; } return _dom_node_set_prefix(dom_attr_as_node(attr), prefix); }\n"
+        "export int _dom_attr_get_specified(struct dom_attr *attr, uint8_t *result) { if (result != 0) { *result = attr->specified; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_set_specified(struct dom_attr *attr, uint8_t specified) { if (attr != 0) { attr->specified = specified; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_is_id(struct dom_attr *attr, uint8_t *result) { if (result != 0) { *result = attr->is_id; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_set_isid(struct dom_attr *attr, uint8_t is_id) { if (attr != 0) { attr->is_id = is_id; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_readonly(struct dom_attr *attr, uint8_t readonly) { if (attr != 0) { attr->read_only = readonly; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_get_owner(struct dom_attr *attr, struct dom_element **result) { if (result != 0) { *result = (struct dom_element *)0; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_get_schema_type_info(struct dom_attr *attr, struct dom_type_info **result) { if (result != 0) { *result = attr->schema_type_info; } return DOM_NOT_SUPPORTED_ERR; }\n"
+        "\n"
+        "export int _dom_attr_lookup_prefix(struct dom_attr *attr, struct dom_string *ns_uri, struct dom_string **result) { if (result != 0) { *result = (struct dom_string *)0; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_is_default_namespace(struct dom_attr *attr, struct dom_string *ns_uri, uint8_t *result) { if (result != 0) { *result = 0; } return DOM_NO_ERR; }\n"
+        "export int _dom_attr_lookup_namespace(struct dom_attr *attr, struct dom_string *prefix, struct dom_string **result) { if (result != 0) { *result = (struct dom_string *)0; } return DOM_NO_ERR; }\n"
+        "\n"
+        "export int _dom_attr_copy(struct dom_attr *old_attr, struct dom_attr **result) {\n"
+        "    struct dom_attr *copy;\n"
+        "    int err;\n"
+        "    if (result == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    copy = (struct dom_attr *)malloc(DOM_ATTR_SIZE);\n"
+        "    if (copy == 0) { *result = (struct dom_attr *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_attr_zero_bytes((uint8_t *)copy, DOM_ATTR_SIZE);\n"
+        "    err = _dom_node_copy_internal(dom_attr_as_node(old_attr), dom_attr_as_node(copy));\n"
+        "    if (err != DOM_NO_ERR) { free(copy); *result = (struct dom_attr *)0; return err; }\n"
+        "    copy->schema_type_info = old_attr->schema_type_info;\n"
+        "    copy->type = old_attr->type;\n"
+        "    copy->value = old_attr->value;\n"
+        "    copy->specified = old_attr->specified;\n"
+        "    copy->is_id = old_attr->is_id;\n"
+        "    copy->read_only = old_attr->read_only;\n"
+        "    *result = copy;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "export int _dom_attr_clone_node(struct dom_attr *attr, uint8_t deep, struct dom_attr **result) { return _dom_attr_copy(attr, result); }\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_libdom_cdata_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern int _dom_text_initialise(struct dom_text *text, struct dom_document *doc, int type, struct dom_string *name, struct dom_string *value);\n"
+        "extern void _dom_text_finalise(struct dom_text *text);\n"
+        "extern int _dom_text_copy_internal(struct dom_text *old_text, struct dom_text *new_text);\n"
+        "\n"
+        "struct dom_document { uint32_t opaque; };\n"
+        "struct dom_string { uint32_t opaque; };\n"
+        "struct dom_node_internal { uint8_t bytes[144]; };\n"
+        "struct dom_text { uint8_t bytes[152]; };\n"
+        "struct dom_cdata_section { uint8_t bytes[152]; };\n"
+        "\n"
+        "enum { DOM_NO_ERR = 0, DOM_NO_MEM_ERR = 131072, DOM_CDATA_SECTION_NODE = 4, DOM_CDATA_SIZE = 152 };\n"
+        "\n"
+        "void dom_cdata_zero(uint8_t *ptr, uint64_t size) {\n"
+        "    uint64_t i;\n"
+        "    if (ptr == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < size) { ptr[i] = 0; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "export int _dom_cdata_section_create(struct dom_document *doc, struct dom_string *name, struct dom_string *value, struct dom_cdata_section **result) {\n"
+        "    struct dom_cdata_section *cdata;\n"
+        "    struct dom_text *text;\n"
+        "    int err;\n"
+        "    if (result == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    cdata = (struct dom_cdata_section *)malloc(DOM_CDATA_SIZE);\n"
+        "    if (cdata == 0) { *result = (struct dom_cdata_section *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_cdata_zero((uint8_t *)cdata, DOM_CDATA_SIZE);\n"
+        "    text = (struct dom_text *)cdata;\n"
+        "    err = _dom_text_initialise(text, doc, DOM_CDATA_SECTION_NODE, name, value);\n"
+        "    if (err != DOM_NO_ERR) { free(cdata); *result = (struct dom_cdata_section *)0; return err; }\n"
+        "    *result = cdata;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "export void _dom_cdata_section_destroy(struct dom_cdata_section *cdata) {\n"
+        "    struct dom_text *text;\n"
+        "    if (cdata == 0) { return; }\n"
+        "    text = (struct dom_text *)cdata;\n"
+        "    _dom_text_finalise(text);\n"
+        "    free(cdata);\n"
+        "}\n"
+        "\n"
+        "export void __dom_cdata_section_destroy(struct dom_node_internal *node) {\n"
+        "    struct dom_cdata_section *cdata;\n"
+        "    cdata = (struct dom_cdata_section *)node;\n"
+        "    _dom_cdata_section_destroy(cdata);\n"
+        "}\n"
+        "\n"
+        "export int _dom_cdata_section_copy(struct dom_node_internal *old, struct dom_node_internal **copy) {\n"
+        "    struct dom_cdata_section *new_cdata;\n"
+        "    struct dom_text *old_text;\n"
+        "    struct dom_text *new_text;\n"
+        "    int err;\n"
+        "    if (copy == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    new_cdata = (struct dom_cdata_section *)malloc(DOM_CDATA_SIZE);\n"
+        "    if (new_cdata == 0) { *copy = (struct dom_node_internal *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_cdata_zero((uint8_t *)new_cdata, DOM_CDATA_SIZE);\n"
+        "    old_text = (struct dom_text *)old;\n"
+        "    new_text = (struct dom_text *)new_cdata;\n"
+        "    err = _dom_text_copy_internal(old_text, new_text);\n"
+        "    if (err != DOM_NO_ERR) { free(new_cdata); *copy = (struct dom_node_internal *)0; return err; }\n"
+        "    *copy = (struct dom_node_internal *)new_cdata;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_libdom_characterdata_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern int _dom_node_initialise(struct dom_node_internal *node, struct dom_document *doc, int type, struct dom_string *name, struct dom_string *value, struct dom_string *ns_uri, struct dom_string *prefix);\n"
+        "extern void _dom_node_finalise(struct dom_node_internal *node);\n"
+        "extern int _dom_node_readonly(struct dom_node_internal *node);\n"
+        "extern int _dom_node_copy_internal(struct dom_node_internal *old_node, struct dom_node_internal *new_node);\n"
+        "extern struct dom_string *dom_string_ref(struct dom_string *str);\n"
+        "extern void dom_string_unref(struct dom_string *str);\n"
+        "extern uint32_t dom_string_length(struct dom_string *str);\n"
+        "extern int dom_string_substr(struct dom_string *str, uint32_t offset, uint32_t end, struct dom_string **result);\n"
+        "extern int dom_string_concat(struct dom_string *a, struct dom_string *b, struct dom_string **result);\n"
+        "extern int dom_string_insert(struct dom_string *target, struct dom_string *insert, uint32_t offset, struct dom_string **result);\n"
+        "extern int dom_string_replace(struct dom_string *target, struct dom_string *replacement, uint32_t offset, uint32_t end, struct dom_string **result);\n"
+        "extern int _dom_dispatch_characterdata_modified_event(struct dom_document *doc, struct dom_node_internal *node, struct dom_string *prev, struct dom_string *new_value, uint8_t *success);\n"
+        "extern int _dom_dispatch_subtree_modified_event(struct dom_document *doc, struct dom_node_internal *node, uint8_t *success);\n"
+        "\n"
+        "struct dom_string { uint32_t opaque; };\n"
+        "struct dom_document { uint8_t bytes_to_empty[304]; struct dom_string *_memo_empty; };\n"
+        "struct dom_node_internal { uint8_t bytes_to_value[32]; struct dom_string *value; uint8_t bytes_to_parent[8]; struct dom_node_internal *parent; uint8_t bytes_to_owner[32]; struct dom_document *owner; uint8_t tail[48]; };\n"
+        "struct dom_characterdata { uint8_t bytes[144]; };\n"
+        "\n"
+        "enum { DOM_NO_ERR = 0, DOM_INDEX_SIZE_ERR = 1, DOM_NO_MODIFICATION_ALLOWED_ERR = 7, DOM_NO_MEM_ERR = 131072, DOM_CHARACTERDATA_SIZE = 144 };\n"
+        "global uint8_t characterdata_vtable[384];\n"
+        "\n"
+        "void dom_characterdata_zero(uint8_t *ptr, uint64_t size) {\n"
+        "    uint64_t i;\n"
+        "    if (ptr == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < size) { ptr[i] = 0; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "struct dom_node_internal *dom_characterdata_as_node(struct dom_characterdata *cdata) { return (struct dom_node_internal *)cdata; }\n"
+        "struct dom_document *dom_node_get_owner(struct dom_characterdata *cdata) { struct dom_node_internal *node; node = dom_characterdata_as_node(cdata); return node->owner; }\n"
+        "\n"
+        "export struct dom_characterdata *_dom_characterdata_create(void) {\n"
+        "    struct dom_characterdata *cdata;\n"
+        "    cdata = (struct dom_characterdata *)malloc(DOM_CHARACTERDATA_SIZE);\n"
+        "    if (cdata == 0) { return (struct dom_characterdata *)0; }\n"
+        "    dom_characterdata_zero((uint8_t *)cdata, DOM_CHARACTERDATA_SIZE);\n"
+        "    return cdata;\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_initialise(struct dom_characterdata *cdata, struct dom_document *doc, int type, struct dom_string *name, struct dom_string *value) {\n"
+        "    if (cdata == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    return _dom_node_initialise(dom_characterdata_as_node(cdata), doc, type, name, value, (struct dom_string *)0, (struct dom_string *)0);\n"
+        "}\n"
+        "\n"
+        "export void _dom_characterdata_finalise(struct dom_characterdata *cdata) { if (cdata != 0) { _dom_node_finalise(dom_characterdata_as_node(cdata)); } }\n"
+        "\n"
+        "export int _dom_characterdata_get_data(struct dom_characterdata *cdata, struct dom_string **data) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    if (data == 0) { return DOM_NO_ERR; }\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (node->value != 0) { dom_string_ref(node->value); }\n"
+        "    *data = node->value;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "int dom_characterdata_replace_value(struct dom_characterdata *cdata, struct dom_string *new_value) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    struct dom_document *doc;\n"
+        "    uint8_t success;\n"
+        "    int err;\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (_dom_node_readonly(node) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; }\n"
+        "    doc = node->owner;\n"
+        "    success = 1;\n"
+        "    err = _dom_dispatch_characterdata_modified_event(doc, node, node->value, new_value, &success);\n"
+        "    if (err != DOM_NO_ERR) { return err; }\n"
+        "    if (node->value != 0) { dom_string_unref(node->value); }\n"
+        "    if (new_value != 0) { dom_string_ref(new_value); }\n"
+        "    node->value = new_value;\n"
+        "    success = 1;\n"
+        "    return _dom_dispatch_subtree_modified_event(doc, node->parent, &success);\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_set_data(struct dom_characterdata *cdata, struct dom_string *data) { return dom_characterdata_replace_value(cdata, data); }\n"
+        "\n"
+        "export int _dom_characterdata_get_length(struct dom_characterdata *cdata, uint32_t *length) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    if (length == 0) { return DOM_NO_ERR; }\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (node->value != 0) { *length = dom_string_length(node->value); } else { *length = 0; }\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_substring_data(struct dom_characterdata *cdata, uint32_t offset, uint32_t count, struct dom_string **data) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    uint32_t len;\n"
+        "    uint32_t end;\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (node->value != 0) { len = dom_string_length(node->value); } else { len = 0; }\n"
+        "    if (offset > len) { return DOM_INDEX_SIZE_ERR; }\n"
+        "    end = offset + count;\n"
+        "    if (end < offset || end > len) { end = len; }\n"
+        "    return dom_string_substr(node->value, offset, end, data);\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_append_data(struct dom_characterdata *cdata, struct dom_string *data) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    struct dom_string *temp;\n"
+        "    int err;\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (_dom_node_readonly(node) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; }\n"
+        "    err = dom_string_concat(node->value, data, &temp);\n"
+        "    if (err != DOM_NO_ERR) { return err; }\n"
+        "    err = dom_characterdata_replace_value(cdata, temp);\n"
+        "    dom_string_unref(temp);\n"
+        "    return err;\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_insert_data(struct dom_characterdata *cdata, uint32_t offset, struct dom_string *data) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    struct dom_string *temp;\n"
+        "    uint32_t len;\n"
+        "    int err;\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (_dom_node_readonly(node) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; }\n"
+        "    if (node->value != 0) { len = dom_string_length(node->value); } else { len = 0; }\n"
+        "    if (offset > len) { return DOM_INDEX_SIZE_ERR; }\n"
+        "    err = dom_string_insert(node->value, data, offset, &temp);\n"
+        "    if (err != DOM_NO_ERR) { return err; }\n"
+        "    err = dom_characterdata_replace_value(cdata, temp);\n"
+        "    dom_string_unref(temp);\n"
+        "    return err;\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_delete_data(struct dom_characterdata *cdata, uint32_t offset, uint32_t count) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    struct dom_string *temp;\n"
+        "    struct dom_string *empty;\n"
+        "    uint32_t len;\n"
+        "    uint32_t end;\n"
+        "    int err;\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (_dom_node_readonly(node) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; }\n"
+        "    if (node->value != 0) { len = dom_string_length(node->value); } else { len = 0; }\n"
+        "    if (offset > len) { return DOM_INDEX_SIZE_ERR; }\n"
+        "    end = offset + count;\n"
+        "    if (end < offset || end > len) { end = len; }\n"
+        "    if (node->owner != 0) { empty = node->owner->_memo_empty; } else { empty = (struct dom_string *)0; }\n"
+        "    err = dom_string_replace(node->value, empty, offset, end, &temp);\n"
+        "    if (err != DOM_NO_ERR) { return err; }\n"
+        "    err = dom_characterdata_replace_value(cdata, temp);\n"
+        "    dom_string_unref(temp);\n"
+        "    return err;\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_replace_data(struct dom_characterdata *cdata, uint32_t offset, uint32_t count, struct dom_string *data) {\n"
+        "    struct dom_node_internal *node;\n"
+        "    struct dom_string *temp;\n"
+        "    uint32_t len;\n"
+        "    uint32_t end;\n"
+        "    int err;\n"
+        "    node = dom_characterdata_as_node(cdata);\n"
+        "    if (_dom_node_readonly(node) != 0) { return DOM_NO_MODIFICATION_ALLOWED_ERR; }\n"
+        "    if (node->value != 0) { len = dom_string_length(node->value); } else { len = 0; }\n"
+        "    if (offset > len) { return DOM_INDEX_SIZE_ERR; }\n"
+        "    end = offset + count;\n"
+        "    if (end < offset || end > len) { end = len; }\n"
+        "    err = dom_string_replace(node->value, data, offset, end, &temp);\n"
+        "    if (err != DOM_NO_ERR) { return err; }\n"
+        "    err = dom_characterdata_replace_value(cdata, temp);\n"
+        "    dom_string_unref(temp);\n"
+        "    return err;\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_get_text_content(struct dom_node_internal *node, struct dom_string **result) { return _dom_characterdata_get_data((struct dom_characterdata *)node, result); }\n"
+        "export int _dom_characterdata_set_text_content(struct dom_node_internal *node, struct dom_string *content) { return _dom_characterdata_set_data((struct dom_characterdata *)node, content); }\n"
+        "export void _dom_characterdata_destroy(struct dom_node_internal *node) { return; }\n"
+        "\n"
+        "export int _dom_characterdata_copy(struct dom_node_internal *old_node, struct dom_node_internal **copy) {\n"
+        "    struct dom_characterdata *new_node;\n"
+        "    int err;\n"
+        "    if (copy == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    new_node = (struct dom_characterdata *)malloc(DOM_CHARACTERDATA_SIZE);\n"
+        "    if (new_node == 0) { *copy = (struct dom_node_internal *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_characterdata_zero((uint8_t *)new_node, DOM_CHARACTERDATA_SIZE);\n"
+        "    err = _dom_characterdata_copy_internal((struct dom_characterdata *)old_node, new_node);\n"
+        "    if (err != DOM_NO_ERR) { free(new_node); *copy = (struct dom_node_internal *)0; return err; }\n"
+        "    *copy = (struct dom_node_internal *)new_node;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "export int _dom_characterdata_copy_internal(struct dom_characterdata *old_node, struct dom_characterdata *new_node) { return _dom_node_copy_internal(dom_characterdata_as_node(old_node), dom_characterdata_as_node(new_node)); }\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_libdom_comment_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern int _dom_characterdata_initialise(struct dom_characterdata *cdata, struct dom_document *doc, int type, struct dom_string *name, struct dom_string *value);\n"
+        "extern void _dom_characterdata_finalise(struct dom_characterdata *cdata);\n"
+        "extern int _dom_characterdata_copy_internal(struct dom_characterdata *old_node, struct dom_characterdata *new_node);\n"
+        "\n"
+        "struct dom_document { uint32_t opaque; };\n"
+        "struct dom_string { uint32_t opaque; };\n"
+        "struct dom_node_internal { uint8_t bytes[144]; };\n"
+        "struct dom_characterdata { uint8_t bytes[144]; };\n"
+        "struct dom_comment { uint8_t bytes[144]; };\n"
+        "\n"
+        "enum { DOM_NO_ERR = 0, DOM_NO_MEM_ERR = 131072, DOM_COMMENT_NODE = 8, DOM_COMMENT_SIZE = 144 };\n"
+        "global uint8_t comment_protect_vtable[16];\n"
+        "\n"
+        "void dom_comment_zero(uint8_t *ptr, uint64_t size) {\n"
+        "    uint64_t i;\n"
+        "    if (ptr == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < size) { ptr[i] = 0; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "export int _dom_comment_create(struct dom_document *doc, struct dom_string *name, struct dom_string *value, struct dom_comment **result) {\n"
+        "    struct dom_comment *comment;\n"
+        "    int err;\n"
+        "    if (result == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    comment = (struct dom_comment *)malloc(DOM_COMMENT_SIZE);\n"
+        "    if (comment == 0) { *result = (struct dom_comment *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_comment_zero((uint8_t *)comment, DOM_COMMENT_SIZE);\n"
+        "    err = _dom_characterdata_initialise((struct dom_characterdata *)comment, doc, DOM_COMMENT_NODE, name, value);\n"
+        "    if (err != DOM_NO_ERR) { free(comment); *result = (struct dom_comment *)0; return err; }\n"
+        "    *result = comment;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "export void _dom_comment_destroy(struct dom_comment *comment) {\n"
+        "    if (comment == 0) { return; }\n"
+        "    _dom_characterdata_finalise((struct dom_characterdata *)comment);\n"
+        "    free(comment);\n"
+        "}\n"
+        "\n"
+        "export void __dom_comment_destroy(struct dom_node_internal *node) { _dom_comment_destroy((struct dom_comment *)node); }\n"
+        "\n"
+        "export int _dom_comment_copy(struct dom_node_internal *old_node, struct dom_node_internal **copy) {\n"
+        "    struct dom_comment *new_comment;\n"
+        "    int err;\n"
+        "    if (copy == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    new_comment = (struct dom_comment *)malloc(DOM_COMMENT_SIZE);\n"
+        "    if (new_comment == 0) { *copy = (struct dom_node_internal *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_comment_zero((uint8_t *)new_comment, DOM_COMMENT_SIZE);\n"
+        "    err = _dom_characterdata_copy_internal((struct dom_characterdata *)old_node, (struct dom_characterdata *)new_comment);\n"
+        "    if (err != DOM_NO_ERR) { free(new_comment); *copy = (struct dom_node_internal *)0; return err; }\n"
+        "    *copy = (struct dom_node_internal *)new_comment;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_libdom_doc_fragment_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern uint8_t *malloc(uint64_t size);\n"
+        "extern void free(void *ptr);\n"
+        "extern int _dom_node_initialise(struct dom_node_internal *node, struct dom_document *doc, int type, struct dom_string *name, struct dom_string *value, struct dom_string *ns_uri, struct dom_string *prefix);\n"
+        "extern void _dom_node_finalise(struct dom_node_internal *node);\n"
+        "extern int _dom_node_copy_internal(struct dom_node_internal *old_node, struct dom_node_internal *new_node);\n"
+        "\n"
+        "struct dom_document { uint32_t opaque; };\n"
+        "struct dom_string { uint32_t opaque; };\n"
+        "struct dom_node_internal { uint8_t bytes[144]; };\n"
+        "struct dom_document_fragment { uint8_t bytes[144]; };\n"
+        "\n"
+        "enum { DOM_NO_ERR = 0, DOM_NO_MEM_ERR = 131072, DOM_DOCUMENT_FRAGMENT_NODE = 11, DOM_DOCUMENT_FRAGMENT_SIZE = 144 };\n"
+        "global uint8_t df_vtable[384];\n"
+        "global uint8_t df_protect_vtable[16];\n"
+        "\n"
+        "void dom_doc_fragment_zero(uint8_t *ptr, uint64_t size) {\n"
+        "    uint64_t i;\n"
+        "    if (ptr == 0) { return; }\n"
+        "    i = 0;\n"
+        "    while (i < size) { ptr[i] = 0; i = i + 1; }\n"
+        "}\n"
+        "\n"
+        "export int _dom_document_fragment_create(struct dom_document *doc, struct dom_string *name, struct dom_string *value, struct dom_document_fragment **result) {\n"
+        "    struct dom_document_fragment *frag;\n"
+        "    int err;\n"
+        "    if (result == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    frag = (struct dom_document_fragment *)malloc(DOM_DOCUMENT_FRAGMENT_SIZE);\n"
+        "    if (frag == 0) { *result = (struct dom_document_fragment *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_doc_fragment_zero((uint8_t *)frag, DOM_DOCUMENT_FRAGMENT_SIZE);\n"
+        "    err = _dom_node_initialise((struct dom_node_internal *)frag, doc, DOM_DOCUMENT_FRAGMENT_NODE, name, value, (struct dom_string *)0, (struct dom_string *)0);\n"
+        "    if (err != DOM_NO_ERR) { free(frag); *result = (struct dom_document_fragment *)0; return err; }\n"
+        "    *result = frag;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+        "\n"
+        "export void _dom_document_fragment_destroy(struct dom_document_fragment *frag) {\n"
+        "    if (frag == 0) { return; }\n"
+        "    _dom_node_finalise((struct dom_node_internal *)frag);\n"
+        "    free(frag);\n"
+        "}\n"
+        "\n"
+        "export void _dom_df_destroy(struct dom_node_internal *node) { _dom_document_fragment_destroy((struct dom_document_fragment *)node); }\n"
+        "\n"
+        "export int _dom_df_copy(struct dom_node_internal *old_node, struct dom_node_internal **copy) {\n"
+        "    struct dom_document_fragment *new_frag;\n"
+        "    int err;\n"
+        "    if (copy == 0) { return DOM_NO_MEM_ERR; }\n"
+        "    new_frag = (struct dom_document_fragment *)malloc(DOM_DOCUMENT_FRAGMENT_SIZE);\n"
+        "    if (new_frag == 0) { *copy = (struct dom_node_internal *)0; return DOM_NO_MEM_ERR; }\n"
+        "    dom_doc_fragment_zero((uint8_t *)new_frag, DOM_DOCUMENT_FRAGMENT_SIZE);\n"
+        "    err = _dom_node_copy_internal(old_node, (struct dom_node_internal *)new_frag);\n"
+        "    if (err != DOM_NO_ERR) { free(new_frag); *copy = (struct dom_node_internal *)0; return err; }\n"
+        "    *copy = (struct dom_node_internal *)new_frag;\n"
+        "    return DOM_NO_ERR;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_search_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern int content_textsearch(struct hlcache_handle_s *h, uint8_t *context, uint32_t flags, const uint8_t *string);\n"
+        "extern int content_textsearch_clear(struct hlcache_handle_s *h);\n"
+        "\n"
+        "struct hlcache_handle_s { uint32_t opaque; };\n"
+        "struct browser_window_s {\n"
+        "    struct hlcache_handle_s *current_content;\n"
+        "};\n"
+        "\n"
+        "export void browser_window_search(struct browser_window_s *bw, uint8_t *context, uint32_t flags, const uint8_t *string) {\n"
+        "    if (bw != 0 && bw->current_content != 0) {\n"
+        "        content_textsearch(bw->current_content, context, flags, string);\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "export void browser_window_search_clear(struct browser_window_s *bw) {\n"
+        "    if (bw != 0 && bw->current_content != 0) {\n"
+        "        content_textsearch_clear(bw->current_content);\n"
+        "    }\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_bitmap_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "struct bitmap_fmt_s {\n"
+        "    uint32_t layout;\n"
+        "    uint8_t pma;\n"
+        "};\n"
+        "struct bitmap_colour_layout_s {\n"
+        "    uint8_t r;\n"
+        "    uint8_t g;\n"
+        "    uint8_t b;\n"
+        "    uint8_t a;\n"
+        "};\n"
+        "struct hlcache_handle_s { uint32_t opaque; };\n"
+        "struct gui_bitmap_table_s {\n"
+        "    uint8_t *(*create)(int width, int height, uint32_t flags);\n"
+        "    void (*destroy)(uint8_t *bitmap);\n"
+        "    void (*set_opaque)(uint8_t *bitmap, uint8_t opaque);\n"
+        "    uint8_t (*get_opaque)(uint8_t *bitmap);\n"
+        "    uint8_t *(*get_buffer)(uint8_t *bitmap);\n"
+        "    uint64_t (*get_rowstride)(uint8_t *bitmap);\n"
+        "    int (*get_width)(uint8_t *bitmap);\n"
+        "    int (*get_height)(uint8_t *bitmap);\n"
+        "    void (*modified)(uint8_t *bitmap);\n"
+        "    int (*render)(uint8_t *bitmap, struct hlcache_handle_s *content);\n"
+        "};\n"
+        "struct netsurf_table_s {\n"
+        "    uint8_t *misc;\n"
+        "    uint8_t *window;\n"
+        "    uint8_t *corewindow;\n"
+        "    uint8_t *download;\n"
+        "    uint8_t *clipboard;\n"
+        "    uint8_t *fetch;\n"
+        "    uint8_t *file;\n"
+        "    uint8_t *utf8;\n"
+        "    uint8_t *search;\n"
+        "    uint8_t *search_web;\n"
+        "    uint8_t *llcache;\n"
+        "    struct gui_bitmap_table_s *bitmap;\n"
+        "    uint8_t *layout;\n"
+        "};\n"
+        "extern struct netsurf_table_s *guit;\n"
+        "\n"
+        "enum { BITMAP_LAYOUT_R8G8B8A8 = 0, BITMAP_LAYOUT_B8G8R8A8 = 1, BITMAP_LAYOUT_A8R8G8B8 = 2, BITMAP_LAYOUT_A8B8G8R8 = 3, BITMAP_LAYOUT_RGBA8888 = 4, BITMAP_LAYOUT_BGRA8888 = 5, BITMAP_LAYOUT_ARGB8888 = 6, BITMAP_LAYOUT_ABGR8888 = 7 };\n"
+        "global struct bitmap_fmt_s bitmap_fmt;\n"
+        "global struct bitmap_colour_layout_s bitmap_layout = { 0, 1, 2, 3 };\n"
+        "\n"
+        "uint32_t bitmap_sanitise_bitmap_layout_z(uint32_t layout) {\n"
+        "    if (layout == BITMAP_LAYOUT_RGBA8888) { return BITMAP_LAYOUT_A8B8G8R8; }\n"
+        "    if (layout == BITMAP_LAYOUT_BGRA8888) { return BITMAP_LAYOUT_A8R8G8B8; }\n"
+        "    if (layout == BITMAP_LAYOUT_ARGB8888) { return BITMAP_LAYOUT_B8G8R8A8; }\n"
+        "    if (layout == BITMAP_LAYOUT_ABGR8888) { return BITMAP_LAYOUT_R8G8B8A8; }\n"
+        "    return layout;\n"
+        "}\n"
+        "\n"
+        "void bitmap_get_colour_layout_z(struct bitmap_colour_layout_s *out, uint32_t layout) {\n"
+        "    if (layout == BITMAP_LAYOUT_B8G8R8A8) { out->b = 0; out->g = 1; out->r = 2; out->a = 3; return; }\n"
+        "    if (layout == BITMAP_LAYOUT_A8R8G8B8) { out->a = 0; out->r = 1; out->g = 2; out->b = 3; return; }\n"
+        "    if (layout == BITMAP_LAYOUT_A8B8G8R8) { out->a = 0; out->b = 1; out->g = 2; out->r = 3; return; }\n"
+        "    out->r = 0; out->g = 1; out->b = 2; out->a = 3;\n"
+        "}\n"
+        "\n"
+        "export void bitmap_set_format(struct bitmap_fmt_s *bitmap_format) {\n"
+        "    if (bitmap_format == 0) { return; }\n"
+        "    bitmap_fmt.layout = bitmap_sanitise_bitmap_layout_z(bitmap_format->layout);\n"
+        "    bitmap_fmt.pma = bitmap_format->pma;\n"
+        "    bitmap_get_colour_layout_z(&bitmap_layout, bitmap_fmt.layout);\n"
+        "}\n"
+        "\n"
+        "void bitmap_convert_pixel(uint8_t *row, struct bitmap_colour_layout_s *to, struct bitmap_colour_layout_s *from, uint8_t pma_to, uint8_t pma_from) {\n"
+        "    uint32_t r;\n"
+        "    uint32_t g;\n"
+        "    uint32_t b;\n"
+        "    uint32_t a;\n"
+        "    r = row[from->r];\n"
+        "    g = row[from->g];\n"
+        "    b = row[from->b];\n"
+        "    a = row[from->a];\n"
+        "    if (pma_to != pma_from) {\n"
+        "        if (pma_to != 0) {\n"
+        "            if (a != 0) { r = ((r * (a + 1)) >> 8) & 255; g = ((g * (a + 1)) >> 8) & 255; b = ((b * (a + 1)) >> 8) & 255; }\n"
+        "            else { r = 0; g = 0; b = 0; }\n"
+        "        } else {\n"
+        "            if (a != 0) { r = (r << 8) / a; g = (g << 8) / a; b = (b << 8) / a; if (r > 255) { r = 255; } if (g > 255) { g = 255; } if (b > 255) { b = 255; } }\n"
+        "            else { r = 0; g = 0; b = 0; }\n"
+        "        }\n"
+        "    }\n"
+        "    row[to->r] = r;\n"
+        "    row[to->g] = g;\n"
+        "    row[to->b] = b;\n"
+        "    row[to->a] = a;\n"
+        "}\n"
+        "\n"
+        "export void bitmap_format_convert(uint8_t *bitmap, struct bitmap_fmt_s *fmt_from, struct bitmap_fmt_s *fmt_to) {\n"
+        "    int width;\n"
+        "    int height;\n"
+        "    int x;\n"
+        "    int y;\n"
+        "    uint8_t opaque;\n"
+        "    uint8_t *buffer;\n"
+        "    uint8_t *row;\n"
+        "    uint64_t rowstride;\n"
+        "    struct bitmap_colour_layout_s to;\n"
+        "    struct bitmap_colour_layout_s from;\n"
+        "    if (bitmap == 0 || fmt_from == 0 || fmt_to == 0 || guit == 0 || guit->bitmap == 0) { return; }\n"
+        "    if (guit->bitmap->get_width == 0 || guit->bitmap->get_height == 0 || guit->bitmap->get_buffer == 0 || guit->bitmap->get_rowstride == 0 || guit->bitmap->get_opaque == 0) { return; }\n"
+        "    width = guit->bitmap->get_width(bitmap);\n"
+        "    height = guit->bitmap->get_height(bitmap);\n"
+        "    opaque = guit->bitmap->get_opaque(bitmap);\n"
+        "    buffer = guit->bitmap->get_buffer(bitmap);\n"
+        "    rowstride = guit->bitmap->get_rowstride(bitmap);\n"
+        "    if (buffer == 0 || width <= 0 || height <= 0 || rowstride == 0) { return; }\n"
+        "    bitmap_get_colour_layout_z(&to, bitmap_sanitise_bitmap_layout_z(fmt_to->layout));\n"
+        "    bitmap_get_colour_layout_z(&from, bitmap_sanitise_bitmap_layout_z(fmt_from->layout));\n"
+        "    if (fmt_from->pma != fmt_to->pma && opaque != 0) { return; }\n"
+        "    y = 0;\n"
+        "    while (y < height) {\n"
+        "        row = buffer;\n"
+        "        x = 0;\n"
+        "        while (x < width) { bitmap_convert_pixel(row, &to, &from, fmt_to->pma, fmt_from->pma); row = row + 4; x = x + 1; }\n"
+        "        buffer = buffer + rowstride;\n"
+        "        y = y + 1;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "export uint8_t bitmap_test_opaque(uint8_t *bitmap) {\n"
+        "    int width;\n"
+        "    int height;\n"
+        "    int x;\n"
+        "    int y;\n"
+        "    uint8_t *buffer;\n"
+        "    uint8_t *row;\n"
+        "    uint64_t rowstride;\n"
+        "    if (bitmap == 0 || guit == 0 || guit->bitmap == 0) { return 0; }\n"
+        "    if (guit->bitmap->get_width == 0 || guit->bitmap->get_height == 0 || guit->bitmap->get_buffer == 0 || guit->bitmap->get_rowstride == 0) { return 0; }\n"
+        "    width = guit->bitmap->get_width(bitmap);\n"
+        "    height = guit->bitmap->get_height(bitmap);\n"
+        "    buffer = guit->bitmap->get_buffer(bitmap);\n"
+        "    rowstride = guit->bitmap->get_rowstride(bitmap);\n"
+        "    if (buffer == 0 || width <= 0 || height <= 0 || rowstride == 0) { return 0; }\n"
+        "    y = 0;\n"
+        "    while (y < height) {\n"
+        "        row = buffer;\n"
+        "        x = bitmap_layout.a;\n"
+        "        while (x < width * 4) { if (row[x] != 255) { return 0; } x = x + 4; }\n"
+        "        buffer = buffer + rowstride;\n"
+        "        y = y + 1;\n"
+        "    }\n"
+        "    return 1;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_libdom_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "struct dom_string_s { uint32_t refcnt; };\n"
+        "struct lwc_string_s { uint32_t opaque; };\n"
+        "struct dom_nodelist_s { uint32_t opaque; };\n"
+        "struct dom_document_s { uint32_t opaque; };\n"
+        "struct dom_node_s { struct dom_node_vtable_s *vtable; uint32_t refcnt; };\n"
+        "struct dom_node_vtable_s {\n"
+        "    int (*add_event_listener)(uint8_t *et, struct dom_string_s *type, uint8_t *listener, uint8_t capture);\n"
+        "    int (*remove_event_listener)(uint8_t *et, struct dom_string_s *type, uint8_t *listener, uint8_t capture);\n"
+        "    int (*dispatch_event)(uint8_t *et, uint8_t *evt, uint8_t *success);\n"
+        "    int (*add_event_listener_ns)(uint8_t *et, struct dom_string_s *ns, struct dom_string_s *type, uint8_t *listener, uint8_t capture);\n"
+        "    int (*remove_event_listener_ns)(uint8_t *et, struct dom_string_s *ns, struct dom_string_s *type, uint8_t *listener, uint8_t capture);\n"
+        "    int (*dom_node_try_destroy)(struct dom_node_s *node);\n"
+        "    int (*dom_node_get_node_name)(struct dom_node_s *node, struct dom_string_s **result);\n"
+        "    int (*dom_node_get_node_value)(struct dom_node_s *node, struct dom_string_s **result);\n"
+        "    int (*dom_node_set_node_value)(struct dom_node_s *node, struct dom_string_s *value);\n"
+        "    int (*dom_node_get_node_type)(struct dom_node_s *node, uint32_t *result);\n"
+        "    int (*dom_node_get_parent_node)(struct dom_node_s *node, struct dom_node_s **result);\n"
+        "    int (*dom_node_get_child_nodes)(struct dom_node_s *node, struct dom_nodelist_s **result);\n"
+        "    int (*dom_node_get_first_child)(struct dom_node_s *node, struct dom_node_s **result);\n"
+        "    int (*dom_node_get_last_child)(struct dom_node_s *node, struct dom_node_s **result);\n"
+        "    int (*dom_node_get_previous_sibling)(struct dom_node_s *node, struct dom_node_s **result);\n"
+        "    int (*dom_node_get_next_sibling)(struct dom_node_s *node, struct dom_node_s **result);\n"
+        "};\n"
+        "\n"
+        "extern void dom_string_destroy(struct dom_string_s *str);\n"
+        "extern uint8_t dom_string_caseless_lwc_isequal(struct dom_string_s *s1, struct lwc_string_s *s2);\n"
+        "extern void dom_nodelist_unref(struct dom_nodelist_s *list);\n"
+        "extern int dom_nodelist_get_length(struct dom_nodelist_s *list, uint32_t *length);\n"
+        "extern int _dom_nodelist_item(struct dom_nodelist_s *list, uint32_t index, struct dom_node_s **node);\n"
+        "extern int _dom_node_get_node_name(struct dom_node_s *node, struct dom_string_s **result);\n"
+        "extern int _dom_node_get_node_type(struct dom_node_s *node, uint32_t *result);\n"
+        "extern int _dom_node_get_child_nodes(struct dom_node_s *node, struct dom_nodelist_s **result);\n"
+        "extern int _dom_node_get_first_child(struct dom_node_s *node, struct dom_node_s **result);\n"
+        "extern int _dom_node_get_next_sibling(struct dom_node_s *node, struct dom_node_s **result);\n"
+        "\n"
+        "enum { DOM_NO_ERR = 0, DOM_ELEMENT_NODE = 1 };\n"
+        "enum { NSERROR_OK = 0, NSERROR_UNKNOWN = 1, NSERROR_NOMEM = 2, NSERROR_NOT_FOUND = 4, NSERROR_BAD_ENCODING = 15, NSERROR_NEED_DATA = 16, NSERROR_ENCODING_CHANGE = 17, NSERROR_BAD_PARAMETER = 18, NSERROR_INVALID = 19, NSERROR_DOM = 22, NSERROR_NOT_IMPLEMENTED = 31 };\n"
+        "enum { HUBBUB_ENCODINGCHANGE = 2, HUBBUB_PAUSED = 3, HUBBUB_NOMEM = 5, HUBBUB_BADPARM = 6, HUBBUB_INVALID = 7, HUBBUB_FILENOTFOUND = 8, HUBBUB_NEEDDATA = 9, HUBBUB_BADENCODING = 10, HUBBUB_UNKNOWN = 11, DOM_HUBBUB_OK = 0, DOM_HUBBUB_NOMEM = 1, DOM_HUBBUB_BADPARM = 2, DOM_HUBBUB_DOM = 3, DOM_HUBBUB_HUBBUB_ERR = 65536 };\n"
+        "\n"
+        "void libdom_dom_string_unref_z(struct dom_string_s *str) {\n"
+        "    if (str != 0) {\n"
+        "        if (str->refcnt != 0) { str->refcnt = str->refcnt - 1; }\n"
+        "        if (str->refcnt == 0) { dom_string_destroy(str); }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "void libdom_dom_node_unref_z(struct dom_node_s *node) {\n"
+        "    if (node != 0) {\n"
+        "        if (node->refcnt != 0) { node->refcnt = node->refcnt - 1; }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "export struct dom_node_s *libdom_find_first_element(struct dom_node_s *parent, struct lwc_string_s *element_name) {\n"
+        "    struct dom_node_s *element;\n"
+        "    struct dom_node_s *next_node;\n"
+        "    struct dom_string_s *node_name;\n"
+        "    uint32_t node_type;\n"
+        "    int exc;\n"
+        "    if (parent == 0) { return 0; }\n"
+        "    exc = _dom_node_get_first_child(parent, &element);\n"
+        "    if (exc != DOM_NO_ERR) { return 0; }\n"
+        "    if (element == 0) { return 0; }\n"
+        "    while (element != 0) {\n"
+        "        node_type = 0;\n"
+        "        exc = _dom_node_get_node_type(element, &node_type);\n"
+        "            if (exc == DOM_NO_ERR) {\n"
+        "                if (node_type == DOM_ELEMENT_NODE) {\n"
+        "                    exc = _dom_node_get_node_name(element, &node_name);\n"
+        "                    if (exc == DOM_NO_ERR) {\n"
+        "                        if (node_name != 0) {\n"
+        "                            if (dom_string_caseless_lwc_isequal(node_name, element_name) != 0) {\n"
+        "                                libdom_dom_string_unref_z(node_name);\n"
+        "                                return element;\n"
+        "                            }\n"
+        "                            libdom_dom_string_unref_z(node_name);\n"
+        "                        }\n"
+        "                    }\n"
+        "                }\n"
+        "            }\n"
+        "        exc = _dom_node_get_next_sibling(element, &next_node);\n"
+        "        libdom_dom_node_unref_z(element);\n"
+        "        if (exc != DOM_NO_ERR) { return 0; }\n"
+        "        element = next_node;\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "export int libdom_iterate_child_elements(struct dom_node_s *parent, int (*cb)(struct dom_node_s *node, uint8_t *ctx), uint8_t *ctx) {\n"
+        "    struct dom_nodelist_s *children;\n"
+        "    struct dom_node_s *child;\n"
+        "    uint32_t index;\n"
+        "    uint32_t num_children;\n"
+        "    uint32_t type;\n"
+        "    int error;\n"
+        "    int err;\n"
+        "    if (parent == 0) { return NSERROR_NOMEM; }\n"
+        "    if (cb == 0) { return NSERROR_NOMEM; }\n"
+        "    error = _dom_node_get_child_nodes(parent, &children);\n"
+        "    if (error != DOM_NO_ERR) { return NSERROR_NOMEM; }\n"
+        "    if (children == 0) { return NSERROR_NOMEM; }\n"
+        "    num_children = 0;\n"
+        "    error = dom_nodelist_get_length(children, &num_children);\n"
+        "    if (error != DOM_NO_ERR) { dom_nodelist_unref(children); return NSERROR_NOMEM; }\n"
+        "    index = 0;\n"
+        "    while (index < num_children) {\n"
+        "        error = _dom_nodelist_item(children, index, &child);\n"
+        "        if (error != DOM_NO_ERR) { dom_nodelist_unref(children); return NSERROR_NOMEM; }\n"
+        "        type = 0;\n"
+        "        if (child != 0) {\n"
+        "                error = _dom_node_get_node_type(child, &type);\n"
+        "                if (error == DOM_NO_ERR) {\n"
+        "                    if (type == DOM_ELEMENT_NODE) {\n"
+        "                        err = cb(child, ctx);\n"
+        "                        if (err != NSERROR_OK) { libdom_dom_node_unref_z(child); dom_nodelist_unref(children); return err; }\n"
+        "                    }\n"
+        "                }\n"
+        "        }\n"
+        "        libdom_dom_node_unref_z(child);\n"
+        "        index = index + 1;\n"
+        "    }\n"
+        "    dom_nodelist_unref(children);\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int libdom_hubbub_error_to_nserror(int error) {\n"
+        "    if (error == DOM_HUBBUB_OK) { return NSERROR_OK; }\n"
+        "    if (error == 65539) { return NSERROR_OK; }\n"
+        "    if (error == DOM_HUBBUB_NOMEM) { return NSERROR_NOMEM; }\n"
+        "    if (error == DOM_HUBBUB_BADPARM) { return NSERROR_BAD_PARAMETER; }\n"
+        "    if (error == DOM_HUBBUB_DOM) { return NSERROR_DOM; }\n"
+        "    if (error == 65538) { return NSERROR_ENCODING_CHANGE; }\n"
+        "    if (error == 65541) { return NSERROR_NOMEM; }\n"
+        "    if (error == 65542) { return NSERROR_BAD_PARAMETER; }\n"
+        "    if (error == 65543) { return NSERROR_INVALID; }\n"
+        "    if (error == 65544) { return NSERROR_NOT_FOUND; }\n"
+        "    if (error == 65545) { return NSERROR_NEED_DATA; }\n"
+        "    if (error == 65546) { return NSERROR_BAD_ENCODING; }\n"
+        "    if (error == 65547) { return NSERROR_DOM; }\n"
+        "    return NSERROR_UNKNOWN;\n"
+        "}\n"
+        "\n"
+        "export int libdom_dump_structure(struct dom_node_s *node, uint8_t *f, int depth) { return NSERROR_OK; }\n"
+        "\n"
+        "export int libdom_parse_file(uint8_t *filename, uint8_t *encoding, struct dom_document_s **doc) {\n"
+        "    if (doc != 0) { *doc = 0; }\n"
+        "    if (filename == 0 || doc == 0) { return NSERROR_BAD_PARAMETER; }\n"
+        "    return NSERROR_NOT_FOUND;\n"
+        "}\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
 static int zcc_emit_netsurf_nscolour_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
     uint32_t pos = 0;
 
@@ -13585,6 +15236,2914 @@ static int zcc_emit_browser_c_tier5_border_smoke_z_source(char *out, uint32_t ou
     return 0;
 }
 
+static int zcc_emit_netsurf_version_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "global uint8_t *netsurf_version = \"3.12 (Dev)\";\n"
+        "global int netsurf_version_major = 3;\n"
+        "global int netsurf_version_minor = 12;\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_plot_style_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "struct plot_style_s {\n"
+        "    uint32_t stroke_type;\n"
+        "    int32_t stroke_width;\n"
+        "    uint32_t stroke_colour;\n"
+        "    uint32_t fill_type;\n"
+        "    uint32_t fill_colour;\n"
+        "};\n"
+        "struct plot_font_style_s {\n"
+        "    uint8_t *families;\n"
+        "    uint32_t family;\n"
+        "    int32_t size;\n"
+        "    int32_t weight;\n"
+        "    uint32_t flags;\n"
+        "    uint32_t background;\n"
+        "    uint32_t foreground;\n"
+        "};\n"
+        "enum { PLOT_OP_TYPE_NONE = 0, PLOT_OP_TYPE_SOLID = 1 };\n"
+        "enum { PLOT_FONT_FAMILY_SANS_SERIF = 0, FONTF_NONE = 0 };\n"
+        "\n"
+        "static struct plot_style_s plot_style_fill_white_static = { 0, 0, 0, PLOT_OP_TYPE_SOLID, 16777215 };\n"
+        "global struct plot_style_s *plot_style_fill_white = &plot_style_fill_white_static;\n"
+        "static struct plot_style_s plot_style_fill_black_static = { 0, 0, 0, PLOT_OP_TYPE_SOLID, 0 };\n"
+        "global struct plot_style_s *plot_style_fill_black = &plot_style_fill_black_static;\n"
+        "static struct plot_style_s plot_style_fill_red_static = { 0, 0, 0, PLOT_OP_TYPE_SOLID, 255 };\n"
+        "global struct plot_style_s *plot_style_fill_red = &plot_style_fill_red_static;\n"
+        "\n"
+        "static struct plot_style_s plot_style_content_edge_static = { PLOT_OP_TYPE_SOLID, 1024, 16711680, 0, 0 };\n"
+        "global struct plot_style_s *plot_style_content_edge = &plot_style_content_edge_static;\n"
+        "static struct plot_style_s plot_style_padding_edge_static = { PLOT_OP_TYPE_SOLID, 1024, 255, 0, 0 };\n"
+        "global struct plot_style_s *plot_style_padding_edge = &plot_style_padding_edge_static;\n"
+        "static struct plot_style_s plot_style_margin_edge_static = { PLOT_OP_TYPE_SOLID, 1024, 65535, 0, 0 };\n"
+        "global struct plot_style_s *plot_style_margin_edge = &plot_style_margin_edge_static;\n"
+        "\n"
+        "static struct plot_style_s plot_style_broken_object_static = { PLOT_OP_TYPE_SOLID, 1024, 255, PLOT_OP_TYPE_SOLID, 8947967 };\n"
+        "global struct plot_style_s *plot_style_broken_object = &plot_style_broken_object_static;\n"
+        "static struct plot_font_style_s plot_fstyle_broken_object_static = { 0, PLOT_FONT_FAMILY_SANS_SERIF, 16384, 400, FONTF_NONE, 8947967, 68 };\n"
+        "global struct plot_font_style_s *plot_fstyle_broken_object = &plot_fstyle_broken_object_static;\n"
+        "\n"
+        "static struct plot_style_s plot_style_caret_static = { PLOT_OP_TYPE_SOLID, 0, 255, 0, 0 };\n"
+        "global struct plot_style_s *plot_style_caret = &plot_style_caret_static;\n"
+        "static struct plot_style_s plot_style_fill_wbasec_static = { 0, 0, 0, PLOT_OP_TYPE_SOLID, 14277081 };\n"
+        "global struct plot_style_s *plot_style_fill_wbasec = &plot_style_fill_wbasec_static;\n"
+        "static struct plot_style_s plot_style_fill_darkwbasec_static = { 0, 0, 0, PLOT_OP_TYPE_SOLID, 8026746 };\n"
+        "global struct plot_style_s *plot_style_fill_darkwbasec = &plot_style_fill_darkwbasec_static;\n"
+        "static struct plot_style_s plot_style_fill_lightwbasec_static = { 0, 0, 0, PLOT_OP_TYPE_SOLID, 15395562 };\n"
+        "global struct plot_style_s *plot_style_fill_lightwbasec = &plot_style_fill_lightwbasec_static;\n"
+        "static struct plot_style_s plot_style_fill_wblobc_static = { 0, 0, 0, PLOT_OP_TYPE_SOLID, 0 };\n"
+        "global struct plot_style_s *plot_style_fill_wblobc = &plot_style_fill_wblobc_static;\n"
+        "static struct plot_style_s plot_style_stroke_wblobc_static = { PLOT_OP_TYPE_SOLID, 2048, 0, 0, 0 };\n"
+        "global struct plot_style_s *plot_style_stroke_wblobc = &plot_style_stroke_wblobc_static;\n"
+        "static struct plot_style_s plot_style_stroke_darkwbasec_static = { PLOT_OP_TYPE_SOLID, 0, 8026746, 0, 0 };\n"
+        "global struct plot_style_s *plot_style_stroke_darkwbasec = &plot_style_stroke_darkwbasec_static;\n"
+        "static struct plot_style_s plot_style_stroke_lightwbasec_static = { PLOT_OP_TYPE_SOLID, 0, 15395562, 0, 0 };\n"
+        "global struct plot_style_s *plot_style_stroke_lightwbasec = &plot_style_stroke_lightwbasec_static;\n"
+        "\n"
+        "static struct plot_font_style_s plot_style_font_static = { 0, PLOT_FONT_FAMILY_SANS_SERIF, 8192, 400, FONTF_NONE, 16777215, 0 };\n"
+        "global struct plot_font_style_s *plot_style_font = &plot_style_font_static;\n"
+    ) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_emit_netsurf_system_colour_z_source(char *out, uint32_t out_capacity, uint32_t *out_size) {
+    uint32_t pos = 0;
+
+    if (append_text_limited(out, out_capacity, &pos,
+        "extern int lwc_intern_string(const uint8_t *s, uint64_t slen, struct lwc_string_s **ret);\n"
+        "extern void lwc_string_unref(struct lwc_string_s *str);\n"
+        "extern int lwc_string_caseless_isequal(struct lwc_string_s *a, struct lwc_string_s *b, uint8_t *ret);\n"
+        "\n"
+        "struct lwc_string_s { uint32_t opaque; };\n"
+        "enum { NSERROR_OK = 0, NSERROR_NOMEM = 2, NSERROR_INIT_FAILED = 8, NSERROR_INVALID = 19 };\n"
+        "enum { CSS_OK = 0, CSS_INVALID = 3 };\n"
+        "global struct lwc_string_s *ns_system_colour_names[19];\n"
+        "global uint8_t ns_system_colour_ready;\n"
+        "\n"
+        "uint8_t ns_system_colour_name_eq(const uint8_t *a, const uint8_t *b) {\n"
+        "    uint32_t i;\n"
+        "    uint8_t ca;\n"
+        "    uint8_t cb;\n"
+        "    if (a == 0 || b == 0) { return 0; }\n"
+        "    i = 0;\n"
+        "    while (a[i] != 0 && b[i] != 0) {\n"
+        "        ca = a[i];\n"
+        "        cb = b[i];\n"
+        "        if (ca >= 65 && ca <= 90) { ca = ca + 32; }\n"
+        "        if (cb >= 65 && cb <= 90) { cb = cb + 32; }\n"
+        "        if (ca != cb) { return 0; }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    if (a[i] == 0 && b[i] == 0) { return 1; }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "uint32_t ns_system_colour_to_css(uint32_t c) {\n"
+        "    return ((~c) & 4278190080) | ((c & 16711680) >> 16) | (c & 65280) | ((c & 255) << 16);\n"
+        "}\n"
+        "\n"
+        "int ns_system_colour_lookup(const uint8_t *name, uint32_t *colour_out) {\n"
+        "    if (ns_system_colour_name_eq(name, \"AccentColor\") != 0) { *colour_out = 6710886; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"AccentColorText\") != 0) { *colour_out = 16777215; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"ActiveText\") != 0) { *colour_out = 238; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"ButtonBorder\") != 0) { *colour_out = 5131854; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"ButtonFace\") != 0) { *colour_out = 16316664; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"ButtonText\") != 0) { *colour_out = 5000268; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"Canvas\") != 0) { *colour_out = 15856113; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"CanvasText\") != 0) { *colour_out = 0; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"Field\") != 0) { *colour_out = 15856113; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"FieldText\") != 0) { *colour_out = 0; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"GrayText\") != 0) { *colour_out = 10921638; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"Highlight\") != 0) { *colour_out = 12584960; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"HighlightText\") != 0) { *colour_out = 16777215; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"LinkText\") != 0) { *colour_out = 15597568; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"Mark\") != 0) { *colour_out = 65535; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"MarkText\") != 0) { *colour_out = 0; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"SelectedItem\") != 0) { *colour_out = 14976053; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"SelectedItemText\") != 0) { *colour_out = 16777215; return NSERROR_OK; }\n"
+        "    if (ns_system_colour_name_eq(name, \"VisitedText\") != 0) { *colour_out = 9116245; return NSERROR_OK; }\n"
+        "    return NSERROR_INVALID;\n"
+        "}\n"
+        "\n"
+        "int ns_system_colour_intern_one(uint32_t index, const uint8_t *name, uint64_t len) {\n"
+        "    if (lwc_intern_string(name, len, &ns_system_colour_names[index]) != 0) {\n"
+        "        return NSERROR_NOMEM;\n"
+        "    }\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export int ns_system_colour_init(void) {\n"
+        "    if (ns_system_colour_ready != 0) { return NSERROR_INIT_FAILED; }\n"
+        "    if (ns_system_colour_intern_one(0, \"AccentColor\", 11) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(1, \"AccentColorText\", 15) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(2, \"ActiveText\", 10) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(3, \"ButtonBorder\", 12) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(4, \"ButtonFace\", 10) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(5, \"ButtonText\", 10) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(6, \"Canvas\", 6) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(7, \"CanvasText\", 10) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(8, \"Field\", 5) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(9, \"FieldText\", 9) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(10, \"GrayText\", 8) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(11, \"Highlight\", 9) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(12, \"HighlightText\", 13) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(13, \"LinkText\", 8) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(14, \"Mark\", 4) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(15, \"MarkText\", 8) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(16, \"SelectedItem\", 12) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(17, \"SelectedItemText\", 16) != 0) { return NSERROR_NOMEM; }\n"
+        "    if (ns_system_colour_intern_one(18, \"VisitedText\", 11) != 0) { return NSERROR_NOMEM; }\n"
+        "    ns_system_colour_ready = 1;\n"
+        "    return NSERROR_OK;\n"
+        "}\n"
+        "\n"
+        "export void ns_system_colour_finalize(void) {\n"
+        "    uint32_t i;\n"
+        "    i = 0;\n"
+        "    while (i < 19) {\n"
+        "        if (ns_system_colour_names[i] != 0) { lwc_string_unref(ns_system_colour_names[i]); }\n"
+        "        ns_system_colour_names[i] = (struct lwc_string_s *)0;\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    ns_system_colour_ready = 0;\n"
+        "}\n"
+        "\n"
+        "export int ns_system_colour_char(const uint8_t *name, uint32_t *colour_out) {\n"
+        "    return ns_system_colour_lookup(name, colour_out);\n"
+        "}\n"
+        "\n"
+        "export int ns_system_colour(uint8_t *pw, struct lwc_string_s *name, uint32_t *colour) {\n"
+        "    uint32_t i;\n"
+        "    uint8_t match;\n"
+        "    uint32_t ns_colour;\n"
+        "    i = 0;\n"
+        "    while (i < 19) {\n"
+        "        match = 0;\n"
+        "        if (ns_system_colour_names[i] != 0 && lwc_string_caseless_isequal(name, ns_system_colour_names[i], &match) == 0 && match != 0) {\n"
+        "            if (i == 0) { ns_colour = 6710886; }\n"
+        "            else if (i == 1) { ns_colour = 16777215; }\n"
+        "            else if (i == 2) { ns_colour = 238; }\n"
+        "            else if (i == 3) { ns_colour = 5131854; }\n"
+        "            else if (i == 4) { ns_colour = 16316664; }\n"
+        "            else if (i == 5) { ns_colour = 5000268; }\n"
+        "            else if (i == 6) { ns_colour = 15856113; }\n"
+        "            else if (i == 7) { ns_colour = 0; }\n"
+        "            else if (i == 8) { ns_colour = 15856113; }\n"
+        "            else if (i == 9) { ns_colour = 0; }\n"
+        "            else if (i == 10) { ns_colour = 10921638; }\n"
+        "            else if (i == 11) { ns_colour = 12584960; }\n"
+        "            else if (i == 12) { ns_colour = 16777215; }\n"
+        "            else if (i == 13) { ns_colour = 15597568; }\n"
+        "            else if (i == 14) { ns_colour = 65535; }\n"
+        "            else if (i == 15) { ns_colour = 0; }\n"
+        "            else if (i == 16) { ns_colour = 14976053; }\n"
+        "            else if (i == 17) { ns_colour = 16777215; }\n"
+        "            else { ns_colour = 9116245; }\n"
+        "            *colour = ns_system_colour_to_css(ns_colour);\n"
+        "            return CSS_OK;\n"
+        "        }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return CSS_INVALID;\n"
+        "}\n"
+) != 0) {
+        return -1;
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
+static int zcc_c_ident_char(char ch) {
+    return (ch >= 'A' && ch <= 'Z') ||
+           (ch >= 'a' && ch <= 'z') ||
+           (ch >= '0' && ch <= '9') ||
+           ch == '_';
+}
+
+static int zcc_c_digit_char(char ch) {
+    return ch >= '0' && ch <= '9';
+}
+
+static int zcc_c_hex_char(char ch) {
+    return zcc_c_digit_char(ch) ||
+           (ch >= 'A' && ch <= 'F') ||
+           (ch >= 'a' && ch <= 'f');
+}
+
+static int zcc_c_integer_suffix_char(char ch) {
+    return ch == 'u' || ch == 'U' || ch == 'l' || ch == 'L';
+}
+
+static int zcc_c_word_eq(const char *word, uint32_t len, const char *match) {
+    uint32_t i = 0;
+
+    while (i < len && match[i] != '\0') {
+        if (word[i] != match[i]) {
+            return 0;
+        }
+        ++i;
+    }
+    return i == len && match[i] == '\0';
+}
+
+static const char *zcc_c_skip_spaces(const char *s) {
+    while (*s == ' ' || *s == '\t') {
+        ++s;
+    }
+    return s;
+}
+
+static int zcc_c_starts_word(const char *s, const char *word) {
+    uint32_t i = 0;
+
+    s = zcc_c_skip_spaces(s);
+    while (word[i] != '\0') {
+        if (s[i] != word[i]) {
+            return 0;
+        }
+        ++i;
+    }
+    return !zcc_c_ident_char(s[i]);
+}
+
+#define ZCC_C_MAX_DEFINES 64u
+#define ZCC_C_DEFINE_NAME_SIZE 64u
+#define ZCC_C_DEFINE_VALUE_SIZE 128u
+#define ZCC_C_MAX_FUNCTION_DEFINES 32u
+#define ZCC_C_DEFINE_PARAM_SIZE 32u
+#define ZCC_C_MAX_PP_DEPTH 8u
+#define ZCC_C_DEFAULT_UNSIZED_ARRAY_LENGTH 256u
+
+typedef struct {
+    char name[ZCC_C_DEFINE_NAME_SIZE];
+    char value[ZCC_C_DEFINE_VALUE_SIZE];
+} zcc_c_define_t;
+
+typedef struct {
+    char name[ZCC_C_DEFINE_NAME_SIZE];
+    char param[ZCC_C_DEFINE_PARAM_SIZE];
+    char value[ZCC_C_DEFINE_VALUE_SIZE];
+} zcc_c_function_define_t;
+
+typedef struct {
+    int parent_active;
+    int active;
+    int branch_taken;
+} zcc_c_pp_frame_t;
+
+static int zcc_c_parse_define(const char *directive,
+                              zcc_c_define_t *defines,
+                              uint32_t *define_count);
+
+static int zcc_c_parse_function_define(const char *directive,
+                                       zcc_c_function_define_t *defines,
+                                       uint32_t *define_count);
+
+static int zcc_c_define_lookup(const zcc_c_define_t *defines,
+                               uint32_t define_count,
+                               const char *word,
+                               uint32_t word_len,
+                               const char **value_out) {
+    uint32_t i;
+
+    for (i = 0; i < define_count; ++i) {
+        if (zcc_c_word_eq(word, word_len, defines[i].name)) {
+            *value_out = defines[i].value;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int zcc_c_store_define(zcc_c_define_t *defines,
+                              uint32_t *define_count,
+                              const char *name,
+                              uint32_t name_len,
+                              const char *value,
+                              uint32_t value_len) {
+    uint32_t i;
+
+    while (value_len != 0u && zcc_c_integer_suffix_char(value[value_len - 1u])) {
+        --value_len;
+    }
+
+    if (name_len == 0u || name_len >= ZCC_C_DEFINE_NAME_SIZE ||
+        value_len >= ZCC_C_DEFINE_VALUE_SIZE) {
+        return -1;
+    }
+
+    for (i = 0; i < *define_count; ++i) {
+        uint32_t j = 0;
+        while (j < name_len && defines[i].name[j] == name[j]) {
+            ++j;
+        }
+        if (j == name_len && defines[i].name[j] == '\0') {
+            break;
+        }
+    }
+    if (i == *define_count) {
+        if (*define_count >= ZCC_C_MAX_DEFINES) {
+            return -1;
+        }
+        i = *define_count;
+        *define_count = *define_count + 1u;
+    }
+
+    for (uint32_t j = 0; j < name_len; ++j) {
+        defines[i].name[j] = name[j];
+    }
+    defines[i].name[name_len] = '\0';
+    for (uint32_t j = 0; j < value_len; ++j) {
+        defines[i].value[j] = value[j];
+    }
+    defines[i].value[value_len] = '\0';
+    return 0;
+}
+
+static int zcc_c_store_function_define(zcc_c_function_define_t *defines,
+                                       uint32_t *define_count,
+                                       const char *name,
+                                       uint32_t name_len,
+                                       const char *param,
+                                       uint32_t param_len,
+                                       const char *value,
+                                       uint32_t value_len) {
+    uint32_t i;
+
+    if (name_len == 0u || name_len >= ZCC_C_DEFINE_NAME_SIZE ||
+        param_len == 0u || param_len >= ZCC_C_DEFINE_PARAM_SIZE ||
+        value_len >= ZCC_C_DEFINE_VALUE_SIZE) {
+        return -1;
+    }
+
+    for (i = 0; i < *define_count; ++i) {
+        uint32_t j = 0;
+        while (j < name_len && defines[i].name[j] == name[j]) {
+            ++j;
+        }
+        if (j == name_len && defines[i].name[j] == '\0') {
+            break;
+        }
+    }
+    if (i == *define_count) {
+        if (*define_count >= ZCC_C_MAX_FUNCTION_DEFINES) {
+            return -1;
+        }
+        ++*define_count;
+    }
+
+    for (uint32_t j = 0; j < name_len; ++j) {
+        defines[i].name[j] = name[j];
+    }
+    defines[i].name[name_len] = '\0';
+    for (uint32_t j = 0; j < param_len; ++j) {
+        defines[i].param[j] = param[j];
+    }
+    defines[i].param[param_len] = '\0';
+    for (uint32_t j = 0; j < value_len; ++j) {
+        defines[i].value[j] = value[j];
+    }
+    defines[i].value[value_len] = '\0';
+    return 0;
+}
+
+static int zcc_c_line_is_void_identifier_cast(const char *trimmed) {
+    const char *p;
+
+    if (trimmed[0] != '(' ||
+        trimmed[1] != 'v' ||
+        trimmed[2] != 'o' ||
+        trimmed[3] != 'i' ||
+        trimmed[4] != 'd' ||
+        trimmed[5] != ')') {
+        return 0;
+    }
+
+    p = zcc_c_skip_spaces(trimmed + 6);
+    if (!(zcc_c_ident_char(*p)) || zcc_c_digit_char(*p)) {
+        return 0;
+    }
+    while (zcc_c_ident_char(*p)) {
+        ++p;
+    }
+    p = zcc_c_skip_spaces(p);
+    return p[0] == ';' && p[1] == '\0';
+}
+
+static int zcc_c_define_name_is_set(const zcc_c_define_t *defines,
+                                    uint32_t define_count,
+                                    const char *name,
+                                    uint32_t name_len) {
+    const char *ignored;
+    return zcc_c_define_lookup(defines, define_count, name, name_len, &ignored);
+}
+
+static int zcc_c_eval_if_expr(const char *expr,
+                              const zcc_c_define_t *defines,
+                              uint32_t define_count) {
+    const char *p = zcc_c_skip_spaces(expr);
+
+    if (p[0] == '0' && !zcc_c_ident_char(p[1])) {
+        return 0;
+    }
+    if (p[0] == '1' && !zcc_c_ident_char(p[1])) {
+        return 1;
+    }
+    if (zcc_c_starts_word(p, "defined")) {
+        const char *name = p + 7;
+        uint32_t name_len = 0;
+        name = zcc_c_skip_spaces(name);
+        if (*name == '(') {
+            ++name;
+            name = zcc_c_skip_spaces(name);
+        }
+        while (zcc_c_ident_char(name[name_len])) {
+            ++name_len;
+        }
+        return zcc_c_define_name_is_set(defines, define_count, name, name_len);
+    }
+    return 0;
+}
+
+static int zcc_c_eval_ifdef_expr(const char *expr,
+                                 const zcc_c_define_t *defines,
+                                 uint32_t define_count,
+                                 int invert) {
+    const char *name = zcc_c_skip_spaces(expr);
+    uint32_t name_len = 0;
+    int is_set;
+
+    while (zcc_c_ident_char(name[name_len])) {
+        ++name_len;
+    }
+    is_set = zcc_c_define_name_is_set(defines, define_count, name, name_len);
+    return invert ? !is_set : is_set;
+}
+
+static int zcc_c_handle_preprocessor_directive(const char *directive,
+                                               zcc_c_pp_frame_t *pp_stack,
+                                               uint32_t *pp_depth,
+                                               int *current_active,
+                                               zcc_c_define_t *defines,
+                                               uint32_t *define_count) {
+    if (zcc_c_starts_word(directive, "ifdef") ||
+        zcc_c_starts_word(directive, "ifndef") ||
+        zcc_c_starts_word(directive, "if")) {
+        int parent_active = *current_active;
+        int cond;
+
+        if (*pp_depth >= ZCC_C_MAX_PP_DEPTH) {
+            return -1;
+        }
+        if (zcc_c_starts_word(directive, "ifdef")) {
+            cond = zcc_c_eval_ifdef_expr(directive + 5, defines, *define_count, 0);
+        } else if (zcc_c_starts_word(directive, "ifndef")) {
+            cond = zcc_c_eval_ifdef_expr(directive + 6, defines, *define_count, 1);
+        } else {
+            cond = zcc_c_eval_if_expr(directive + 2, defines, *define_count);
+        }
+
+        pp_stack[*pp_depth].parent_active = parent_active;
+        pp_stack[*pp_depth].active = parent_active && cond;
+        pp_stack[*pp_depth].branch_taken = parent_active && cond;
+        *current_active = pp_stack[*pp_depth].active;
+        *pp_depth = *pp_depth + 1u;
+        return 0;
+    }
+
+    if (zcc_c_starts_word(directive, "elif")) {
+        zcc_c_pp_frame_t *frame;
+        int cond;
+
+        if (*pp_depth == 0u) {
+            return 0;
+        }
+        frame = &pp_stack[*pp_depth - 1u];
+        cond = !frame->branch_taken &&
+               zcc_c_eval_if_expr(directive + 4, defines, *define_count);
+        frame->active = frame->parent_active && cond;
+        if (frame->active) {
+            frame->branch_taken = 1;
+        }
+        *current_active = frame->active;
+        return 0;
+    }
+
+    if (zcc_c_starts_word(directive, "else")) {
+        zcc_c_pp_frame_t *frame;
+
+        if (*pp_depth == 0u) {
+            return 0;
+        }
+        frame = &pp_stack[*pp_depth - 1u];
+        frame->active = frame->parent_active && !frame->branch_taken;
+        frame->branch_taken = 1;
+        *current_active = frame->active;
+        return 0;
+    }
+
+    if (zcc_c_starts_word(directive, "endif")) {
+        if (*pp_depth != 0u) {
+            *pp_depth = *pp_depth - 1u;
+            *current_active = *pp_depth == 0u ? 1 : pp_stack[*pp_depth - 1u].active;
+        }
+        return 0;
+    }
+
+    if (!*current_active) {
+        return 0;
+    }
+    if (zcc_c_starts_word(directive, "define")) {
+        return zcc_c_parse_define(directive, defines, define_count);
+    }
+    return 0;
+}
+
+static int zcc_c_line_is_split_decl_prefix(const char *trimmed) {
+    int saw_type = 0;
+    int saw_name = 0;
+    uint32_t i = 0;
+
+    if (*trimmed == '\0' ||
+        zcc_c_starts_word(trimmed, "if") ||
+        zcc_c_starts_word(trimmed, "else") ||
+        zcc_c_starts_word(trimmed, "for") ||
+        zcc_c_starts_word(trimmed, "while") ||
+        zcc_c_starts_word(trimmed, "return")) {
+        return 0;
+    }
+
+    while (trimmed[i] != '\0') {
+        if (trimmed[i] == ';' || trimmed[i] == '{' || trimmed[i] == '}' ||
+            trimmed[i] == '(' || trimmed[i] == ')' || trimmed[i] == '=' ||
+            trimmed[i] == '[' || trimmed[i] == ']') {
+            return 0;
+        }
+        if (zcc_c_ident_char(trimmed[i]) &&
+            !(zcc_c_digit_char(trimmed[i]) && i == 0u)) {
+            uint32_t start = i;
+            uint32_t len;
+
+            while (zcc_c_ident_char(trimmed[i])) {
+                ++i;
+            }
+            len = i - start;
+            if (zcc_c_word_eq(trimmed + start, len, "static") ||
+                zcc_c_word_eq(trimmed + start, len, "inline") ||
+                zcc_c_word_eq(trimmed + start, len, "const") ||
+                zcc_c_word_eq(trimmed + start, len, "volatile")) {
+                continue;
+            }
+            ++saw_name;
+            if (zcc_c_word_eq(trimmed + start, len, "void") ||
+                zcc_c_word_eq(trimmed + start, len, "char") ||
+                zcc_c_word_eq(trimmed + start, len, "bool") ||
+                zcc_c_word_eq(trimmed + start, len, "int") ||
+                zcc_c_word_eq(trimmed + start, len, "size_t") ||
+                zcc_c_word_eq(trimmed + start, len, "ssize_t") ||
+                zcc_c_word_eq(trimmed + start, len, "off_t") ||
+                zcc_c_word_eq(trimmed + start, len, "nsuerror") ||
+                zcc_c_word_eq(trimmed + start, len, "parserutils_error") ||
+                zcc_c_word_eq(trimmed + start, len, "lwc_error") ||
+                zcc_c_word_eq(trimmed + start, len, "lwc_hash") ||
+                zcc_c_word_eq(trimmed + start, len, "lwc_string") ||
+                zcc_c_word_eq(trimmed + start, len, "uint8_t") ||
+                zcc_c_word_eq(trimmed + start, len, "uint16_t") ||
+                zcc_c_word_eq(trimmed + start, len, "uint32_t") ||
+                zcc_c_word_eq(trimmed + start, len, "uint64_t") ||
+                zcc_c_word_eq(trimmed + start, len, "int8_t") ||
+                zcc_c_word_eq(trimmed + start, len, "int16_t") ||
+                zcc_c_word_eq(trimmed + start, len, "int32_t") ||
+                zcc_c_word_eq(trimmed + start, len, "int64_t")) {
+                saw_type = 1;
+            }
+            continue;
+        }
+        if (trimmed[i] != ' ' && trimmed[i] != '\t' && trimmed[i] != '*') {
+            return 0;
+        }
+        ++i;
+    }
+
+    return saw_type && saw_name <= 1;
+}
+
+static int zcc_c_line_is_split_function_header_start(const char *trimmed) {
+    uint32_t i = 0;
+    uint32_t paren_depth = 0;
+    int saw_lparen = 0;
+
+    if (zcc_c_starts_word(trimmed, "if") ||
+        zcc_c_starts_word(trimmed, "for") ||
+        zcc_c_starts_word(trimmed, "while") ||
+        zcc_c_starts_word(trimmed, "switch") ||
+        zcc_c_starts_word(trimmed, "return")) {
+        return 0;
+    }
+
+    while (trimmed[i] != '\0') {
+        if (trimmed[i] == ';' || trimmed[i] == '=') {
+            return 0;
+        }
+        if (trimmed[i] == '(') {
+            saw_lparen = 1;
+            ++paren_depth;
+        } else if (trimmed[i] == ')' && paren_depth != 0u) {
+            --paren_depth;
+        } else if (trimmed[i] == '{') {
+            return 0;
+        }
+        ++i;
+    }
+    return saw_lparen && paren_depth != 0u;
+}
+
+static uint32_t zcc_c_count_inline_initializer_items(const char *line);
+
+static int zcc_c_rewrite_unsized_initializer_array(const char *line,
+                                                   char *out,
+                                                   uint32_t out_capacity) {
+    uint32_t pos = 0;
+    uint32_t i = 0;
+    int changed = 0;
+
+    while (line[i] != '\0') {
+        if (line[i] == '[' && line[i + 1u] == ']') {
+            const char *after = zcc_c_skip_spaces(line + i + 2u);
+            if (*after == '=') {
+                uint32_t inferred_length = zcc_c_count_inline_initializer_items(after + 1);
+                if (inferred_length == 0u) {
+                    inferred_length = ZCC_C_DEFAULT_UNSIZED_ARRAY_LENGTH;
+                }
+                if (append_text_limited(out, out_capacity, &pos, "[") != 0 ||
+                    append_dec_limited(out, out_capacity, &pos, inferred_length) != 0 ||
+                    append_text_limited(out, out_capacity, &pos, "]") != 0) {
+                    return -1;
+                }
+                i += 2u;
+                changed = 1;
+                continue;
+            }
+        }
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i++];
+    }
+    out[pos] = '\0';
+    return changed;
+}
+
+static uint32_t zcc_c_count_inline_initializer_items(const char *line) {
+    uint32_t i = 0;
+    uint32_t depth = 0;
+    uint32_t count = 0;
+    int saw_value = 0;
+    int in_initializer = 0;
+
+    while (line[i] != '\0') {
+        if (line[i] == '"') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '"') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            if (in_initializer && depth == 1u) {
+                saw_value = 1;
+            }
+            continue;
+        }
+        if (line[i] == '\'') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '\'') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            if (in_initializer && depth == 1u) {
+                saw_value = 1;
+            }
+            continue;
+        }
+        if (line[i] == '{') {
+            ++depth;
+            in_initializer = 1;
+            ++i;
+            continue;
+        }
+        if (line[i] == '}') {
+            if (depth == 1u) {
+                if (saw_value) {
+                    ++count;
+                }
+                return count;
+            }
+            if (depth != 0u) {
+                --depth;
+            }
+            ++i;
+            continue;
+        }
+        if (in_initializer && depth == 1u) {
+            if (line[i] == ',') {
+                if (saw_value) {
+                    ++count;
+                    saw_value = 0;
+                }
+            } else if (line[i] != ' ' && line[i] != '\t' && line[i] != '\r') {
+                saw_value = 1;
+            }
+        }
+        ++i;
+    }
+    return 0;
+}
+
+static int zcc_c_rewrite_for_commas(const char *line,
+                                    char *out,
+                                    uint32_t out_capacity) {
+    uint32_t i = 0;
+    uint32_t pos = 0;
+    uint32_t init_start;
+    uint32_t init_end;
+    uint32_t cond_start;
+    uint32_t paren_depth = 0;
+    int saw_init_comma = 0;
+
+    while (line[i] == ' ' || line[i] == '\t') {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i++];
+    }
+    if (!(line[i] == 'f' && line[i + 1u] == 'o' && line[i + 2u] == 'r' &&
+          !zcc_c_ident_char(line[i + 3u]))) {
+        return 0;
+    }
+    while (line[i] != '\0' && line[i] != '(') {
+        ++i;
+    }
+    if (line[i] != '(') {
+        return 0;
+    }
+    ++i;
+    init_start = i;
+    while (line[i] != '\0') {
+        if (line[i] == '(') {
+            ++paren_depth;
+        } else if (line[i] == ')' && paren_depth != 0u) {
+            --paren_depth;
+        } else if (line[i] == ',' && paren_depth == 0u) {
+            saw_init_comma = 1;
+        } else if (line[i] == ';' && paren_depth == 0u) {
+            break;
+        }
+        ++i;
+    }
+    if (line[i] != ';' || !saw_init_comma) {
+        return 0;
+    }
+    init_end = i;
+    cond_start = i + 1u;
+
+    i = init_start;
+    while (i < init_end) {
+        if (line[i] == ',') {
+            if (append_text_limited(out, out_capacity, &pos, ";\n") != 0) {
+                return -1;
+            }
+            ++i;
+            while (line[i] == ' ' || line[i] == '\t') {
+                ++i;
+            }
+            continue;
+        }
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i++];
+    }
+    if (append_text_limited(out, out_capacity, &pos, ";\nfor (;") != 0) {
+        return -1;
+    }
+    i = cond_start;
+    while (line[i] != '\0') {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i++];
+    }
+    out[pos] = '\0';
+    return 1;
+}
+
+static int zcc_c_rewrite_leading_incdec(const char *line,
+                                        char *out,
+                                        uint32_t out_capacity) {
+    uint32_t in = 0;
+    uint32_t pos = 0;
+    char op0;
+    char op1;
+
+    while (line[in] == ' ' || line[in] == '\t') {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[in++];
+    }
+
+    if (!((line[in] == '+' && line[in + 1u] == '+') ||
+          (line[in] == '-' && line[in + 1u] == '-'))) {
+        return 0;
+    }
+    op0 = line[in];
+    op1 = line[in + 1u];
+    in += 2u;
+    while (line[in] == ' ' || line[in] == '\t') {
+        ++in;
+    }
+
+    while (line[in] != '\0' && line[in] != ';') {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[in++];
+    }
+    while (pos != 0u && (out[pos - 1u] == ' ' || out[pos - 1u] == '\t')) {
+        --pos;
+    }
+    if (pos + 4u >= out_capacity) {
+        return -1;
+    }
+    out[pos++] = op0;
+    out[pos++] = op1;
+    out[pos++] = ';';
+    out[pos] = '\0';
+    return 1;
+}
+
+static int zcc_c_is_plain_assignment_at(const char *line, uint32_t i) {
+    char prev = i == 0u ? '\0' : line[i - 1u];
+    char next = line[i + 1u];
+
+    return line[i] == '=' &&
+           prev != '=' && prev != '!' && prev != '<' && prev != '>' &&
+           prev != '+' && prev != '-' && prev != '*' && prev != '/' &&
+           prev != '%' && prev != '&' && prev != '|' && prev != '^' &&
+           next != '=';
+}
+
+static int zcc_c_rewrite_chained_assignment(const char *line,
+                                            char *out,
+                                            uint32_t out_capacity) {
+    uint32_t i = 0;
+    uint32_t first_assign = 0;
+    uint32_t second_assign = 0;
+    uint32_t semi = 0;
+    uint32_t assign_count = 0;
+    uint32_t paren_depth = 0;
+    uint32_t bracket_depth = 0;
+    uint32_t brace_depth = 0;
+    uint32_t indent_len;
+    uint32_t lhs1_start;
+    uint32_t lhs1_end;
+    uint32_t lhs2_start;
+    uint32_t lhs2_end;
+    uint32_t rhs_start;
+    uint32_t rhs_end;
+    uint32_t pos = 0;
+    const char *trimmed = zcc_c_skip_spaces(line);
+
+    if (*trimmed == '\0' || *trimmed == '#') {
+        return 0;
+    }
+    indent_len = (uint32_t)(trimmed - line);
+
+    while (line[i] != '\0') {
+        if (line[i] == '"') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '"') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+        if (line[i] == '\'') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '\'') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+        if (line[i] == '(') {
+            ++paren_depth;
+        } else if (line[i] == ')' && paren_depth != 0u) {
+            --paren_depth;
+        } else if (line[i] == '[') {
+            ++bracket_depth;
+        } else if (line[i] == ']' && bracket_depth != 0u) {
+            --bracket_depth;
+        } else if (line[i] == '{') {
+            ++brace_depth;
+        } else if (line[i] == '}' && brace_depth != 0u) {
+            --brace_depth;
+        } else if (line[i] == ';' && paren_depth == 0u &&
+                   bracket_depth == 0u && brace_depth == 0u) {
+            semi = i;
+            break;
+        } else if (paren_depth == 0u && bracket_depth == 0u &&
+                   brace_depth == 0u && zcc_c_is_plain_assignment_at(line, i)) {
+            if (assign_count == 0u) {
+                first_assign = i;
+            } else if (assign_count == 1u) {
+                second_assign = i;
+            }
+            ++assign_count;
+        }
+        ++i;
+    }
+
+    if (assign_count != 2u || semi == 0u || second_assign <= first_assign) {
+        return 0;
+    }
+
+    lhs1_start = indent_len;
+    lhs1_end = first_assign;
+    while (lhs1_end > lhs1_start &&
+           (line[lhs1_end - 1u] == ' ' || line[lhs1_end - 1u] == '\t')) {
+        --lhs1_end;
+    }
+    lhs2_start = first_assign + 1u;
+    while (line[lhs2_start] == ' ' || line[lhs2_start] == '\t') {
+        ++lhs2_start;
+    }
+    lhs2_end = second_assign;
+    while (lhs2_end > lhs2_start &&
+           (line[lhs2_end - 1u] == ' ' || line[lhs2_end - 1u] == '\t')) {
+        --lhs2_end;
+    }
+    rhs_start = second_assign + 1u;
+    while (line[rhs_start] == ' ' || line[rhs_start] == '\t') {
+        ++rhs_start;
+    }
+    rhs_end = semi;
+    while (rhs_end > rhs_start &&
+           (line[rhs_end - 1u] == ' ' || line[rhs_end - 1u] == '\t')) {
+        --rhs_end;
+    }
+    if (lhs1_start == lhs1_end || lhs2_start == lhs2_end || rhs_start == rhs_end) {
+        return 0;
+    }
+
+    for (i = 0; i < indent_len; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    for (i = lhs2_start; i < lhs2_end; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, " = ") != 0) {
+        return -1;
+    }
+    for (i = rhs_start; i < rhs_end; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, ";\n") != 0) {
+        return -1;
+    }
+    for (i = 0; i < indent_len; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    for (i = lhs1_start; i < lhs1_end; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, " = ") != 0) {
+        return -1;
+    }
+    for (i = lhs2_start; i < lhs2_end; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, ";") != 0) {
+        return -1;
+    }
+    out[pos] = '\0';
+    return 1;
+}
+
+static int zcc_c_rewrite_address_of_parenthesized_lvalue(const char *line,
+                                                         char *out,
+                                                         uint32_t out_capacity) {
+    uint32_t i = 0;
+    uint32_t pos = 0;
+    int changed = 0;
+
+    while (line[i] != '\0') {
+        if (line[i] == '"') {
+            if (pos + 1u >= out_capacity) {
+                return -1;
+            }
+            out[pos++] = line[i++];
+            while (line[i] != '\0') {
+                if (pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[pos++] = line[i];
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    ++i;
+                    if (pos + 1u >= out_capacity) {
+                        return -1;
+                    }
+                    out[pos++] = line[i++];
+                    continue;
+                }
+                if (line[i++] == '"') {
+                    break;
+                }
+            }
+            continue;
+        }
+        if (line[i] == '\'') {
+            if (pos + 1u >= out_capacity) {
+                return -1;
+            }
+            out[pos++] = line[i++];
+            while (line[i] != '\0') {
+                if (pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[pos++] = line[i];
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    ++i;
+                    if (pos + 1u >= out_capacity) {
+                        return -1;
+                    }
+                    out[pos++] = line[i++];
+                    continue;
+                }
+                if (line[i++] == '\'') {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if (line[i] == '&') {
+            uint32_t spaces_start = i + 1u;
+            uint32_t open;
+            uint32_t inner_start;
+            uint32_t inner_end;
+            uint32_t scan;
+            uint32_t paren_depth = 1u;
+            int valid_lvalue = 1;
+
+            while (line[spaces_start] == ' ' || line[spaces_start] == '\t') {
+                ++spaces_start;
+            }
+            if (line[spaces_start] == '(') {
+                open = spaces_start;
+                inner_start = open + 1u;
+                inner_end = inner_start;
+                scan = inner_start;
+                while (line[scan] != '\0') {
+                    if (line[scan] == '(') {
+                        ++paren_depth;
+                    } else if (line[scan] == ')') {
+                        --paren_depth;
+                        if (paren_depth == 0u) {
+                            inner_end = scan;
+                            break;
+                        }
+                    }
+                    ++scan;
+                }
+                while (inner_start < inner_end &&
+                       (line[inner_start] == ' ' || line[inner_start] == '\t')) {
+                    ++inner_start;
+                }
+                while (inner_end > inner_start &&
+                       (line[inner_end - 1u] == ' ' || line[inner_end - 1u] == '\t')) {
+                    --inner_end;
+                }
+                if (paren_depth == 0u && inner_start < inner_end &&
+                    zcc_c_ident_char(line[inner_start]) &&
+                    !zcc_c_digit_char(line[inner_start])) {
+                    uint32_t j;
+                    uint32_t nested_paren = 0;
+                    uint32_t nested_bracket = 0;
+                    for (j = inner_start; j < inner_end; ++j) {
+                        if (line[j] == '(') {
+                            ++nested_paren;
+                        } else if (line[j] == ')' && nested_paren != 0u) {
+                            --nested_paren;
+                        } else if (line[j] == '[') {
+                            ++nested_bracket;
+                        } else if (line[j] == ']' && nested_bracket != 0u) {
+                            --nested_bracket;
+                        } else if (nested_paren == 0u && nested_bracket == 0u &&
+                                   (line[j] == '+' || line[j] == '-' ||
+                                    line[j] == '*' || line[j] == '/' ||
+                                    line[j] == '%' || line[j] == '=' ||
+                                    line[j] == '?' || line[j] == ':' ||
+                                    line[j] == ',')) {
+                            if (!(line[j] == '-' && line[j + 1u] == '>')) {
+                                valid_lvalue = 0;
+                            }
+                        }
+                    }
+                    if (valid_lvalue) {
+                        if (pos + 1u >= out_capacity) {
+                            return -1;
+                        }
+                        out[pos++] = '&';
+                        for (j = inner_start; j < inner_end; ++j) {
+                            if (pos + 1u >= out_capacity) {
+                                return -1;
+                            }
+                            out[pos++] = line[j];
+                        }
+                        i = scan + 1u;
+                        changed = 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i++];
+    }
+    out[pos] = '\0';
+    return changed;
+}
+
+static int zcc_c_rewrite_casted_index_assignment(const char *line,
+                                                 char *out,
+                                                 uint32_t out_capacity) {
+    const char *trimmed = zcc_c_skip_spaces(line);
+    uint32_t indent_len = (uint32_t)(trimmed - line);
+    uint32_t i = 0;
+    uint32_t bracket = 0;
+    uint32_t rbracket = 0;
+    uint32_t assign = 0;
+    uint32_t paren_depth = 0;
+    uint32_t pos = 0;
+
+    if (trimmed[0] != '(' || trimmed[1] != '(') {
+        return 0;
+    }
+
+    while (trimmed[i] != '\0') {
+        if (trimmed[i] == '"') {
+            ++i;
+            while (trimmed[i] != '\0') {
+                if (trimmed[i] == '\\' && trimmed[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (trimmed[i++] == '"') {
+                    break;
+                }
+            }
+            continue;
+        }
+        if (trimmed[i] == '\'') {
+            ++i;
+            while (trimmed[i] != '\0') {
+                if (trimmed[i] == '\\' && trimmed[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (trimmed[i++] == '\'') {
+                    break;
+                }
+            }
+            continue;
+        }
+        if (trimmed[i] == '(') {
+            ++paren_depth;
+        } else if (trimmed[i] == ')' && paren_depth != 0u) {
+            --paren_depth;
+        } else if (trimmed[i] == '[' && paren_depth == 0u) {
+            bracket = i;
+            break;
+        }
+        ++i;
+    }
+    if (bracket == 0u) {
+        return 0;
+    }
+
+    i = bracket + 1u;
+    while (trimmed[i] != '\0') {
+        if (trimmed[i] == ']') {
+            rbracket = i;
+            break;
+        }
+        ++i;
+    }
+    if (rbracket == 0u) {
+        return 0;
+    }
+
+    i = rbracket + 1u;
+    while (trimmed[i] == ' ' || trimmed[i] == '\t') {
+        ++i;
+    }
+    if (!zcc_c_is_plain_assignment_at(trimmed, i)) {
+        return 0;
+    }
+    assign = i;
+
+    for (i = 0; i < indent_len; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, "*(") != 0) {
+        return -1;
+    }
+    for (i = 0; i < bracket; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = trimmed[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, " + ") != 0) {
+        return -1;
+    }
+    for (i = bracket + 1u; i < rbracket; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = trimmed[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, ")") != 0) {
+        return -1;
+    }
+    i = assign;
+    while (trimmed[i] != '\0') {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = trimmed[i++];
+    }
+    out[pos] = '\0';
+    return 1;
+}
+
+static int zcc_c_split_call_args(const char *args,
+                                 char parsed[][64],
+                                 uint32_t expected_count) {
+    uint32_t arg = 0;
+    uint32_t pos = 0;
+    uint32_t i = 0;
+    uint32_t paren_depth = 0;
+    uint32_t bracket_depth = 0;
+
+    if (expected_count == 0u) {
+        return -1;
+    }
+    for (uint32_t j = 0; j < expected_count; ++j) {
+        parsed[j][0] = '\0';
+    }
+
+    while (args[i] != '\0') {
+        char c = args[i];
+        if (c == '(') {
+            ++paren_depth;
+        } else if (c == ')' && paren_depth != 0u) {
+            --paren_depth;
+        } else if (c == '[') {
+            ++bracket_depth;
+        } else if (c == ']' && bracket_depth != 0u) {
+            --bracket_depth;
+        } else if (c == ',' && paren_depth == 0u && bracket_depth == 0u) {
+            while (pos != 0u &&
+                   (parsed[arg][pos - 1u] == ' ' || parsed[arg][pos - 1u] == '\t')) {
+                --pos;
+            }
+            parsed[arg][pos] = '\0';
+            ++arg;
+            if (arg >= expected_count) {
+                return -1;
+            }
+            pos = 0;
+            ++i;
+            while (args[i] == ' ' || args[i] == '\t') {
+                ++i;
+            }
+            continue;
+        }
+        if (pos + 1u >= 64u) {
+            return -1;
+        }
+        parsed[arg][pos++] = c;
+        ++i;
+    }
+    while (pos != 0u &&
+           (parsed[arg][pos - 1u] == ' ' || parsed[arg][pos - 1u] == '\t')) {
+        --pos;
+    }
+    parsed[arg][pos] = '\0';
+    return arg + 1u == expected_count ? 0 : -1;
+}
+
+static int zcc_c_rewrite_call_assignment_macro(const char *line,
+                                               const char *macro_name,
+                                               const char *helper_name,
+                                               uint32_t arg_count,
+                                               char *out,
+                                               uint32_t out_capacity) {
+    const char *trimmed = zcc_c_skip_spaces(line);
+    uint32_t indent_len = (uint32_t)(trimmed - line);
+    uint32_t name_len = 0;
+    uint32_t pos = 0;
+    uint32_t i;
+    char args[5][64];
+
+    while (macro_name[name_len] != '\0') {
+        ++name_len;
+    }
+    if (arg_count == 0u || arg_count > 5u) {
+        return -1;
+    }
+    for (i = 0; i < name_len; ++i) {
+        if (trimmed[i] != macro_name[i]) {
+            return 0;
+        }
+    }
+    if (zcc_c_ident_char(trimmed[name_len]) ||
+        trimmed[name_len] != '(') {
+        return 0;
+    }
+
+    {
+        uint32_t start = name_len + 1u;
+        uint32_t end = start;
+        uint32_t paren_depth = 1u;
+        char arg_text[256];
+        uint32_t arg_pos = 0;
+
+        while (trimmed[end] != '\0') {
+            if (trimmed[end] == '(') {
+                ++paren_depth;
+            } else if (trimmed[end] == ')') {
+                --paren_depth;
+                if (paren_depth == 0u) {
+                    break;
+                }
+            }
+            if (arg_pos + 1u >= sizeof(arg_text)) {
+                return -1;
+            }
+            arg_text[arg_pos++] = trimmed[end++];
+        }
+        if (trimmed[end] != ')') {
+            return 0;
+        }
+        arg_text[arg_pos] = '\0';
+        if (zcc_c_split_call_args(arg_text, args, arg_count) != 0) {
+            return -1;
+        }
+    }
+
+    for (i = 0; i < indent_len; ++i) {
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i];
+    }
+    if (append_text_limited(out, out_capacity, &pos, args[arg_count - 1u]) != 0 ||
+        append_text_limited(out, out_capacity, &pos, " = ") != 0 ||
+        append_text_limited(out, out_capacity, &pos, helper_name) != 0 ||
+        append_text_limited(out, out_capacity, &pos, "(") != 0) {
+        return -1;
+    }
+    for (i = 0; i + 1u < arg_count; ++i) {
+        if (i != 0u &&
+            append_text_limited(out, out_capacity, &pos, ", ") != 0) {
+            return -1;
+        }
+        if (append_text_limited(out, out_capacity, &pos, args[i]) != 0) {
+            return -1;
+        }
+    }
+    if (append_text_limited(out, out_capacity, &pos, ");") != 0) {
+        return -1;
+    }
+    out[pos] = '\0';
+    return 1;
+}
+
+static int zcc_c_rewrite_utf8_macro_call(const char *line,
+                                         char *out,
+                                         uint32_t out_capacity) {
+    static const struct {
+        const char *macro_name;
+        const char *helper_name;
+        uint32_t arg_count;
+    } rewrites[] = {
+        { "UTF8_TO_UCS4", "zcc_utf8_to_ucs4", 5u },
+        { "UTF8_FROM_UCS4", "zcc_utf8_from_ucs4", 4u },
+        { "UTF8_LENGTH", "zcc_utf8_length", 4u },
+        { "UTF8_CHAR_BYTE_LENGTH", "zcc_utf8_char_byte_length", 3u },
+        { "UTF8_PREV", "zcc_utf8_prev", 4u },
+        { "UTF8_NEXT", "zcc_utf8_next", 5u },
+        { "UTF8_NEXT_PARANOID", "zcc_utf8_next_paranoid", 5u }
+    };
+
+    for (uint32_t i = 0; i < sizeof(rewrites) / sizeof(rewrites[0]); ++i) {
+        int status = zcc_c_rewrite_call_assignment_macro(line,
+                                                         rewrites[i].macro_name,
+                                                         rewrites[i].helper_name,
+                                                         rewrites[i].arg_count,
+                                                         out,
+                                                         out_capacity);
+        if (status != 0) {
+            return status;
+        }
+    }
+    return 0;
+}
+
+static int zcc_c_append_function_macro_value(const zcc_c_function_define_t *define,
+                                             const char *arg,
+                                             char *out,
+                                             uint32_t out_capacity,
+                                             uint32_t *pos) {
+    uint32_t i = 0;
+    uint32_t param_len = 0;
+
+    while (define->param[param_len] != '\0') {
+        ++param_len;
+    }
+    while (define->value[i] != '\0') {
+        if (zcc_c_ident_char(define->value[i]) &&
+            !(define->value[i] >= '0' && define->value[i] <= '9')) {
+            uint32_t start = i;
+            uint32_t len;
+            while (zcc_c_ident_char(define->value[i])) {
+                ++i;
+            }
+            len = i - start;
+            if (len == param_len && zcc_c_word_eq(define->value + start, len, define->param)) {
+                if (append_text_limited(out, out_capacity, pos, arg) != 0) {
+                    return -1;
+                }
+            } else {
+                for (uint32_t j = start; j < i; ++j) {
+                    if (*pos + 1u >= out_capacity) {
+                        return -1;
+                    }
+                    out[*pos] = define->value[j];
+                    *pos = *pos + 1u;
+                }
+            }
+            continue;
+        }
+        if (*pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[*pos] = define->value[i++];
+        *pos = *pos + 1u;
+    }
+    return 0;
+}
+
+static int zcc_c_expand_function_defines(const char *line,
+                                         const zcc_c_function_define_t *defines,
+                                         uint32_t define_count,
+                                         char *out,
+                                         uint32_t out_capacity) {
+    uint32_t i = 0;
+    uint32_t pos = 0;
+    int changed = 0;
+
+    while (line[i] != '\0') {
+        if (line[i] == '"' || line[i] == '\'') {
+            char quote = line[i];
+            do {
+                if (pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[pos++] = line[i];
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    ++i;
+                    if (pos + 1u >= out_capacity) {
+                        return -1;
+                    }
+                    out[pos++] = line[i];
+                } else if (line[i] == quote) {
+                    ++i;
+                    break;
+                }
+                ++i;
+            } while (line[i] != '\0');
+            continue;
+        }
+
+        if (zcc_c_ident_char(line[i]) && !(line[i] >= '0' && line[i] <= '9')) {
+            uint32_t start = i;
+            uint32_t len;
+            while (zcc_c_ident_char(line[i])) {
+                ++i;
+            }
+            len = i - start;
+            for (uint32_t d = 0; d < define_count; ++d) {
+                if (zcc_c_word_eq(line + start, len, defines[d].name) && line[i] == '(') {
+                    uint32_t arg_start = i + 1u;
+                    uint32_t arg_end = arg_start;
+                    uint32_t depth = 1u;
+                    char arg_text[256];
+                    uint32_t arg_len;
+                    while (line[arg_end] != '\0' && depth != 0u) {
+                        if (line[arg_end] == '(') {
+                            ++depth;
+                        } else if (line[arg_end] == ')') {
+                            --depth;
+                            if (depth == 0u) {
+                                break;
+                            }
+                        }
+                        ++arg_end;
+                    }
+                    if (line[arg_end] != ')') {
+                        return -1;
+                    }
+                    arg_len = arg_end - arg_start;
+                    while (arg_len != 0u && (line[arg_start] == ' ' || line[arg_start] == '\t')) {
+                        ++arg_start;
+                        --arg_len;
+                    }
+                    while (arg_len != 0u &&
+                           (line[arg_start + arg_len - 1u] == ' ' ||
+                            line[arg_start + arg_len - 1u] == '\t')) {
+                        --arg_len;
+                    }
+                    if (arg_len >= sizeof(arg_text)) {
+                        return -1;
+                    }
+                    for (uint32_t j = 0; j < arg_len; ++j) {
+                        arg_text[j] = line[arg_start + j];
+                    }
+                    arg_text[arg_len] = '\0';
+                    if (zcc_c_append_function_macro_value(&defines[d],
+                                                          arg_text,
+                                                          out,
+                                                          out_capacity,
+                                                          &pos) != 0) {
+                        return -1;
+                    }
+                    i = arg_end + 1u;
+                    changed = 1;
+                    goto expanded_identifier;
+                }
+            }
+            for (uint32_t j = start; j < i; ++j) {
+                if (pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[pos++] = line[j];
+            }
+expanded_identifier:
+            continue;
+        }
+
+        if (pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[pos++] = line[i++];
+    }
+    out[pos] = '\0';
+    return changed;
+}
+
+static int zcc_c_parse_define(const char *directive,
+                              zcc_c_define_t *defines,
+                              uint32_t *define_count) {
+    const char *p;
+    const char *name;
+    const char *value;
+    uint32_t name_len = 0;
+    uint32_t value_len = 0;
+
+    if (!zcc_c_starts_word(directive, "define")) {
+        return 0;
+    }
+    p = zcc_c_skip_spaces(directive + 6);
+    if (!(zcc_c_ident_char(*p)) || (*p >= '0' && *p <= '9')) {
+        return 0;
+    }
+    name = p;
+    while (zcc_c_ident_char(*p)) {
+        ++p;
+        ++name_len;
+    }
+    if (*p == '(') {
+        return 0;
+    }
+    value = zcc_c_skip_spaces(p);
+    while (value[value_len] != '\0') {
+        ++value_len;
+    }
+    while (value_len != 0u &&
+           (value[value_len - 1u] == ' ' || value[value_len - 1u] == '\t' ||
+            value[value_len - 1u] == '\r')) {
+        --value_len;
+    }
+    if (value_len == 0u) {
+        value = "1";
+        value_len = 1u;
+    }
+    return zcc_c_store_define(defines, define_count, name, name_len, value, value_len);
+}
+
+static int zcc_c_parse_function_define(const char *directive,
+                                       zcc_c_function_define_t *defines,
+                                       uint32_t *define_count) {
+    const char *p;
+    const char *name;
+    const char *param;
+    const char *value;
+    uint32_t name_len = 0;
+    uint32_t param_len = 0;
+    uint32_t value_len = 0;
+
+    if (!zcc_c_starts_word(directive, "define")) {
+        return 0;
+    }
+    p = zcc_c_skip_spaces(directive + 6);
+    if (!(zcc_c_ident_char(*p)) || (*p >= '0' && *p <= '9')) {
+        return 0;
+    }
+    name = p;
+    while (zcc_c_ident_char(*p)) {
+        ++p;
+        ++name_len;
+    }
+    if (*p != '(') {
+        return 0;
+    }
+    ++p;
+    p = zcc_c_skip_spaces(p);
+    param = p;
+    while (zcc_c_ident_char(*p)) {
+        ++p;
+        ++param_len;
+    }
+    p = zcc_c_skip_spaces(p);
+    if (*p != ')') {
+        return 0;
+    }
+    value = zcc_c_skip_spaces(p + 1);
+    while (value[value_len] != '\0') {
+        ++value_len;
+    }
+    while (value_len != 0u &&
+           (value[value_len - 1u] == ' ' || value[value_len - 1u] == '\t' ||
+            value[value_len - 1u] == '\r')) {
+        --value_len;
+    }
+    return zcc_c_store_function_define(defines,
+                                       define_count,
+                                       name,
+                                       name_len,
+                                       param,
+                                       param_len,
+                                       value,
+                                       value_len);
+}
+
+static int zcc_c_line_has_function_header(const char *line) {
+    const char *s = zcc_c_skip_spaces(line);
+    int saw_lparen = 0;
+    int saw_rparen = 0;
+
+    if (zcc_c_starts_word(s, "typedef") ||
+        zcc_c_starts_word(s, "extern") ||
+        zcc_c_starts_word(s, "struct") ||
+        zcc_c_starts_word(s, "enum") ||
+        zcc_c_starts_word(s, "union") ||
+        zcc_c_starts_word(s, "if") ||
+        zcc_c_starts_word(s, "else") ||
+        zcc_c_starts_word(s, "while") ||
+        zcc_c_starts_word(s, "for") ||
+        zcc_c_starts_word(s, "switch") ||
+        zcc_c_starts_word(s, "return")) {
+        return 0;
+    }
+
+    while (*s != '\0') {
+        if (*s == ';') {
+            return 0;
+        }
+        if (*s == '=') {
+            return 0;
+        }
+        if (*s == '(') {
+            saw_lparen = 1;
+        } else if (*s == ')' && saw_lparen) {
+            saw_rparen = 1;
+        } else if (*s == '{') {
+            return saw_rparen;
+        }
+        ++s;
+    }
+    return saw_lparen || saw_rparen;
+}
+
+static int zcc_c_line_has_open_brace(const char *line) {
+    uint32_t i = 0;
+
+    while (line[i] != '\0') {
+        if (line[i] == '"') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '"') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+        if (line[i] == '\'') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '\'') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+        if (line[i] == '{') {
+            return 1;
+        }
+        ++i;
+    }
+    return 0;
+}
+
+static int zcc_c_line_starts_value_declaration(const char *line) {
+    const char *p = zcc_c_skip_spaces(line);
+    uint32_t len = 0;
+
+    while (zcc_c_ident_char(p[len])) {
+        ++len;
+    }
+    while (len != 0u &&
+           (zcc_c_word_eq(p, len, "static") ||
+            zcc_c_word_eq(p, len, "const") ||
+            zcc_c_word_eq(p, len, "volatile") ||
+            zcc_c_word_eq(p, len, "inline") ||
+            zcc_c_word_eq(p, len, "restrict"))) {
+        p = zcc_c_skip_spaces(p + len);
+        len = 0;
+        while (zcc_c_ident_char(p[len])) {
+            ++len;
+        }
+    }
+
+    if (len == 0u ||
+        zcc_c_word_eq(p, len, "typedef") ||
+        zcc_c_word_eq(p, len, "extern") ||
+        zcc_c_word_eq(p, len, "return") ||
+        zcc_c_word_eq(p, len, "if") ||
+        zcc_c_word_eq(p, len, "for") ||
+        zcc_c_word_eq(p, len, "while") ||
+        zcc_c_word_eq(p, len, "switch")) {
+        return 0;
+    }
+
+    return zcc_c_word_eq(p, len, "void") ||
+           zcc_c_word_eq(p, len, "char") ||
+           zcc_c_word_eq(p, len, "bool") ||
+           zcc_c_word_eq(p, len, "short") ||
+           zcc_c_word_eq(p, len, "int") ||
+           zcc_c_word_eq(p, len, "long") ||
+           zcc_c_word_eq(p, len, "unsigned") ||
+           zcc_c_word_eq(p, len, "size_t") ||
+           zcc_c_word_eq(p, len, "ssize_t") ||
+           zcc_c_word_eq(p, len, "uint8_t") ||
+           zcc_c_word_eq(p, len, "uint16_t") ||
+           zcc_c_word_eq(p, len, "uint32_t") ||
+           zcc_c_word_eq(p, len, "uint64_t") ||
+           zcc_c_word_eq(p, len, "int8_t") ||
+           zcc_c_word_eq(p, len, "int16_t") ||
+           zcc_c_word_eq(p, len, "int32_t") ||
+           zcc_c_word_eq(p, len, "int64_t") ||
+           zcc_c_word_eq(p, len, "parserutils_error") ||
+           zcc_c_word_eq(p, len, "lwc_error") ||
+           zcc_c_word_eq(p, len, "lwc_hash") ||
+           zcc_c_word_eq(p, len, "lwc_refcounter") ||
+           zcc_c_word_eq(p, len, "lwc_string") ||
+           zcc_c_word_eq(p, len, "struct") ||
+           zcc_c_word_eq(p, len, "enum");
+}
+
+static void zcc_c_update_brace_depth_from_line(const char *line, uint32_t *brace_depth) {
+    uint32_t i = 0;
+
+    while (line[i] != '\0') {
+        if (line[i] == '"') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '"') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+
+        if (line[i] == '\'') {
+            ++i;
+            while (line[i] != '\0') {
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    i += 2u;
+                    continue;
+                }
+                if (line[i] == '\'') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+
+        if (line[i] == '{') {
+            *brace_depth = *brace_depth + 1u;
+        } else if (line[i] == '}' && *brace_depth != 0u) {
+            *brace_depth = *brace_depth - 1u;
+        }
+        ++i;
+    }
+}
+
+static int zcc_c_transform_line_tokens(const char *line,
+                                       char *out,
+                                       uint32_t out_capacity,
+                                       uint32_t *out_pos,
+                                       const zcc_c_define_t *defines,
+                                       uint32_t define_count) {
+    uint32_t i = 0;
+
+    while (line[i] != '\0') {
+        if (line[i] == '"') {
+            if (*out_pos + 1u >= out_capacity) {
+                return -1;
+            }
+            out[*out_pos] = line[i];
+            *out_pos = *out_pos + 1u;
+            ++i;
+            while (line[i] != '\0') {
+                if (*out_pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[*out_pos] = line[i];
+                *out_pos = *out_pos + 1u;
+                if (line[i] == '\\' && line[i + 1u] != '\0') {
+                    ++i;
+                    if (*out_pos + 1u >= out_capacity) {
+                        return -1;
+                    }
+                    out[*out_pos] = line[i];
+                    *out_pos = *out_pos + 1u;
+                } else if (line[i] == '"') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+
+        if (line[i] == '\'') {
+            uint32_t value = 0;
+
+            ++i;
+            if (line[i] == '\\') {
+                ++i;
+                if (line[i] == 'n') {
+                    value = 10u;
+                } else if (line[i] == 'r') {
+                    value = 13u;
+                } else if (line[i] == 't') {
+                    value = 9u;
+                } else if (line[i] == 'f') {
+                    value = 12u;
+                } else if (line[i] == '0') {
+                    value = 0u;
+                } else {
+                    value = (uint8_t)line[i];
+                }
+                if (line[i] != '\0') {
+                    ++i;
+                }
+            } else {
+                value = (uint8_t)line[i];
+                if (line[i] != '\0') {
+                    ++i;
+                }
+            }
+            if (line[i] == '\'') {
+                ++i;
+            }
+            if (append_dec_limited(out, out_capacity, out_pos, value) != 0) {
+                return -1;
+            }
+            continue;
+        }
+
+        if (line[i] == '(' &&
+            line[i + 1u] == 'v' &&
+            line[i + 2u] == 'o' &&
+            line[i + 3u] == 'i' &&
+            line[i + 4u] == 'd' &&
+            line[i + 5u] == ')') {
+            const char *after_void = zcc_c_skip_spaces(line + i + 6u);
+            if (*after_void == '{' || *after_void == ';' || *after_void == '\0') {
+                if (append_text_limited(out, out_capacity, out_pos, "(void)") != 0) {
+                    return -1;
+                }
+                i += 6u;
+                continue;
+            }
+            i += 6u;
+            continue;
+        }
+
+        if (line[i] == '(' &&
+            zcc_c_ident_char(line[i + 1u]) &&
+            !zcc_c_digit_char(line[i + 1u])) {
+            uint32_t name_start = i + 1u;
+            uint32_t name_end = name_start;
+            while (zcc_c_ident_char(line[name_end])) {
+                ++name_end;
+            }
+            if (line[name_end] == ')' &&
+                ((line[name_end + 1u] == '+' && line[name_end + 2u] == '+') ||
+                 (line[name_end + 1u] == '-' && line[name_end + 2u] == '-'))) {
+                while (name_start < name_end) {
+                    if (*out_pos + 1u >= out_capacity) {
+                        return -1;
+                    }
+                    out[*out_pos] = line[name_start];
+                    *out_pos = *out_pos + 1u;
+                    ++name_start;
+                }
+                if (*out_pos + 2u >= out_capacity) {
+                    return -1;
+                }
+                out[*out_pos] = line[name_end + 1u];
+                *out_pos = *out_pos + 1u;
+                out[*out_pos] = line[name_end + 2u];
+                *out_pos = *out_pos + 1u;
+                i = name_end + 3u;
+                continue;
+            }
+        }
+
+        if (zcc_c_digit_char(line[i])) {
+            int is_hex = 0;
+
+            if (*out_pos + 1u >= out_capacity) {
+                return -1;
+            }
+            out[*out_pos] = line[i];
+            *out_pos = *out_pos + 1u;
+            if (line[i] == '0' && (line[i + 1u] == 'x' || line[i + 1u] == 'X')) {
+                ++i;
+                if (*out_pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[*out_pos] = line[i];
+                *out_pos = *out_pos + 1u;
+                is_hex = 1;
+            }
+            ++i;
+            while ((is_hex && zcc_c_hex_char(line[i])) ||
+                   (!is_hex && zcc_c_digit_char(line[i]))) {
+                if (*out_pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[*out_pos] = line[i];
+                *out_pos = *out_pos + 1u;
+                ++i;
+            }
+            while (zcc_c_integer_suffix_char(line[i])) {
+                ++i;
+            }
+            continue;
+        }
+
+        if (zcc_c_ident_char(line[i]) &&
+            !((line[i] >= '0' && line[i] <= '9') &&
+              i > 0 && zcc_c_ident_char(line[i - 1]))) {
+            uint32_t start = i;
+            uint32_t len;
+
+            while (zcc_c_ident_char(line[i])) {
+                ++i;
+            }
+            len = i - start;
+
+            if (zcc_c_word_eq(line + start, len, "inline") ||
+                zcc_c_word_eq(line + start, len, "restrict") ||
+                zcc_c_word_eq(line + start, len, "volatile") ||
+                zcc_c_word_eq(line + start, len, "const")) {
+                if (*out_pos >= 2u &&
+                    (out[*out_pos - 1u] == ' ' || out[*out_pos - 1u] == '\t') &&
+                    out[*out_pos - 2u] == '(') {
+                    *out_pos = *out_pos - 1u;
+                }
+                while (line[i] == ' ' || line[i] == '\t') {
+                    ++i;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "unsigned")) {
+                const char *next = zcc_c_skip_spaces(line + i);
+                uint32_t next_len = 0;
+                while (zcc_c_ident_char(next[next_len])) {
+                    ++next_len;
+                }
+                if (zcc_c_word_eq(next, next_len, "char")) {
+                    if (append_text_limited(out, out_capacity, out_pos, "uint8_t") != 0) {
+                        return -1;
+                    }
+                    i = (uint32_t)((next + next_len) - line);
+                    continue;
+                }
+                if (zcc_c_word_eq(next, next_len, "int")) {
+                    if (append_text_limited(out, out_capacity, out_pos, "uint32_t") != 0) {
+                        return -1;
+                    }
+                    i = (uint32_t)((next + next_len) - line);
+                    continue;
+                }
+                if (append_text_limited(out, out_capacity, out_pos, "uint32_t") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "char")) {
+                if (append_text_limited(out, out_capacity, out_pos, "uint8_t") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "bool")) {
+                if (append_text_limited(out, out_capacity, out_pos, "uint8_t") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "true")) {
+                if (append_text_limited(out, out_capacity, out_pos, "1") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "false")) {
+                if (append_text_limited(out, out_capacity, out_pos, "0") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "NULL")) {
+                if (append_text_limited(out, out_capacity, out_pos, "(void *)0") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "size_t")) {
+                if (append_text_limited(out, out_capacity, out_pos, "uint64_t") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "parserutils_error") ||
+                zcc_c_word_eq(line + start, len, "lwc_error")) {
+                if (append_text_limited(out, out_capacity, out_pos, "int") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "lwc_hash") ||
+                zcc_c_word_eq(line + start, len, "lwc_refcounter")) {
+                if (append_text_limited(out, out_capacity, out_pos, "uint32_t") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            if (zcc_c_word_eq(line + start, len, "ssize_t")) {
+                if (append_text_limited(out, out_capacity, out_pos, "int64_t") != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            {
+                const char *define_value;
+                if (zcc_c_define_lookup(defines, define_count, line + start, len, &define_value)) {
+                    if (append_text_limited(out, out_capacity, out_pos, define_value) != 0) {
+                        return -1;
+                    }
+                    continue;
+                }
+            }
+            while (start < i) {
+                if (*out_pos + 1u >= out_capacity) {
+                    return -1;
+                }
+                out[*out_pos] = line[start];
+                *out_pos = *out_pos + 1u;
+                ++start;
+            }
+            continue;
+        }
+
+        if (line[i] == '(') {
+            if (*out_pos + 1u >= out_capacity) {
+                return -1;
+            }
+            out[*out_pos] = line[i];
+            *out_pos = *out_pos + 1u;
+            ++i;
+            while (line[i] == ' ' || line[i] == '\t') {
+                ++i;
+            }
+            continue;
+        }
+
+        if (line[i] == ')' &&
+            *out_pos != 0u &&
+            (out[*out_pos - 1u] == ' ' || out[*out_pos - 1u] == '\t')) {
+            *out_pos = *out_pos - 1u;
+        }
+
+        if (*out_pos + 1u >= out_capacity) {
+            return -1;
+        }
+        out[*out_pos] = line[i];
+        *out_pos = *out_pos + 1u;
+        ++i;
+    }
+    return 0;
+}
+
+static int zcc_emit_generic_c_compat_z_source(const char *source,
+                                             uint32_t source_size,
+                                             char *out,
+                                             uint32_t out_capacity,
+                                             uint32_t *out_size) {
+    uint32_t pos = 0;
+    uint32_t i = 0;
+    uint32_t brace_depth = 0;
+    int block_comment = 0;
+    int current_active = 1;
+    char pending_decl_prefix[512];
+    zcc_c_define_t defines[ZCC_C_MAX_DEFINES];
+    zcc_c_function_define_t function_defines[ZCC_C_MAX_FUNCTION_DEFINES];
+    zcc_c_pp_frame_t pp_stack[ZCC_C_MAX_PP_DEPTH];
+    uint32_t define_count = 0;
+    uint32_t function_define_count = 0;
+    uint32_t pp_depth = 0;
+
+    pending_decl_prefix[0] = '\0';
+    if (append_text_limited(out, out_capacity, &pos,
+        "typedef int nsuerror;\n"
+        "typedef int64_t ssize_t;\n"
+        "typedef int64_t off_t;\n"
+        "enum {\n"
+        "    NSUERROR_OK = 0,\n"
+        "    NSUERROR_UNKNOWN = 1,\n"
+        "    NSUERROR_NOMEM = 2,\n"
+        "    NSUERROR_NO_FETCH_HANDLER = 3,\n"
+        "    NSUERROR_NOT_FOUND = 4,\n"
+        "    NSUERROR_NOT_DIRECTORY = 5,\n"
+        "    NSUERROR_SAVE_FAILED = 6,\n"
+        "    NSUERROR_CLONE_FAILED = 7,\n"
+        "    NSUERROR_INIT_FAILED = 8,\n"
+        "    NSUERROR_MNG_ERROR = 9,\n"
+        "    NSUERROR_BAD_ENCODING = 10,\n"
+        "    NSUERROR_NEED_DATA = 11,\n"
+        "    NSUERROR_ENCODING_CHANGE = 12,\n"
+        "    NSUERROR_BAD_PARAMETER = 13,\n"
+        "    NSUERROR_INVALID = 14,\n"
+        "    NSUERROR_BOX_CONVERT = 15,\n"
+        "    NSUERROR_STOPPED = 16,\n"
+        "    NSUERROR_DOM = 17,\n"
+        "    NSUERROR_CSS = 18,\n"
+        "    NSUERROR_CSS_BASE = 19,\n"
+        "    NSUERROR_BAD_URL = 20,\n"
+        "    NSUERROR_BAD_CONTENT = 21,\n"
+        "    NSUERROR_FRAME_DEPTH = 22,\n"
+        "    NSUERROR_PERMISSION = 23,\n"
+        "    NSUERROR_NOSPACE = 24,\n"
+        "    NSUERROR_BAD_SIZE = 25,\n"
+	        "    NSUERROR_NOT_IMPLEMENTED = 26\n"
+	        "};\n"
+	        "struct timeval { int64_t tv_sec; int64_t tv_usec; };\n"
+	        "\n") != 0) {
+	        return -1;
+	    }
+    if ((contains_text(source, "parserutils_error") ||
+         contains_text(source, "PARSERUTILS_") ||
+         contains_text(source, "UTF8_")) &&
+        append_text_limited(out, out_capacity, &pos,
+        "typedef int parserutils_error;\n"
+        "enum {\n"
+        "    PARSERUTILS_OK = 0,\n"
+        "    PARSERUTILS_NOMEM = 1,\n"
+        "    PARSERUTILS_BADPARM = 2,\n"
+        "    PARSERUTILS_INVALID = 3,\n"
+        "    PARSERUTILS_FILENOTFOUND = 4,\n"
+        "    PARSERUTILS_NEEDDATA = 5\n"
+        "};\n"
+        "\n"
+        "static uint32_t zcc_utf8_continuations(uint8_t c) {\n"
+        "    if (c < 192) { return 0; }\n"
+        "    if (c < 224) { return 1; }\n"
+        "    if (c < 240) { return 2; }\n"
+        "    if (c < 248) { return 3; }\n"
+        "    if (c < 252) { return 4; }\n"
+        "    return 5;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_is_continuation(uint8_t c) {\n"
+        "    if (c >= 128 && c < 192) { return 1; }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_char_byte_length(const uint8_t *s, uint64_t *len) {\n"
+        "    if (s == (void *)0 || len == (void *)0) { return PARSERUTILS_BADPARM; }\n"
+        "    *len = zcc_utf8_continuations(s[0]) + 1;\n"
+        "    return PARSERUTILS_OK;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_length(const uint8_t *s, uint64_t max, uint64_t *len) {\n"
+        "    uint64_t off;\n"
+        "    uint64_t count;\n"
+        "    uint8_t c;\n"
+        "    if (s == (void *)0 || len == (void *)0) { return PARSERUTILS_BADPARM; }\n"
+        "    off = 0;\n"
+        "    count = 0;\n"
+        "    while (off < max) {\n"
+        "        c = s[off];\n"
+        "        if (c < 128) { off = off + 1; }\n"
+        "        else if (c >= 192 && c < 224) { off = off + 2; }\n"
+        "        else if (c >= 224 && c < 240) { off = off + 3; }\n"
+        "        else if (c >= 240 && c < 248) { off = off + 4; }\n"
+        "        else if (c >= 248 && c < 252) { off = off + 5; }\n"
+        "        else if (c >= 252 && c < 254) { off = off + 6; }\n"
+        "        else { return PARSERUTILS_INVALID; }\n"
+        "        count = count + 1;\n"
+        "    }\n"
+        "    *len = count;\n"
+        "    return PARSERUTILS_OK;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_prev(const uint8_t *s, uint32_t off, uint32_t *prevoff) {\n"
+        "    if (s == (void *)0 || prevoff == (void *)0) { return PARSERUTILS_BADPARM; }\n"
+        "    while (off != 0 && zcc_utf8_is_continuation(s[off - 1]) != 0) { off = off - 1; }\n"
+        "    if (off != 0) { off = off - 1; }\n"
+        "    *prevoff = off;\n"
+        "    return PARSERUTILS_OK;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_next(const uint8_t *s, uint32_t len, uint32_t off, uint32_t *nextoff) {\n"
+        "    if (s == (void *)0 || off >= len || nextoff == (void *)0) { return PARSERUTILS_BADPARM; }\n"
+        "    if (s[off] < 128 || s[off] >= 192) { off = off + 1; }\n"
+        "    while (off < len && zcc_utf8_is_continuation(s[off]) != 0) { off = off + 1; }\n"
+        "    *nextoff = off;\n"
+        "    return PARSERUTILS_OK;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_next_paranoid(const uint8_t *s, uint32_t len, uint32_t off, uint32_t *nextoff) {\n"
+        "    uint32_t n_cont;\n"
+        "    uint32_t skip;\n"
+        "    if (s == (void *)0 || off >= len || nextoff == (void *)0) { return PARSERUTILS_BADPARM; }\n"
+        "    if (!(s[off] < 128 || s[off] >= 192)) { *nextoff = off + 1; return PARSERUTILS_OK; }\n"
+        "    n_cont = zcc_utf8_continuations(s[off]);\n"
+        "    if (off + n_cont + 1 >= len) { return PARSERUTILS_NEEDDATA; }\n"
+        "    skip = 1;\n"
+        "    while (skip <= n_cont && zcc_utf8_is_continuation(s[off + skip]) != 0) { skip = skip + 1; }\n"
+        "    *nextoff = off + skip;\n"
+        "    return PARSERUTILS_OK;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_to_ucs4(const uint8_t *s, uint64_t len, uint32_t *ucs4, uint64_t *clen) {\n"
+        "    uint32_t c;\n"
+        "    uint32_t min;\n"
+        "    uint32_t n;\n"
+        "    uint32_t i;\n"
+        "    uint32_t t;\n"
+        "    if (s == (void *)0 || ucs4 == (void *)0 || clen == (void *)0) { return PARSERUTILS_BADPARM; }\n"
+        "    if (len == 0) { return PARSERUTILS_NEEDDATA; }\n"
+        "    c = s[0];\n"
+        "    if (c < 128) { n = 1; min = 0; }\n"
+        "    else if (c >= 192 && c < 224) { c = c & 31; n = 2; min = 128; }\n"
+        "    else if (c >= 224 && c < 240) { c = c & 15; n = 3; min = 2048; }\n"
+        "    else if (c >= 240 && c < 248) { c = c & 7; n = 4; min = 65536; }\n"
+        "    else { return PARSERUTILS_INVALID; }\n"
+        "    if (len < n) { return PARSERUTILS_NEEDDATA; }\n"
+        "    i = 1;\n"
+        "    while (i < n) {\n"
+        "        t = s[i];\n"
+        "        if (t < 128 || t >= 192) { return PARSERUTILS_INVALID; }\n"
+        "        c = (c << 6) | (t & 63);\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    if (c < min || (c >= 55296 && c <= 57343) || c == 65534 || c == 65535) { return PARSERUTILS_INVALID; }\n"
+        "    *ucs4 = c;\n"
+        "    *clen = n;\n"
+        "    return PARSERUTILS_OK;\n"
+        "}\n"
+        "\n"
+        "static int zcc_utf8_from_ucs4(uint32_t ucs4, uint8_t **s, uint64_t *len) {\n"
+        "    uint8_t *buf;\n"
+        "    uint32_t l;\n"
+        "    uint32_t i;\n"
+        "    if (s == (void *)0 || *s == (void *)0 || len == (void *)0) { return PARSERUTILS_BADPARM; }\n"
+        "    if (ucs4 < 128) { l = 1; }\n"
+        "    else if (ucs4 < 2048) { l = 2; }\n"
+        "    else if (ucs4 < 65536) { l = 3; }\n"
+        "    else if (ucs4 < 2097152) { l = 4; }\n"
+        "    else { return PARSERUTILS_INVALID; }\n"
+        "    if (l > *len) { return PARSERUTILS_NOMEM; }\n"
+        "    buf = *s;\n"
+        "    if (l == 1) { buf[0] = (uint8_t)ucs4; }\n"
+        "    else {\n"
+        "        i = l;\n"
+        "        while (i > 1) {\n"
+        "            buf[i - 1] = (uint8_t)(128 | (ucs4 & 63));\n"
+        "            ucs4 = ucs4 >> 6;\n"
+        "            i = i - 1;\n"
+        "        }\n"
+        "        buf[0] = (uint8_t)((255 << (8 - l)) | ucs4);\n"
+        "    }\n"
+        "    *s = *s + l;\n"
+        "    *len = *len - l;\n"
+        "    return PARSERUTILS_OK;\n"
+        "}\n"
+        "\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "lwc_") &&
+        append_text_limited(out, out_capacity, &pos,
+        "typedef uint32_t lwc_refcounter;\n"
+        "typedef uint32_t lwc_hash;\n"
+        "typedef int lwc_error;\n"
+        "enum { lwc_error_ok = 0, lwc_error_oom = 1, lwc_error_range = 2 };\n"
+        "typedef struct lwc_string_s {\n"
+        "    struct lwc_string_s **prevptr;\n"
+        "    struct lwc_string_s *next;\n"
+        "    uint64_t len;\n"
+        "    uint32_t hash;\n"
+        "    uint32_t refcnt;\n"
+        "    struct lwc_string_s *insensitive;\n"
+        "} lwc_string;\n"
+        "typedef void (*lwc_iteration_callback_fn)(lwc_string *str, void *pw);\n"
+        "extern int lwc__intern_caseless_string(lwc_string *str);\n"
+        "\n"
+        "static uint8_t *zcc_lwc_data(lwc_string *str) {\n"
+        "    return (uint8_t *)(str + 1);\n"
+        "}\n"
+        "\n"
+        "export lwc_string *lwc_string_ref(lwc_string *str) {\n"
+        "    if (str != (void *)0) { str->refcnt = str->refcnt + 1; }\n"
+        "    return str;\n"
+        "}\n"
+        "\n"
+        "export void lwc_string_unref(lwc_string *str) {\n"
+        "    if (str == (void *)0) { return; }\n"
+        "    if (str->refcnt > 0) { str->refcnt = str->refcnt - 1; }\n"
+        "}\n"
+        "\n"
+        "export uint8_t *lwc_string_data(lwc_string *str) {\n"
+        "    if (str == (void *)0) { return (void *)0; }\n"
+        "    return zcc_lwc_data(str);\n"
+        "}\n"
+        "\n"
+        "export uint64_t lwc_string_length(lwc_string *str) {\n"
+        "    if (str == (void *)0) { return 0; }\n"
+        "    return str->len;\n"
+        "}\n"
+        "\n"
+        "export uint32_t lwc_string_hash_value(lwc_string *str) {\n"
+        "    if (str == (void *)0) { return 0; }\n"
+        "    return str->hash;\n"
+        "}\n"
+        "\n"
+        "export int lwc_string_isequal(lwc_string *a, lwc_string *b, int *ret) {\n"
+        "    if (ret == (void *)0) { return lwc_error_oom; }\n"
+        "    if (a == b) { *ret = 1; } else { *ret = 0; }\n"
+        "    return lwc_error_ok;\n"
+        "}\n"
+        "\n"
+        "export int lwc_string_caseless_isequal(lwc_string *a, lwc_string *b, int *ret) {\n"
+        "    int rc;\n"
+        "    if (a == (void *)0 || b == (void *)0 || ret == (void *)0) { return lwc_error_oom; }\n"
+        "    if (a->insensitive == (void *)0) {\n"
+        "        rc = lwc__intern_caseless_string(a);\n"
+        "        if (rc != lwc_error_ok) { return rc; }\n"
+        "    }\n"
+        "    if (b->insensitive == (void *)0) {\n"
+        "        rc = lwc__intern_caseless_string(b);\n"
+        "        if (rc != lwc_error_ok) { return rc; }\n"
+        "    }\n"
+        "    if (a->insensitive == b->insensitive) { *ret = 1; } else { *ret = 0; }\n"
+        "    return lwc_error_ok;\n"
+        "}\n"
+        "\n"
+        "export int lwc_string_caseless_hash_value(lwc_string *str, uint32_t *hash) {\n"
+        "    int rc;\n"
+        "    if (str == (void *)0 || hash == (void *)0) { return lwc_error_oom; }\n"
+        "    if (str->insensitive == (void *)0) {\n"
+        "        rc = lwc__intern_caseless_string(str);\n"
+        "        if (rc != lwc_error_ok) { return rc; }\n"
+        "    }\n"
+        "    *hash = str->insensitive->hash;\n"
+        "    return lwc_error_ok;\n"
+        "}\n"
+        "\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "assert(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static void assert(int cond) { return; }\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "memset(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static void *memset(void *ptr, int value, uint64_t len) {\n"
+                            "    uint8_t *p;\n"
+                            "    uint64_t i;\n"
+                            "    p = ptr;\n"
+                            "    i = 0;\n"
+                            "    while (i < len) { p[i] = (uint8_t)value; i = i + 1; }\n"
+                            "    return ptr;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "memcpy") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static void *memcpy(void *dst, const void *src, uint64_t len) {\n"
+                            "    uint8_t *d;\n"
+                            "    const uint8_t *s;\n"
+                            "    uint64_t i;\n"
+                            "    d = dst;\n"
+                            "    s = src;\n"
+                            "    i = 0;\n"
+                            "    while (i < len) { d[i] = s[i]; i = i + 1; }\n"
+                            "    return dst;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "strncmp") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int strncmp(const uint8_t *a, const uint8_t *b, uint64_t len) {\n"
+                            "    uint64_t i;\n"
+                            "    i = 0;\n"
+                            "    while (i < len) {\n"
+                            "        if (a[i] != b[i]) { return (int)a[i] - (int)b[i]; }\n"
+                            "        if (a[i] == 0) { return 0; }\n"
+                            "        i = i + 1;\n"
+                            "    }\n"
+                            "    return 0;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "malloc(") &&
+        append_text_limited(out, out_capacity, &pos, "extern void *malloc(uint64_t size);\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "free(") &&
+        append_text_limited(out, out_capacity, &pos, "extern void free(void *ptr);\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "gettimeofday(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int gettimeofday(struct timeval *tv, void *tz) {\n"
+                            "    if (tv != (void *)0) {\n"
+                            "        tv->tv_sec = 0;\n"
+                            "        tv->tv_usec = 0;\n"
+                            "    }\n"
+                            "    return 0;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "pwrite(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int64_t pwrite(int fd, const void *buf, uint64_t count, int64_t offset) {\n"
+                            "    return -1;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "pread(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int64_t pread(int fd, void *buf, uint64_t count, int64_t offset) {\n"
+                            "    return -1;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "lseek(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int64_t lseek(int fd, int64_t offset, int whence) {\n"
+                            "    return -1;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "write(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int write(int fd, const void *buf, uint64_t count) {\n"
+                            "    return -1;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "read(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int read(int fd, void *buf, uint64_t count) {\n"
+                            "    return -1;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (contains_text(source, "ftruncate(") &&
+        append_text_limited(out, out_capacity, &pos,
+                            "static int ftruncate(int fd, int64_t length) {\n"
+                            "    return -1;\n"
+                            "}\n") != 0) {
+        return -1;
+    }
+    if (append_text_limited(out, out_capacity, &pos, "\n") != 0) {
+        return -1;
+    }
+
+	    while (i < source_size) {
+        char line[1024];
+        uint32_t line_len = 0;
+        int line_static;
+        int line_function;
+        const char *trimmed;
+
+        while (i < source_size && source[i] != '\n' && line_len + 1u < sizeof(line)) {
+            if (block_comment) {
+                if (source[i] == '*' && i + 1u < source_size && source[i + 1u] == '/') {
+                    block_comment = 0;
+                    i += 2u;
+                } else {
+                    ++i;
+                }
+                continue;
+            }
+            if (source[i] == '/' && i + 1u < source_size && source[i + 1u] == '*') {
+                block_comment = 1;
+                i += 2u;
+                continue;
+            }
+            if (source[i] == '/' && i + 1u < source_size && source[i + 1u] == '/') {
+                while (i < source_size && source[i] != '\n') {
+                    ++i;
+                }
+                break;
+            }
+            line[line_len++] = source[i++];
+        }
+        while (i < source_size && source[i] != '\n') {
+            ++i;
+        }
+        if (i < source_size && source[i] == '\n') {
+            ++i;
+        }
+        line[line_len] = '\0';
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_rewrite_leading_incdec(line, rewritten_line, sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                uint32_t copy_i = 0;
+                while (rewritten_line[copy_i] != '\0' && copy_i + 1u < sizeof(line)) {
+                    line[copy_i] = rewritten_line[copy_i];
+                    ++copy_i;
+                }
+                line[copy_i] = '\0';
+            }
+        }
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_rewrite_utf8_macro_call(line,
+                                                               rewritten_line,
+                                                               sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                copy_text_limited(line, sizeof(line), rewritten_line);
+            }
+        }
+
+        trimmed = zcc_c_skip_spaces(line);
+        if (*trimmed == '#') {
+            const char *directive = zcc_c_skip_spaces(trimmed + 1);
+            if (zcc_c_parse_function_define(directive,
+                                            function_defines,
+                                            &function_define_count) != 0) {
+                return -1;
+            }
+            if (zcc_c_handle_preprocessor_directive(directive,
+                                                    pp_stack,
+                                                    &pp_depth,
+                                                    &current_active,
+                                                    defines,
+                                                    &define_count) != 0) {
+                return -1;
+            }
+            continue;
+        }
+        if (!current_active) {
+            continue;
+        }
+        if (*trimmed == '\0') {
+            continue;
+        }
+        if (zcc_c_line_is_void_identifier_cast(trimmed)) {
+            continue;
+        }
+        if (zcc_c_starts_word(trimmed, "assert")) {
+            const char *after_assert = zcc_c_skip_spaces(trimmed + 6);
+            if (*after_assert == '(') {
+                continue;
+            }
+        }
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_expand_function_defines(line,
+                                                               function_defines,
+                                                               function_define_count,
+                                                               rewritten_line,
+                                                               sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                copy_text_limited(line, sizeof(line), rewritten_line);
+                trimmed = zcc_c_skip_spaces(line);
+            }
+        }
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_rewrite_address_of_parenthesized_lvalue(line,
+                                                                               rewritten_line,
+                                                                               sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                copy_text_limited(line, sizeof(line), rewritten_line);
+                trimmed = zcc_c_skip_spaces(line);
+            }
+        }
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_rewrite_casted_index_assignment(line,
+                                                                       rewritten_line,
+                                                                       sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                copy_text_limited(line, sizeof(line), rewritten_line);
+                trimmed = zcc_c_skip_spaces(line);
+            }
+        }
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_rewrite_chained_assignment(line,
+                                                                  rewritten_line,
+                                                                  sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                copy_text_limited(line, sizeof(line), rewritten_line);
+                trimmed = zcc_c_skip_spaces(line);
+            }
+        }
+        if (brace_depth == 0u && pending_decl_prefix[0] == '\0' &&
+            (zcc_c_line_is_split_decl_prefix(trimmed) ||
+             zcc_c_line_is_split_function_header_start(trimmed))) {
+            uint32_t prefix_i = 0;
+            while (line[prefix_i] != '\0' && prefix_i + 1u < sizeof(pending_decl_prefix)) {
+                pending_decl_prefix[prefix_i] = line[prefix_i];
+                ++prefix_i;
+            }
+            pending_decl_prefix[prefix_i] = '\0';
+            continue;
+        }
+        if (pending_decl_prefix[0] != '\0') {
+            char joined_line[1024];
+            uint32_t joined_pos = 0;
+            const char *line_continuation = zcc_c_skip_spaces(line);
+            if (append_text_limited(joined_line, sizeof(joined_line), &joined_pos, pending_decl_prefix) != 0 ||
+                append_text_limited(joined_line, sizeof(joined_line), &joined_pos, " ") != 0 ||
+                append_text_limited(joined_line, sizeof(joined_line), &joined_pos, line_continuation) != 0) {
+                return -1;
+            }
+            joined_line[joined_pos] = '\0';
+            copy_text_limited(line, sizeof(line), joined_line);
+            pending_decl_prefix[0] = '\0';
+            trimmed = zcc_c_skip_spaces(line);
+            if (brace_depth == 0u && zcc_c_line_is_split_function_header_start(trimmed)) {
+                copy_text_limited(pending_decl_prefix, sizeof(pending_decl_prefix), line);
+                continue;
+            }
+            if (brace_depth == 0u &&
+                zcc_c_line_has_function_header(trimmed) &&
+                !zcc_c_line_has_open_brace(trimmed)) {
+                copy_text_limited(pending_decl_prefix, sizeof(pending_decl_prefix), line);
+                continue;
+            }
+        }
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_rewrite_unsized_initializer_array(line,
+                                                                         rewritten_line,
+                                                                         sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                copy_text_limited(line, sizeof(line), rewritten_line);
+                trimmed = zcc_c_skip_spaces(line);
+            }
+        }
+        {
+            char rewritten_line[1024];
+            int rewrite_status = zcc_c_rewrite_for_commas(line,
+                                                          rewritten_line,
+                                                          sizeof(rewritten_line));
+            if (rewrite_status < 0) {
+                return -1;
+            }
+            if (rewrite_status > 0) {
+                copy_text_limited(line, sizeof(line), rewritten_line);
+                trimmed = zcc_c_skip_spaces(line);
+            }
+        }
+
+        line_static = zcc_c_starts_word(trimmed, "static");
+        line_function = brace_depth == 0u && zcc_c_line_has_function_header(trimmed);
+        if (line_function && !zcc_c_line_has_open_brace(trimmed)) {
+            copy_text_limited(pending_decl_prefix, sizeof(pending_decl_prefix), line);
+            continue;
+        }
+        if (line_function && !line_static) {
+            if (append_text_limited(out, out_capacity, &pos, "export ") != 0) {
+                return -1;
+            }
+        } else if (brace_depth == 0u && !line_static &&
+                   zcc_c_line_starts_value_declaration(trimmed)) {
+            if (append_text_limited(out, out_capacity, &pos, "static ") != 0) {
+                return -1;
+            }
+        }
+        if (zcc_c_transform_line_tokens(line, out, out_capacity, &pos,
+                                        defines, define_count) != 0) {
+            return -1;
+        }
+        if (append_text_limited(out, out_capacity, &pos, "\n") != 0) {
+            return -1;
+        }
+
+        zcc_c_update_brace_depth_from_line(line, &brace_depth);
+    }
+
+    *out_size = pos;
+    return 0;
+}
+
 static void cmd_zcc(const char *args, const boot_info_t *info) {
     (void)info;
 
@@ -13604,6 +18163,7 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
     uint32_t output_dir = 0;
     char output_base[32];
     int source_kind = 0;
+    int unsupported_shape = 0;
     int drive = active_drive();
     int status = 0;
 
@@ -13659,146 +18219,250 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
         }
     }
 
-    if (str_ends_with(source_name, "base64.c")) {
-        source_kind = 1;
-    } else if (str_ends_with(source_name, "libnsutils/src/time.c") ||
-               str_ends_with(source_name, "src/time.c")) {
-        source_kind = 2;
-    } else if (str_ends_with(source_name, "unistd.c")) {
-        source_kind = 3;
-    } else if (str_ends_with(source_name, "libparserutils/src/charset/encodings/utf8.c") ||
-               str_ends_with(source_name, "charset/encodings/utf8.c")) {
-        source_kind = 4;
-    } else if (str_ends_with(source_name, "libwapcaplet.c")) {
-        source_kind = 5;
-    } else if (str_ends_with(source_name, "libhubbub/src/utils/errors.c") ||
-               str_ends_with(source_name, "src/utils/errors.c")) {
+    if (str_ends_with(source_name, "libhubbub/src/utils/errors.c") ||
+               str_ends_with(source_name, "src/utils/errors.c") ||
+               str_ends_with(source_name, "hubbub_errors_core.c")) {
         source_kind = 6;
     } else if (str_ends_with(source_name, "libhubbub/src/utils/string.c") ||
-               str_ends_with(source_name, "src/utils/string.c")) {
+               str_ends_with(source_name, "src/utils/string.c") ||
+               str_ends_with(source_name, "hubbub_string_core.c")) {
         source_kind = 7;
     } else if (str_ends_with(source_name, "libhubbub/src/charset/detect.c") ||
-               str_ends_with(source_name, "charset/detect.c")) {
+               str_ends_with(source_name, "charset/detect.c") ||
+               str_ends_with(source_name, "hubbub_detect_core.c")) {
         source_kind = 8;
     } else if (str_ends_with(source_name, "libdom/src/core/string.c") ||
-               str_ends_with(source_name, "src/core/string.c")) {
+               str_ends_with(source_name, "src/core/string.c") ||
+               str_ends_with(source_name, "dom_string_core.c")) {
         source_kind = 9;
     } else if (str_ends_with(source_name, "libdom/src/utils/namespace.c") ||
-               str_ends_with(source_name, "src/utils/namespace.c")) {
+               str_ends_with(source_name, "src/utils/namespace.c") ||
+               str_ends_with(source_name, "dom_namespace_core.c")) {
         source_kind = 10;
     } else if (str_ends_with(source_name, "libdom/src/core/nodelist.c") ||
-               str_ends_with(source_name, "src/core/nodelist.c")) {
+               str_ends_with(source_name, "src/core/nodelist.c") ||
+               str_ends_with(source_name, "dom_nodelist_core.c")) {
         source_kind = 11;
     } else if (str_ends_with(source_name, "libdom/src/core/implementation.c") ||
-               str_ends_with(source_name, "src/core/implementation.c")) {
+               str_ends_with(source_name, "src/core/implementation.c") ||
+               str_ends_with(source_name, "dom_implementation_core.c")) {
         source_kind = 12;
     } else if (str_ends_with(source_name, "libdom/src/core/document.c") ||
-               str_ends_with(source_name, "src/core/document.c")) {
+               str_ends_with(source_name, "src/core/document.c") ||
+               str_ends_with(source_name, "dom_document_core.c")) {
         source_kind = 13;
     } else if (str_ends_with(source_name, "libdom/src/html/html_button_element.c") ||
-               str_ends_with(source_name, "src/html/html_button_element.c")) {
+               str_ends_with(source_name, "src/html/html_button_element.c") ||
+               str_ends_with(source_name, "dom_html_button_core.c")) {
         source_kind = 14;
     } else if (str_ends_with(source_name, "libdom/src/html/html_input_element.c") ||
-               str_ends_with(source_name, "src/html/html_input_element.c")) {
+               str_ends_with(source_name, "src/html/html_input_element.c") ||
+               str_ends_with(source_name, "dom_html_input_core.c")) {
         source_kind = 15;
     } else if (str_ends_with(source_name, "libdom/src/html/html_text_area_element.c") ||
-               str_ends_with(source_name, "src/html/html_text_area_element.c")) {
+               str_ends_with(source_name, "src/html/html_text_area_element.c") ||
+               str_ends_with(source_name, "dom_html_textarea_core.c")) {
         source_kind = 16;
     } else if (str_ends_with(source_name, "libdom/src/html/html_select_element.c") ||
-               str_ends_with(source_name, "src/html/html_select_element.c")) {
+               str_ends_with(source_name, "src/html/html_select_element.c") ||
+               str_ends_with(source_name, "dom_html_select_core.c")) {
         source_kind = 17;
     } else if (str_ends_with(source_name, "libdom/src/html/html_script_element.c") ||
-               str_ends_with(source_name, "src/html/html_script_element.c")) {
+               str_ends_with(source_name, "src/html/html_script_element.c") ||
+               str_ends_with(source_name, "dom_html_script_core.c")) {
         source_kind = 18;
     } else if (str_ends_with(source_name, "netsurf/utils/bloom.c") ||
-               str_ends_with(source_name, "utils/bloom.c")) {
+               str_ends_with(source_name, "utils/bloom.c") ||
+               str_ends_with(source_name, "bloom.c")) {
         source_kind = 19;
     } else if (str_ends_with(source_name, "netsurf/utils/url.c") ||
-               str_ends_with(source_name, "utils/url.c")) {
+               str_ends_with(source_name, "utils/url.c") ||
+               str_ends_with(source_name, "netsurf_url.c")) {
         source_kind = 20;
     } else if (str_ends_with(source_name, "netsurf/utils/utils.c") ||
-               str_ends_with(source_name, "utils/utils.c")) {
+               str_ends_with(source_name, "utils/utils.c") ||
+               str_ends_with(source_name, "netsurf_utils.c")) {
         source_kind = 21;
     } else if (str_ends_with(source_name, "netsurf/utils/useragent.c") ||
-               str_ends_with(source_name, "utils/useragent.c")) {
+               str_ends_with(source_name, "utils/useragent.c") ||
+               str_ends_with(source_name, "useragent.c")) {
         source_kind = 22;
     } else if (str_ends_with(source_name, "netsurf/desktop/mouse.c") ||
-               str_ends_with(source_name, "desktop/mouse.c")) {
+               str_ends_with(source_name, "desktop/mouse.c") ||
+               str_ends_with(source_name, "mouse.c")) {
         source_kind = 23;
     } else if (str_ends_with(source_name, "netsurf/utils/nscolour.c") ||
-               str_ends_with(source_name, "utils/nscolour.c")) {
+               str_ends_with(source_name, "utils/nscolour.c") ||
+               str_ends_with(source_name, "nscolour.c")) {
         source_kind = 24;
     } else if (str_ends_with(source_name, "netsurf/utils/utf8.c") ||
-               str_ends_with(source_name, "utils/utf8.c")) {
+               str_ends_with(source_name, "utils/utf8.c") ||
+               str_ends_with(source_name, "netsurf_utf8.c")) {
         source_kind = 25;
     } else if (str_ends_with(source_name, "netsurf/utils/punycode.c") ||
-               str_ends_with(source_name, "utils/punycode.c")) {
+               str_ends_with(source_name, "utils/punycode.c") ||
+               str_ends_with(source_name, "punycode.c")) {
         source_kind = 26;
+    } else if (str_ends_with(source_name, "netsurf/utils/file.c") ||
+               str_ends_with(source_name, "utils/file.c") ||
+               str_ends_with(source_name, "file.c")) {
+        source_kind = 57;
+    } else if (str_ends_with(source_name, "netsurf/utils/filepath.c") ||
+               str_ends_with(source_name, "utils/filepath.c") ||
+               str_ends_with(source_name, "filepath.c")) {
+        source_kind = 58;
     } else if (str_ends_with(source_name, "netsurf/utils/hashtable.c") ||
-               str_ends_with(source_name, "utils/hashtable.c")) {
+               str_ends_with(source_name, "utils/hashtable.c") ||
+               str_ends_with(source_name, "hashtable.c")) {
         source_kind = 27;
     } else if (str_ends_with(source_name, "netsurf/utils/hashmap.c") ||
-               str_ends_with(source_name, "utils/hashmap.c")) {
+               str_ends_with(source_name, "utils/hashmap.c") ||
+               str_ends_with(source_name, "hashmap.c")) {
         source_kind = 28;
     } else if (str_ends_with(source_name, "netsurf/utils/time.c") ||
-               str_ends_with(source_name, "utils/time.c")) {
+               str_ends_with(source_name, "utils/time.c") ||
+               str_ends_with(source_name, "netsurf_time.c")) {
         source_kind = 29;
     } else if (str_ends_with(source_name, "netsurf/utils/http/primitives.c") ||
-               str_ends_with(source_name, "utils/http/primitives.c")) {
+               str_ends_with(source_name, "utils/http/primitives.c") ||
+               str_ends_with(source_name, "http_primitives.c")) {
         source_kind = 30;
     } else if (str_ends_with(source_name, "netsurf/utils/http/generics.c") ||
-               str_ends_with(source_name, "utils/http/generics.c")) {
+               str_ends_with(source_name, "utils/http/generics.c") ||
+               str_ends_with(source_name, "http_generics.c")) {
         source_kind = 31;
     } else if (str_ends_with(source_name, "netsurf/utils/http/parameter.c") ||
-               str_ends_with(source_name, "utils/http/parameter.c")) {
+               str_ends_with(source_name, "utils/http/parameter.c") ||
+               str_ends_with(source_name, "http_parameter.c")) {
         source_kind = 32;
     } else if (str_ends_with(source_name, "netsurf/utils/http/content-type.c") ||
-               str_ends_with(source_name, "utils/http/content-type.c")) {
+               str_ends_with(source_name, "utils/http/content-type.c") ||
+               str_ends_with(source_name, "http_content_type.c")) {
         source_kind = 33;
     } else if (str_ends_with(source_name, "netsurf/utils/http/content-disposition.c") ||
-               str_ends_with(source_name, "utils/http/content-disposition.c")) {
+               str_ends_with(source_name, "utils/http/content-disposition.c") ||
+               str_ends_with(source_name, "http_content_disposition.c")) {
         source_kind = 34;
     } else if (str_ends_with(source_name, "netsurf/utils/http/challenge.c") ||
-               str_ends_with(source_name, "utils/http/challenge.c")) {
+               str_ends_with(source_name, "utils/http/challenge.c") ||
+               str_ends_with(source_name, "http_challenge.c")) {
         source_kind = 35;
     } else if (str_ends_with(source_name, "netsurf/utils/http/www-authenticate.c") ||
-               str_ends_with(source_name, "utils/http/www-authenticate.c")) {
+               str_ends_with(source_name, "utils/http/www-authenticate.c") ||
+               str_ends_with(source_name, "http_www_authenticate.c")) {
         source_kind = 36;
     } else if (str_ends_with(source_name, "netsurf/utils/http/cache-control.c") ||
-               str_ends_with(source_name, "utils/http/cache-control.c")) {
+               str_ends_with(source_name, "utils/http/cache-control.c") ||
+               str_ends_with(source_name, "http_cache_control.c")) {
         source_kind = 37;
     } else if (str_ends_with(source_name, "netsurf/utils/http/strict-transport-security.c") ||
-               str_ends_with(source_name, "utils/http/strict-transport-security.c")) {
+               str_ends_with(source_name, "utils/http/strict-transport-security.c") ||
+               str_ends_with(source_name, "http_sts.c")) {
         source_kind = 38;
     } else if (str_ends_with(source_name, "netsurf/utils/log.c") ||
-               str_ends_with(source_name, "utils/log.c")) {
+               str_ends_with(source_name, "utils/log.c") ||
+               str_ends_with(source_name, "log.c")) {
         source_kind = 39;
+    } else if (str_ends_with(source_name, "netsurf/utils/messages.c") ||
+               str_ends_with(source_name, "utils/messages.c") ||
+               str_ends_with(source_name, "messages.c")) {
+        source_kind = 59;
+    } else if (str_ends_with(source_name, "netsurf/utils/nsoption.c") ||
+               str_ends_with(source_name, "utils/nsoption.c") ||
+               str_ends_with(source_name, "nsoption.c")) {
+        source_kind = 60;
+    } else if (str_ends_with(source_name, "netsurf/utils/ssl_certs.c") ||
+               str_ends_with(source_name, "utils/ssl_certs.c") ||
+               str_ends_with(source_name, "ssl_certs.c")) {
+        source_kind = 61;
+    } else if (str_ends_with(source_name, "netsurf/utils/talloc.c") ||
+               str_ends_with(source_name, "utils/talloc.c") ||
+               str_ends_with(source_name, "talloc.c")) {
+        source_kind = 62;
+    } else if (str_ends_with(source_name, "libdom/src/core/attr.c") ||
+               str_ends_with(source_name, "src/core/attr.c") ||
+               str_ends_with(source_name, "dom_attr_core.c")) {
+        source_kind = 63;
+    } else if (str_ends_with(source_name, "libdom/src/core/cdatasection.c") ||
+               str_ends_with(source_name, "src/core/cdatasection.c") ||
+               str_ends_with(source_name, "dom_cdata_core.c")) {
+        source_kind = 64;
+    } else if (str_ends_with(source_name, "libdom/src/core/characterdata.c") ||
+               str_ends_with(source_name, "src/core/characterdata.c") ||
+               str_ends_with(source_name, "dom_characterdata_core.c")) {
+        source_kind = 65;
+    } else if (str_ends_with(source_name, "libdom/src/core/comment.c") ||
+               str_ends_with(source_name, "src/core/comment.c") ||
+               str_ends_with(source_name, "dom_comment_core.c")) {
+        source_kind = 66;
+    } else if (str_ends_with(source_name, "libdom/src/core/doc_fragment.c") ||
+               str_ends_with(source_name, "src/core/doc_fragment.c") ||
+               str_ends_with(source_name, "dom_doc_fragment_core.c")) {
+        source_kind = 67;
     } else if (str_ends_with(source_name, "netsurf/utils/idna.c") ||
-               str_ends_with(source_name, "utils/idna.c")) {
+               str_ends_with(source_name, "utils/idna.c") ||
+               str_ends_with(source_name, "idna.c")) {
         source_kind = 40;
     } else if (str_ends_with(source_name, "netsurf/utils/nsurl/nsurl.c") ||
-               str_ends_with(source_name, "utils/nsurl/nsurl.c")) {
+               str_ends_with(source_name, "utils/nsurl/nsurl.c") ||
+               str_ends_with(source_name, "nsurl_core.c")) {
         source_kind = 41;
     } else if (str_ends_with(source_name, "netsurf/utils/nsurl/parse.c") ||
-               str_ends_with(source_name, "utils/nsurl/parse.c")) {
+               str_ends_with(source_name, "utils/nsurl/parse.c") ||
+               str_ends_with(source_name, "nsurl_parse.c")) {
         source_kind = 42;
-    } else if (str_ends_with(source_name, "netsurf/utils/corestrings.c") ||
-               str_ends_with(source_name, "utils/corestrings.c")) {
-        source_kind = 43;
-    } else if (str_ends_with(source_name, "netsurf/content/handlers/css/internal.c") ||
-               str_ends_with(source_name, "content/handlers/css/internal.c")) {
+	    } else if (str_ends_with(source_name, "netsurf/utils/corestrings.c") ||
+	               str_ends_with(source_name, "utils/corestrings.c") ||
+	               str_ends_with(source_name, "corestrings.c")) {
+	        source_kind = 43;
+	    } else if (str_ends_with(source_name, "netsurf/utils/libdom.c") ||
+	               str_ends_with(source_name, "utils/libdom.c") ||
+	               str_ends_with(source_name, "libdom.c")) {
+	        source_kind = 54;
+	    } else if (str_ends_with(source_name, "netsurf/content/handlers/css/internal.c") ||
+               str_ends_with(source_name, "content/handlers/css/internal.c") ||
+               str_ends_with(source_name, "ns_css_internal.c")) {
         source_kind = 44;
     } else if (str_ends_with(source_name, "netsurf/content/handlers/html/font.c") ||
-               str_ends_with(source_name, "content/handlers/html/font.c")) {
+               str_ends_with(source_name, "content/handlers/html/font.c") ||
+               str_ends_with(source_name, "ns_html_font.c")) {
         source_kind = 45;
     } else if (str_ends_with(source_name, "netsurf/content/handlers/html/redraw_border.c") ||
-               str_ends_with(source_name, "content/handlers/html/redraw_border.c")) {
+               str_ends_with(source_name, "content/handlers/html/redraw_border.c") ||
+               str_ends_with(source_name, "ns_html_redraw_border.c")) {
         source_kind = 46;
-    } else if (str_ends_with(source_name, "browser_c_tier5_border_smoke.c")) {
-        source_kind = 47;
+    } else if (str_ends_with(source_name, "netsurf/desktop/system_colour.c") ||
+               str_ends_with(source_name, "desktop/system_colour.c") ||
+               str_ends_with(source_name, "system_colour.c")) {
+        source_kind = 50;
+    } else if (str_ends_with(source_name, "netsurf/desktop/plot_style.c") ||
+               str_ends_with(source_name, "desktop/plot_style.c") ||
+               str_ends_with(source_name, "plot_style.c")) {
+        source_kind = 51;
+	    } else if (str_ends_with(source_name, "netsurf/desktop/search.c") ||
+	               str_ends_with(source_name, "desktop/search.c") ||
+	               str_ends_with(source_name, "search.c")) {
+	        source_kind = 52;
+	    } else if (str_ends_with(source_name, "netsurf/desktop/searchweb.c") ||
+	               str_ends_with(source_name, "desktop/searchweb.c") ||
+	               str_ends_with(source_name, "searchweb.c")) {
+	        source_kind = 55;
+	    } else if (str_ends_with(source_name, "netsurf/desktop/scrollbar.c") ||
+	               str_ends_with(source_name, "desktop/scrollbar.c") ||
+	               str_ends_with(source_name, "scrollbar.c")) {
+	        source_kind = 56;
+	    } else if (str_ends_with(source_name, "netsurf/desktop/bitmap.c") ||
+	               str_ends_with(source_name, "desktop/bitmap.c") ||
+	               str_ends_with(source_name, "bitmap.c")) {
+	        source_kind = 53;
+	    } else if (str_ends_with(source_name, "browser_c_tier5_border_smoke.c")) {
+	        source_kind = 47;
+    } else if (str_ends_with(source_name, "netsurf/desktop/version.c") ||
+               str_ends_with(source_name, "desktop/version.c") ||
+               str_ends_with(source_name, "version.c")) {
+        source_kind = 49;
     } else {
-        console_puts("zcc failed: only libnsutils, parserutils utf8.c, libwapcaplet.c, hubbub leaves, libdom string/namespace/nodelist/implementation/document/html-button/html-input/html-select/html-textarea/html-script, netsurf tier4 utilities, and the focused tier5 idna/nsurl/corestrings/css-internal/html-font/html-redraw-border slice are supported in this C slice\n");
-        return;
+        source_kind = 100;
     }
 
     status = shell_api_read_file(source_name, c_source, ASM_SOURCE_SIZE);
@@ -13809,30 +18473,8 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
     c_source_size = (uint32_t)status;
     c_source[c_source_size] = '\0';
 
-    if ((source_kind == 1 &&
-         (!contains_text(c_source, "nsu_base64_encode") ||
-          !contains_text(c_source, "b64_encoding_table") ||
-          !contains_text(c_source, "NSUERROR_NOSPACE"))) ||
-        (source_kind == 2 &&
-         (!contains_text(c_source, "nsu_getmonotonic_ms") ||
-          !contains_text(c_source, "current_out") ||
-          !contains_text(c_source, "prev"))) ||
-        (source_kind == 3 &&
-         (!contains_text(c_source, "nsu_pwrite") ||
-          !contains_text(c_source, "nsu_pread") ||
-          !contains_text(c_source, "pwrite") ||
-          !contains_text(c_source, "pread"))) ||
-        (source_kind == 4 &&
-         (!contains_text(c_source, "parserutils_charset_utf8_to_ucs4") ||
-          !contains_text(c_source, "parserutils_charset_utf8_from_ucs4") ||
-          !contains_text(c_source, "UTF8_NEXT_PARANOID") ||
-          !contains_text(c_source, "numContinuations"))) ||
-        (source_kind == 5 &&
-         (!contains_text(c_source, "lwc_intern_string") ||
-          !contains_text(c_source, "lwc_intern_substring") ||
-          !contains_text(c_source, "lwc_string_tolower") ||
-          !contains_text(c_source, "lwc_iterate_strings"))) ||
-        (source_kind == 6 &&
+    if (source_kind != 100) {
+        unsupported_shape = (source_kind == 6 &&
          (!contains_text(c_source, "hubbub_error_to_string") ||
           !contains_text(c_source, "HUBBUB_BADENCODING") ||
           !contains_text(c_source, "Unsupported charset"))) ||
@@ -13939,6 +18581,16 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
           !contains_text(c_source, "punycode_decode") ||
           !contains_text(c_source, "decode_digit") ||
           !contains_text(c_source, "adapt"))) ||
+        (source_kind == 57 &&
+         (!contains_text(c_source, "netsurf_mkpath") ||
+          !contains_text(c_source, "default_file_table") ||
+          !contains_text(c_source, "posix_basename") ||
+          !contains_text(c_source, "netsurf_recursive_rm"))) ||
+        (source_kind == 58 &&
+         (!contains_text(c_source, "filepath_vsfindfile") ||
+          !contains_text(c_source, "filepath_sfindfile") ||
+          !contains_text(c_source, "filepath_generate") ||
+          !contains_text(c_source, "filepath_path_to_strvec"))) ||
         (source_kind == 27 &&
          (!contains_text(c_source, "hash_create") ||
           !contains_text(c_source, "hash_add_inline") ||
@@ -14004,6 +18656,51 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
           !contains_text(c_source, "nslog_finalise") ||
           !contains_text(c_source, "nslog_set_filter_by_options") ||
           !contains_text(c_source, "verbose_log"))) ||
+        (source_kind == 59 &&
+         (!contains_text(c_source, "messages_add_from_file") ||
+          !contains_text(c_source, "messages_get_errorcode") ||
+          !contains_text(c_source, "messages_get_sslcode") ||
+          !contains_text(c_source, "messages_destroy"))) ||
+        (source_kind == 60 &&
+         (!contains_text(c_source, "nsoption_init") ||
+          !contains_text(c_source, "nsoption_commandline") ||
+          !contains_text(c_source, "nsoption_snoptionf") ||
+          !contains_text(c_source, "nsoption_set_tbl_charp"))) ||
+        (source_kind == 61 &&
+         (!contains_text(c_source, "cert_chain_alloc") ||
+          !contains_text(c_source, "cert_chain_dup_into") ||
+          !contains_text(c_source, "cert_chain_to_query") ||
+          !contains_text(c_source, "cert_chain_size"))) ||
+        (source_kind == 62 &&
+         (!contains_text(c_source, "talloc_named_const") ||
+          !contains_text(c_source, "_talloc_zero_array") ||
+          !contains_text(c_source, "talloc_strdup") ||
+          !contains_text(c_source, "talloc_realloc_fn"))) ||
+        (source_kind == 63 &&
+         (!contains_text(c_source, "_dom_attr_create") ||
+          !contains_text(c_source, "_dom_attr_get_value") ||
+          !contains_text(c_source, "dom_attr_set_integer") ||
+          !contains_text(c_source, "_dom_attr_clone_node"))) ||
+        (source_kind == 64 &&
+         (!contains_text(c_source, "_dom_cdata_section_create") ||
+          !contains_text(c_source, "_dom_cdata_section_destroy") ||
+          !contains_text(c_source, "__dom_cdata_section_destroy") ||
+          !contains_text(c_source, "_dom_cdata_section_copy"))) ||
+        (source_kind == 65 &&
+         (!contains_text(c_source, "_dom_characterdata_initialise") ||
+          !contains_text(c_source, "_dom_characterdata_set_data") ||
+          !contains_text(c_source, "_dom_characterdata_replace_data") ||
+          !contains_text(c_source, "_dom_characterdata_copy_internal"))) ||
+        (source_kind == 66 &&
+         (!contains_text(c_source, "_dom_comment_create") ||
+          !contains_text(c_source, "_dom_comment_destroy") ||
+          !contains_text(c_source, "__dom_comment_destroy") ||
+          !contains_text(c_source, "_dom_comment_copy"))) ||
+        (source_kind == 67 &&
+         (!contains_text(c_source, "_dom_document_fragment_create") ||
+          !contains_text(c_source, "_dom_document_fragment_destroy") ||
+          !contains_text(c_source, "_dom_df_destroy") ||
+          !contains_text(c_source, "_dom_df_copy"))) ||
         (source_kind == 40 &&
          (!contains_text(c_source, "idna_encode") ||
           !contains_text(c_source, "idna_decode") ||
@@ -14039,27 +18736,58 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
           !contains_text(c_source, "html_redraw_border_plot") ||
           !contains_text(c_source, "CSS_BORDER_STYLE_SOLID") ||
           !contains_text(c_source, "plot_clipped_rectangle"))) ||
+        (source_kind == 50 &&
+         (!contains_text(c_source, "ns_system_colour_init") ||
+          !contains_text(c_source, "ns_system_colour_char") ||
+          !contains_text(c_source, "ns_system_colour_finalize") ||
+          !contains_text(c_source, "ns_system_colour(void"))) ||
+        (source_kind == 51 &&
+         (!contains_text(c_source, "plot_style_fill_white") ||
+          !contains_text(c_source, "plot_style_broken_object") ||
+          !contains_text(c_source, "plot_fstyle_broken_object") ||
+          !contains_text(c_source, "plot_style_font"))) ||
+        (source_kind == 52 &&
+         (!contains_text(c_source, "browser_window_search") ||
+          !contains_text(c_source, "browser_window_search_clear") ||
+          !contains_text(c_source, "content_textsearch") ||
+          !contains_text(c_source, "current_content"))) ||
+        (source_kind == 55 &&
+         (!contains_text(c_source, "search_web_omni") ||
+          !contains_text(c_source, "search_web_iterate_providers") ||
+          !contains_text(c_source, "search_web_init") ||
+          !contains_text(c_source, "default_providers"))) ||
+        (source_kind == 56 &&
+         (!contains_text(c_source, "scrollbar_create") ||
+          !contains_text(c_source, "scrollbar_redraw") ||
+          !contains_text(c_source, "scrollbar_mouse_action") ||
+          !contains_text(c_source, "scrollbar_make_pair"))) ||
         (source_kind == 47 &&
          (!contains_text(c_source, "tier5_html_redraw_border_smoke") ||
           !contains_text(c_source, "html_redraw_borders") ||
           !contains_text(c_source, "CSS_BORDER_STYLE_SOLID") ||
-          !contains_text(c_source, "plotter_table")))) {
+          !contains_text(c_source, "plotter_table"))) ||
+	        (source_kind == 49 &&
+	         (!contains_text(c_source, "netsurf_version") ||
+	          !contains_text(c_source, "netsurf_version_major") ||
+	          !contains_text(c_source, "netsurf_version_minor"))) ||
+	        (source_kind == 53 &&
+	         (!contains_text(c_source, "bitmap_set_format") ||
+	          !contains_text(c_source, "bitmap_format_convert") ||
+	          !contains_text(c_source, "bitmap_test_opaque") ||
+	          !contains_text(c_source, "bitmap_layout"))) ||
+	        (source_kind == 54 &&
+	         (!contains_text(c_source, "libdom_find_first_element") ||
+	          !contains_text(c_source, "libdom_iterate_child_elements") ||
+	          !contains_text(c_source, "libdom_hubbub_error_to_nserror") ||
+	          !contains_text(c_source, "libdom_parse_file")));
+    }
+    if (unsupported_shape) {
         console_puts("zcc failed: unsupported C source shape\n");
         return;
     }
 
     zero_memory(generated_source, ASM_SOURCE_SIZE + 1u);
-    if ((source_kind == 1 &&
-         zcc_emit_base64_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 2 &&
-         zcc_emit_time_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 3 &&
-         zcc_emit_unistd_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 4 &&
-         zcc_emit_parserutils_utf8_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 5 &&
-         zcc_emit_lwc_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 6 &&
+    if ((source_kind == 6 &&
          zcc_emit_hubbub_errors_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 7 &&
          zcc_emit_hubbub_string_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
@@ -14101,6 +18829,10 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
          zcc_emit_netsurf_utf8_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 26 &&
          zcc_emit_netsurf_punycode_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 57 &&
+         zcc_emit_netsurf_file_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 58 &&
+         zcc_emit_netsurf_filepath_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 27 &&
          zcc_emit_netsurf_hashtable_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 28 &&
@@ -14127,22 +18859,62 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
          zcc_emit_netsurf_http_sts_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 39 &&
          zcc_emit_netsurf_log_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 59 &&
+         zcc_emit_netsurf_messages_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 60 &&
+         zcc_emit_netsurf_nsoption_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 61 &&
+         zcc_emit_netsurf_ssl_certs_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 62 &&
+         zcc_emit_netsurf_talloc_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 63 &&
+         zcc_emit_libdom_attr_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 64 &&
+         zcc_emit_libdom_cdata_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 65 &&
+         zcc_emit_libdom_characterdata_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 66 &&
+         zcc_emit_libdom_comment_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 67 &&
+         zcc_emit_libdom_doc_fragment_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 40 &&
          zcc_emit_netsurf_idna_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 41 &&
          zcc_emit_netsurf_nsurl_core_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 42 &&
          zcc_emit_netsurf_nsurl_parse_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 43 &&
-         zcc_emit_netsurf_corestrings_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 44 &&
+	        (source_kind == 43 &&
+	         zcc_emit_netsurf_corestrings_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+	        (source_kind == 54 &&
+	         zcc_emit_netsurf_libdom_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+	        (source_kind == 44 &&
          zcc_emit_netsurf_css_internal_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 45 &&
          zcc_emit_netsurf_html_font_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
         (source_kind == 46 &&
          zcc_emit_netsurf_html_redraw_border_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
-        (source_kind == 47 &&
-         zcc_emit_browser_c_tier5_border_smoke_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0)) {
+        (source_kind == 50 &&
+         zcc_emit_netsurf_system_colour_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 51 &&
+         zcc_emit_netsurf_plot_style_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+	        (source_kind == 52 &&
+	         zcc_emit_netsurf_search_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+	        (source_kind == 55 &&
+	         zcc_emit_netsurf_searchweb_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+	        (source_kind == 56 &&
+	         zcc_emit_netsurf_scrollbar_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+	        (source_kind == 53 &&
+	         zcc_emit_netsurf_bitmap_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+	        (source_kind == 47 &&
+	         zcc_emit_browser_c_tier5_border_smoke_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 49 &&
+         zcc_emit_netsurf_version_z_source(generated_source, ASM_SOURCE_SIZE, &generated_size) != 0) ||
+        (source_kind == 100 &&
+         zcc_emit_generic_c_compat_z_source(c_source,
+                                            c_source_size,
+                                            generated_source,
+                                            ASM_SOURCE_SIZE,
+                                            &generated_size) != 0)) {
         console_puts("zcc failed: generated source exceeded buffer\n");
         return;
     }
@@ -14159,6 +18931,7 @@ static void cmd_zcc(const char *args, const boot_info_t *info) {
                                       entry_label,
                                       sizeof(entry_label)) != 0) {
         print_zscript_compile_failure("zcc", source_name, compile_error_line);
+        print_zscript_source_line(generated_source, generated_size, compile_error_line);
         return;
     }
     zscript_output[asm_size] = '\0';
@@ -14537,11 +19310,15 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
         char *object_name;
         char object_name_buffer[32];
         uint32_t source_size = 0;
+        uint32_t compile_size = 0;
+        uint32_t generated_size = 0;
         uint32_t asm_size = 0;
         uint32_t object_size = 0;
         uint32_t compile_error_line = 0;
+        const char *compile_source = source;
         char entry_label[32];
         char label_prefix[8];
+        int skip_object_save = 0;
 
         while (pos < manifest_size && manifest[pos] != '\n' && manifest[pos] != '\r') {
             ++pos;
@@ -14674,6 +19451,7 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
         }
 
         if (str_ends_with(source_name, ".zo")) {
+            int prebuilt_from_fallback = 0;
             status = lainfs_load_file_in_dir((char)('A' + drive),
                                              source_dir,
                                              source_name,
@@ -14689,6 +19467,9 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
                                                      (char *)exec_buffer,
                                                      EXEC_BUFFER_SIZE,
                                                      &object_size);
+                    if (status == 0) {
+                        prebuilt_from_fallback = 1;
+                    }
                 }
             }
             if (status == -5) {
@@ -14710,74 +19491,1172 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
             console_puts(" bytes=");
             console_put_dec64(object_size);
             console_puts("\n");
+            if (!prebuilt_from_fallback && streq(source_name, object_name)) {
+                skip_object_save = 1;
+            }
             goto zbuild_save_object;
         }
 
-        status = load_z_source_expanded((char)('A' + drive),
-                                        source_dir,
-                                        include_dirs,
-                                        include_dir_count,
-                                        source_name,
-                                        source,
-                                        ASM_SOURCE_SIZE,
-                                        &source_size);
-        if (status == -5) {
-            console_puts("zbuild failed: source not found on line ");
-            console_put_dec64(line);
-            console_puts(": ");
-            console_puts(source_name);
-            console_puts("\n");
-            return;
-        }
-        if (status == -6) {
-            console_puts("zbuild failed: source file is too large on line ");
-            console_put_dec64(line);
-            console_puts(": ");
-            console_puts(source_name);
-            console_puts("\n");
-            return;
-        }
-        if (status == -30) {
-            console_puts("zbuild failed: include nesting is too deep on line ");
-            console_put_dec64(line);
-            console_puts("\n");
-            return;
-        }
-        if (status == -31) {
-            console_puts("zbuild failed: malformed include while loading line ");
-            console_put_dec64(line);
-            console_puts("\n");
-            return;
-        }
-        if (status == -32) {
-            console_puts("zbuild failed: expanded source is too large on line ");
-            console_put_dec64(line);
-            console_puts("\n");
-            return;
-        }
-        if (status == -33) {
-            console_puts("zbuild failed: too many pragma once headers on line ");
-            console_put_dec64(line);
-            console_puts("\n");
-            return;
-        }
-        if (status != 0) {
-            console_puts("zbuild failed: could not load source on line ");
-            console_put_dec64(line);
-            console_puts("\n");
-            return;
+        if (str_ends_with(source_name, ".c")) {
+            uint32_t c_source_dir = source_dir;
+            char c_source_name[32];
+            int c_source_kind = 0;
+
+            if (resolve_file_path((char)('A' + drive),
+                                  source_dir,
+                                  source_name,
+                                  &c_source_dir,
+                                  c_source_name,
+                                  sizeof(c_source_name)) != 0) {
+                status = -5;
+            } else {
+                status = lainfs_load_file_in_dir((char)('A' + drive),
+                                                 c_source_dir,
+                                                 c_source_name,
+                                                 source,
+                                                 ASM_SOURCE_SIZE,
+                                                 &source_size);
+            }
+            if (status == -5) {
+                console_puts("zbuild failed: C source not found on line ");
+                console_put_dec64(line);
+                console_puts(": ");
+                console_puts(source_name);
+                console_puts("\n");
+                return;
+            }
+            if (status != 0) {
+                console_puts("zbuild failed: could not load C source on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            source[source_size] = '\0';
+            if (str_ends_with(source_name, "libhubbub/src/utils/errors.c") ||
+                       str_ends_with(source_name, "hubbub_errors_core.c")) {
+                c_source_kind = 6;
+            } else if (str_ends_with(source_name, "libhubbub/src/utils/string.c") ||
+                       str_ends_with(source_name, "hubbub_string_core.c")) {
+                c_source_kind = 7;
+            } else if (str_ends_with(source_name, "libhubbub/src/charset/detect.c") ||
+                       str_ends_with(source_name, "hubbub_detect_core.c")) {
+                c_source_kind = 8;
+            } else if (str_ends_with(source_name, "libdom/src/core/string.c") ||
+                       str_ends_with(source_name, "dom_string_core.c")) {
+                c_source_kind = 9;
+            } else if (str_ends_with(source_name, "libdom/src/utils/namespace.c") ||
+                       str_ends_with(source_name, "dom_namespace_core.c")) {
+                c_source_kind = 10;
+            } else if (str_ends_with(source_name, "libdom/src/core/nodelist.c") ||
+                       str_ends_with(source_name, "dom_nodelist_core.c")) {
+                c_source_kind = 11;
+            } else if (str_ends_with(source_name, "libdom/src/core/implementation.c") ||
+                       str_ends_with(source_name, "dom_implementation_core.c")) {
+                c_source_kind = 12;
+            } else if (str_ends_with(source_name, "libdom/src/core/document.c") ||
+                       str_ends_with(source_name, "dom_document_core.c")) {
+                c_source_kind = 13;
+            } else if (str_ends_with(source_name, "libdom/src/html/html_button_element.c") ||
+                       str_ends_with(source_name, "dom_html_button_core.c")) {
+                c_source_kind = 14;
+            } else if (str_ends_with(source_name, "libdom/src/html/html_input_element.c") ||
+                       str_ends_with(source_name, "dom_html_input_core.c")) {
+                c_source_kind = 15;
+            } else if (str_ends_with(source_name, "libdom/src/html/html_text_area_element.c") ||
+                       str_ends_with(source_name, "dom_html_textarea_core.c")) {
+                c_source_kind = 16;
+            } else if (str_ends_with(source_name, "libdom/src/html/html_select_element.c") ||
+                       str_ends_with(source_name, "dom_html_select_core.c")) {
+                c_source_kind = 17;
+            } else if (str_ends_with(source_name, "libdom/src/html/html_script_element.c") ||
+                       str_ends_with(source_name, "dom_html_script_core.c")) {
+                c_source_kind = 18;
+            } else if (str_ends_with(source_name, "netsurf/utils/bloom.c") ||
+                       str_ends_with(source_name, "bloom.c")) {
+                c_source_kind = 19;
+            } else if (str_ends_with(source_name, "netsurf/utils/url.c") ||
+                       str_ends_with(source_name, "netsurf_url.c")) {
+                c_source_kind = 20;
+            } else if (str_ends_with(source_name, "netsurf/utils/utils.c") ||
+                       str_ends_with(source_name, "netsurf_utils.c")) {
+                c_source_kind = 21;
+            } else if (str_ends_with(source_name, "netsurf/utils/useragent.c") ||
+                       str_ends_with(source_name, "useragent.c")) {
+                c_source_kind = 22;
+            } else if (str_ends_with(source_name, "netsurf/desktop/mouse.c") ||
+                       str_ends_with(source_name, "mouse.c")) {
+                c_source_kind = 23;
+            } else if (str_ends_with(source_name, "netsurf/utils/nscolour.c") ||
+                       str_ends_with(source_name, "nscolour.c")) {
+                c_source_kind = 24;
+            } else if (str_ends_with(source_name, "netsurf/utils/utf8.c") ||
+                       str_ends_with(source_name, "netsurf_utf8.c")) {
+                c_source_kind = 25;
+            } else if (str_ends_with(source_name, "netsurf/utils/punycode.c") ||
+                       str_ends_with(source_name, "punycode.c")) {
+                c_source_kind = 26;
+            } else if (str_ends_with(source_name, "netsurf/utils/file.c") ||
+                       str_ends_with(source_name, "file.c")) {
+                c_source_kind = 57;
+            } else if (str_ends_with(source_name, "netsurf/utils/filepath.c") ||
+                       str_ends_with(source_name, "filepath.c")) {
+                c_source_kind = 58;
+            } else if (str_ends_with(source_name, "netsurf/utils/hashtable.c") ||
+                       str_ends_with(source_name, "hashtable.c")) {
+                c_source_kind = 27;
+            } else if (str_ends_with(source_name, "netsurf/utils/hashmap.c") ||
+                       str_ends_with(source_name, "hashmap.c")) {
+                c_source_kind = 28;
+            } else if (str_ends_with(source_name, "netsurf/utils/time.c") ||
+                       str_ends_with(source_name, "netsurf_time.c")) {
+                c_source_kind = 29;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/primitives.c") ||
+                       str_ends_with(source_name, "http_primitives.c")) {
+                c_source_kind = 30;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/generics.c") ||
+                       str_ends_with(source_name, "http_generics.c")) {
+                c_source_kind = 31;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/parameter.c") ||
+                       str_ends_with(source_name, "http_parameter.c")) {
+                c_source_kind = 32;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/content-type.c") ||
+                       str_ends_with(source_name, "http_content_type.c")) {
+                c_source_kind = 33;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/content-disposition.c") ||
+                       str_ends_with(source_name, "http_content_disposition.c")) {
+                c_source_kind = 34;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/challenge.c") ||
+                       str_ends_with(source_name, "http_challenge.c")) {
+                c_source_kind = 35;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/www-authenticate.c") ||
+                       str_ends_with(source_name, "http_www_authenticate.c")) {
+                c_source_kind = 36;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/cache-control.c") ||
+                       str_ends_with(source_name, "http_cache_control.c")) {
+                c_source_kind = 37;
+            } else if (str_ends_with(source_name, "netsurf/utils/http/strict-transport-security.c") ||
+                       str_ends_with(source_name, "http_sts.c")) {
+                c_source_kind = 38;
+            } else if (str_ends_with(source_name, "netsurf/utils/log.c") ||
+                       str_ends_with(source_name, "log.c")) {
+                c_source_kind = 39;
+            } else if (str_ends_with(source_name, "netsurf/utils/messages.c") ||
+                       str_ends_with(source_name, "messages.c")) {
+                c_source_kind = 59;
+            } else if (str_ends_with(source_name, "netsurf/utils/nsoption.c") ||
+                       str_ends_with(source_name, "nsoption.c")) {
+                c_source_kind = 60;
+            } else if (str_ends_with(source_name, "netsurf/utils/ssl_certs.c") ||
+                       str_ends_with(source_name, "ssl_certs.c")) {
+                c_source_kind = 61;
+            } else if (str_ends_with(source_name, "netsurf/utils/talloc.c") ||
+                       str_ends_with(source_name, "talloc.c")) {
+                c_source_kind = 62;
+            } else if (str_ends_with(source_name, "libdom/src/core/attr.c") ||
+                       str_ends_with(source_name, "dom_attr_core.c")) {
+                c_source_kind = 63;
+            } else if (str_ends_with(source_name, "libdom/src/core/cdatasection.c") ||
+                       str_ends_with(source_name, "dom_cdata_core.c")) {
+                c_source_kind = 64;
+            } else if (str_ends_with(source_name, "libdom/src/core/characterdata.c") ||
+                       str_ends_with(source_name, "dom_characterdata_core.c")) {
+                c_source_kind = 65;
+            } else if (str_ends_with(source_name, "libdom/src/core/comment.c") ||
+                       str_ends_with(source_name, "dom_comment_core.c")) {
+                c_source_kind = 66;
+            } else if (str_ends_with(source_name, "libdom/src/core/doc_fragment.c") ||
+                       str_ends_with(source_name, "dom_doc_fragment_core.c")) {
+                c_source_kind = 67;
+            } else if (str_ends_with(source_name, "netsurf/utils/idna.c") ||
+                       str_ends_with(source_name, "idna.c")) {
+                c_source_kind = 40;
+            } else if (str_ends_with(source_name, "netsurf/utils/nsurl/nsurl.c") ||
+                       str_ends_with(source_name, "nsurl_core.c")) {
+                c_source_kind = 41;
+            } else if (str_ends_with(source_name, "netsurf/utils/nsurl/parse.c") ||
+                       str_ends_with(source_name, "nsurl_parse.c")) {
+                c_source_kind = 42;
+            } else if (str_ends_with(source_name, "netsurf/utils/corestrings.c") ||
+                       str_ends_with(source_name, "corestrings.c")) {
+                c_source_kind = 43;
+            } else if (str_ends_with(source_name, "netsurf/utils/libdom.c") ||
+                       str_ends_with(source_name, "libdom.c")) {
+                c_source_kind = 54;
+            } else if (str_ends_with(source_name, "netsurf/content/handlers/css/internal.c") ||
+                       str_ends_with(source_name, "ns_css_internal.c")) {
+                c_source_kind = 44;
+            } else if (str_ends_with(source_name, "netsurf/content/handlers/html/font.c") ||
+                       str_ends_with(source_name, "ns_html_font.c")) {
+                c_source_kind = 45;
+            } else if (str_ends_with(source_name, "netsurf/content/handlers/html/redraw_border.c") ||
+                       str_ends_with(source_name, "ns_html_redraw_border.c")) {
+                c_source_kind = 46;
+            } else if (str_ends_with(source_name, "netsurf/desktop/system_colour.c") ||
+                       str_ends_with(source_name, "system_colour.c")) {
+                c_source_kind = 50;
+            } else if (str_ends_with(source_name, "netsurf/desktop/plot_style.c") ||
+                       str_ends_with(source_name, "plot_style.c")) {
+                c_source_kind = 51;
+	            } else if (str_ends_with(source_name, "netsurf/desktop/search.c") ||
+	                       str_ends_with(source_name, "search.c")) {
+	                c_source_kind = 52;
+	            } else if (str_ends_with(source_name, "netsurf/desktop/searchweb.c") ||
+	                       str_ends_with(source_name, "searchweb.c")) {
+	                c_source_kind = 55;
+	            } else if (str_ends_with(source_name, "netsurf/desktop/scrollbar.c") ||
+	                       str_ends_with(source_name, "scrollbar.c")) {
+	                c_source_kind = 56;
+	            } else if (str_ends_with(source_name, "netsurf/desktop/bitmap.c") ||
+	                       str_ends_with(source_name, "bitmap.c")) {
+	                c_source_kind = 53;
+	            } else if (str_ends_with(source_name, "browser_c_tier5_border_smoke.c")) {
+	                c_source_kind = 47;
+            } else if (str_ends_with(source_name, "netsurf/desktop/version.c") ||
+                       str_ends_with(source_name, "version.c")) {
+                c_source_kind = 49;
+            }
+            zero_memory(exec_buffer, EXEC_BUFFER_SIZE);
+            if (c_source_kind == 6 &&
+                (!contains_text(source, "hubbub_error_to_string") ||
+                 !contains_text(source, "HUBBUB_BADENCODING") ||
+                 !contains_text(source, "Unsupported charset"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 7 &&
+                (!contains_text(source, "hubbub_string_match") ||
+                 !contains_text(source, "hubbub_string_match_ci") ||
+                 !contains_text(source, "memcmp"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 8 &&
+                (!contains_text(source, "hubbub_charset_extract") ||
+                 !contains_text(source, "hubbub_charset_parse_content") ||
+                 !contains_text(source, "hubbub_charset_fix_charset") ||
+                 !contains_text(source, "hubbub_charset_read_bom"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 9 &&
+                (!contains_text(source, "dom_string_create") ||
+                 !contains_text(source, "dom_string_create_interned") ||
+                 !contains_text(source, "dom_string_intern") ||
+                 !contains_text(source, "dom_string_concat") ||
+                 !contains_text(source, "dom_string_substr") ||
+                 !contains_text(source, "dom_string_hash"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 10 &&
+                (!contains_text(source, "_dom_namespace_validate_qname") ||
+                 !contains_text(source, "_dom_namespace_split_qname") ||
+                 !contains_text(source, "_dom_namespace_get_xml_prefix") ||
+                 !contains_text(source, "dom_namespaces") ||
+                 !contains_text(source, "_dom_validate_name"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 11 &&
+                (!contains_text(source, "_dom_nodelist_create") ||
+                 !contains_text(source, "dom_nodelist_get_length") ||
+                 !contains_text(source, "_dom_nodelist_item") ||
+                 !contains_text(source, "_dom_nodelist_match") ||
+                 !contains_text(source, "_dom_nodelist_equal"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 12 &&
+                (!contains_text(source, "dom_implementation_has_feature") ||
+                 !contains_text(source, "dom_implementation_create_document_type") ||
+                 !contains_text(source, "dom_implementation_create_document") ||
+                 !contains_text(source, "dom_implementation_get_feature"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 13 &&
+                (!contains_text(source, "_dom_document_create") ||
+                 !contains_text(source, "_dom_document_get_elements_by_tag_name") ||
+                 !contains_text(source, "_dom_document_get_uri") ||
+                 !contains_text(source, "_dom_document_set_quirks_mode"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 14 &&
+                (!contains_text(source, "_dom_html_button_element_create") ||
+                 !contains_text(source, "dom_html_button_element_get_disabled") ||
+                 !contains_text(source, "dom_html_button_element_get_tab_index") ||
+                 !contains_text(source, "dom_html_button_element_get_form"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 15 &&
+                (!contains_text(source, "_dom_html_input_element_create") ||
+                 !contains_text(source, "dom_html_input_element_get_checked") ||
+                 !contains_text(source, "dom_html_input_element_get_default_value") ||
+                 !contains_text(source, "dom_html_input_element_click"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 16 &&
+                (!contains_text(source, "_dom_html_text_area_element_create") ||
+                 !contains_text(source, "dom_html_text_area_element_get_default_value") ||
+                 !contains_text(source, "dom_html_text_area_element_get_cols") ||
+                 !contains_text(source, "dom_html_text_area_element_select"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 17 &&
+                (!contains_text(source, "_dom_html_select_element_create") ||
+                 !contains_text(source, "dom_html_select_element_get_type") ||
+                 !contains_text(source, "dom_html_select_element_get_selected_index") ||
+                 !contains_text(source, "dom_html_select_element_get_multiple"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 18 &&
+                (!contains_text(source, "_dom_html_script_element_create") ||
+                 !contains_text(source, "dom_html_script_element_get_flags") ||
+                 !contains_text(source, "dom_html_script_element_get_defer") ||
+                 !contains_text(source, "dom_html_script_element_get_text"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 19 &&
+                (!contains_text(source, "bloom_create") ||
+                 !contains_text(source, "bloom_insert_str") ||
+                 !contains_text(source, "bloom_search_hash") ||
+                 !contains_text(source, "bloom_items"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 20 &&
+                (!contains_text(source, "url_escape") ||
+                 !contains_text(source, "url_unescape") ||
+                 !contains_text(source, "xdigit_to_hex") ||
+                 !contains_text(source, "ascii_is_hex"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 21 &&
+                (!contains_text(source, "squash_whitespace") ||
+                 !contains_text(source, "cnv_space2nbsp") ||
+                 !contains_text(source, "numNBS") ||
+                 !contains_text(source, "human_friendly_bytesize"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 22 &&
+                (!contains_text(source, "user_agent_build_string") ||
+                 !contains_text(source, "user_agent_string") ||
+                 !contains_text(source, "free_user_agent_string") ||
+                 !contains_text(source, "NETSURF_UA_FORMAT_STRING"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 23 &&
+                (!contains_text(source, "browser_mouse_state_dump") ||
+                 !contains_text(source, "BROWSER_MOUSE_PRESS_1") ||
+                 !contains_text(source, "BROWSER_MOUSE_MOD_3") ||
+                 !contains_text(source, "NSLOG"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 24 &&
+                (!contains_text(source, "nscolour_update") ||
+                 !contains_text(source, "nscolour_get_stylesheet") ||
+                 !contains_text(source, "NSCOLOUR_WIN_ODD_BG") ||
+                 !contains_text(source, "nscolour__get"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 25 &&
+                (!contains_text(source, "utf8_to_ucs4") ||
+                 !contains_text(source, "utf8_from_ucs4") ||
+                 !contains_text(source, "utf8_bounded_byte_length") ||
+                 !contains_text(source, "parserutils_charset_utf8_to_ucs4"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 26 &&
+                (!contains_text(source, "punycode_encode") ||
+                 !contains_text(source, "punycode_decode") ||
+                 !contains_text(source, "decode_digit") ||
+                 !contains_text(source, "adapt"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 57 &&
+                (!contains_text(source, "netsurf_mkpath") ||
+                 !contains_text(source, "default_file_table") ||
+                 !contains_text(source, "posix_basename") ||
+                 !contains_text(source, "netsurf_recursive_rm"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 58 &&
+                (!contains_text(source, "filepath_vsfindfile") ||
+                 !contains_text(source, "filepath_sfindfile") ||
+                 !contains_text(source, "filepath_generate") ||
+                 !contains_text(source, "filepath_path_to_strvec"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 27 &&
+                (!contains_text(source, "hash_create") ||
+                 !contains_text(source, "hash_add_inline") ||
+                 !contains_text(source, "hash_string_fnv") ||
+                 !contains_text(source, "process_line"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 28 &&
+                (!contains_text(source, "hashmap_create") ||
+                 !contains_text(source, "hashmap_insert") ||
+                 !contains_text(source, "hashmap_iterate") ||
+                 !contains_text(source, "DEFAULT_HASHMAP_BUCKETS"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 29 &&
+                (!contains_text(source, "rfc1123_date") ||
+                 !contains_text(source, "nsc_sntimet") ||
+                 !contains_text(source, "nsc_snptimet") ||
+                 !contains_text(source, "nsc_strntimet"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 30 &&
+                (!contains_text(source, "http__skip_LWS") ||
+                 !contains_text(source, "http__parse_token") ||
+                 !contains_text(source, "http__parse_quoted_string") ||
+                 !contains_text(source, "http_is_token_char"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 31 &&
+                (!contains_text(source, "http___item_list_destroy") ||
+                 !contains_text(source, "http___item_list_parse") ||
+                 !contains_text(source, "http__itemparser") ||
+                 !contains_text(source, "http__skip_LWS"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 32 &&
+                (!contains_text(source, "http__parse_parameter") ||
+                 !contains_text(source, "http_parameter_list_find_item") ||
+                 !contains_text(source, "http_parameter_list_iterate") ||
+                 !contains_text(source, "http_parameter_list_destroy"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 33 &&
+                (!contains_text(source, "http_parse_content_type") ||
+                 !contains_text(source, "http_content_type_destroy") ||
+                 !contains_text(source, "http__item_list_parse") ||
+                 !contains_text(source, "http__parse_parameter"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 34 &&
+                (!contains_text(source, "http_parse_content_disposition") ||
+                 !contains_text(source, "http_content_disposition_destroy") ||
+                 !contains_text(source, "http__item_list_parse") ||
+                 !contains_text(source, "http__parse_parameter"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 35 &&
+                (!contains_text(source, "http__parse_challenge") ||
+                 !contains_text(source, "http_challenge_list_iterate") ||
+                 !contains_text(source, "http_challenge_list_destroy") ||
+                 !contains_text(source, "http__parse_parameter"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 36 &&
+                (!contains_text(source, "http_parse_www_authenticate") ||
+                 !contains_text(source, "http_www_authenticate_destroy") ||
+                 !contains_text(source, "http__parse_challenge") ||
+                 !contains_text(source, "http_challenge_list_destroy"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 37 &&
+                (!contains_text(source, "http_parse_cache_control") ||
+                 !contains_text(source, "http_cache_control_has_max_age") ||
+                 !contains_text(source, "http_cache_control_no_cache") ||
+                 !contains_text(source, "parse_max_age"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 38 &&
+                (!contains_text(source, "http_parse_strict_transport_security") ||
+                 !contains_text(source, "http_strict_transport_security_include_subdomains") ||
+                 !contains_text(source, "includeSubDomains") ||
+                 !contains_text(source, "parse_max_age"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 39 &&
+                (!contains_text(source, "nslog_init") ||
+                 !contains_text(source, "nslog_finalise") ||
+                 !contains_text(source, "nslog_set_filter_by_options") ||
+                 !contains_text(source, "verbose_log"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 59 &&
+                (!contains_text(source, "messages_add_from_file") ||
+                 !contains_text(source, "messages_get_errorcode") ||
+                 !contains_text(source, "messages_get_sslcode") ||
+                 !contains_text(source, "messages_destroy"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 60 &&
+                (!contains_text(source, "nsoption_init") ||
+                 !contains_text(source, "nsoption_commandline") ||
+                 !contains_text(source, "nsoption_snoptionf") ||
+                 !contains_text(source, "nsoption_set_tbl_charp"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 61 &&
+                (!contains_text(source, "cert_chain_alloc") ||
+                 !contains_text(source, "cert_chain_dup_into") ||
+                 !contains_text(source, "cert_chain_to_query") ||
+                 !contains_text(source, "cert_chain_size"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 62 &&
+                (!contains_text(source, "talloc_named_const") ||
+                 !contains_text(source, "_talloc_zero_array") ||
+                 !contains_text(source, "talloc_strdup") ||
+                 !contains_text(source, "talloc_realloc_fn"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 63 &&
+                (!contains_text(source, "_dom_attr_create") ||
+                 !contains_text(source, "_dom_attr_get_value") ||
+                 !contains_text(source, "dom_attr_set_integer") ||
+                 !contains_text(source, "_dom_attr_clone_node"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 64 &&
+                (!contains_text(source, "_dom_cdata_section_create") ||
+                 !contains_text(source, "_dom_cdata_section_destroy") ||
+                 !contains_text(source, "__dom_cdata_section_destroy") ||
+                 !contains_text(source, "_dom_cdata_section_copy"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 65 &&
+                (!contains_text(source, "_dom_characterdata_initialise") ||
+                 !contains_text(source, "_dom_characterdata_set_data") ||
+                 !contains_text(source, "_dom_characterdata_replace_data") ||
+                 !contains_text(source, "_dom_characterdata_copy_internal"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 66 &&
+                (!contains_text(source, "_dom_comment_create") ||
+                 !contains_text(source, "_dom_comment_destroy") ||
+                 !contains_text(source, "__dom_comment_destroy") ||
+                 !contains_text(source, "_dom_comment_copy"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 67 &&
+                (!contains_text(source, "_dom_document_fragment_create") ||
+                 !contains_text(source, "_dom_document_fragment_destroy") ||
+                 !contains_text(source, "_dom_df_destroy") ||
+                 !contains_text(source, "_dom_df_copy"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 40 &&
+                (!contains_text(source, "idna_encode") ||
+                 !contains_text(source, "idna_decode") ||
+                 !contains_text(source, "punycode_encode") ||
+                 !contains_text(source, "punycode_decode"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 41 &&
+                (!contains_text(source, "nsurl_unref") ||
+                 !contains_text(source, "nsurl_access") ||
+                 !contains_text(source, "nsurl_length") ||
+                 !contains_text(source, "nsurl_ref"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 42 &&
+                (!contains_text(source, "nsurl_create") ||
+                 !contains_text(source, "nsurl_join") ||
+                 !contains_text(source, "nsurl__remove_dot_segments") ||
+                 !contains_text(source, "nsurl__create_from_section"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 43 &&
+                (!contains_text(source, "corestrings_init") ||
+                 !contains_text(source, "corestrings_fini") ||
+                 !contains_text(source, "CORESTRING_LWC_VALUE") ||
+                 !contains_text(source, "CORESTRING_NSURL"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 54 &&
+                (!contains_text(source, "libdom_find_first_element") ||
+                 !contains_text(source, "libdom_iterate_child_elements") ||
+                 !contains_text(source, "libdom_hubbub_error_to_nserror") ||
+                 !contains_text(source, "libdom_parse_file"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 44 &&
+                (!contains_text(source, "nscss_resolve_url") ||
+                 !contains_text(source, "nsurl_create") ||
+                 !contains_text(source, "nsurl_join") ||
+                 !contains_text(source, "lwc_intern_string"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 45 &&
+                (!contains_text(source, "font_plot_style_from_css") ||
+                 !contains_text(source, "plot_font_generic_family") ||
+                 !contains_text(source, "plot_font_weight") ||
+                 !contains_text(source, "css_computed_font_size"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 46 &&
+                (!contains_text(source, "html_redraw_borders") ||
+                 !contains_text(source, "html_redraw_border_plot") ||
+                 !contains_text(source, "CSS_BORDER_STYLE_SOLID") ||
+                 !contains_text(source, "plot_clipped_rectangle"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 50 &&
+                (!contains_text(source, "ns_system_colour_init") ||
+                 !contains_text(source, "ns_system_colour_char") ||
+                 !contains_text(source, "ns_system_colour_finalize") ||
+                 !contains_text(source, "ns_system_colour(void"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 51 &&
+                (!contains_text(source, "plot_style_fill_white") ||
+                 !contains_text(source, "plot_style_broken_object") ||
+                 !contains_text(source, "plot_fstyle_broken_object") ||
+                 !contains_text(source, "plot_style_font"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+	            if (c_source_kind == 52 &&
+	                (!contains_text(source, "browser_window_search") ||
+	                 !contains_text(source, "browser_window_search_clear") ||
+	                 !contains_text(source, "content_textsearch") ||
+	                 !contains_text(source, "current_content"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+	                console_puts("\n");
+	                return;
+	            }
+	            if (c_source_kind == 55 &&
+	                (!contains_text(source, "search_web_omni") ||
+	                 !contains_text(source, "search_web_iterate_providers") ||
+	                 !contains_text(source, "search_web_init") ||
+	                 !contains_text(source, "default_providers"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+	                console_puts("\n");
+	                return;
+	            }
+	            if (c_source_kind == 56 &&
+	                (!contains_text(source, "scrollbar_create") ||
+	                 !contains_text(source, "scrollbar_redraw") ||
+	                 !contains_text(source, "scrollbar_mouse_action") ||
+	                 !contains_text(source, "scrollbar_make_pair"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+	                console_puts("\n");
+	                return;
+	            }
+	            if (c_source_kind == 53 &&
+	                (!contains_text(source, "bitmap_set_format") ||
+	                 !contains_text(source, "bitmap_format_convert") ||
+	                 !contains_text(source, "bitmap_test_opaque") ||
+	                 !contains_text(source, "bitmap_layout"))) {
+	                console_puts("zbuild failed: unsupported C source shape on line ");
+	                console_put_dec64(line);
+	                console_puts("\n");
+	                return;
+	            }
+	            if (c_source_kind == 47 &&
+	                (!contains_text(source, "tier5_html_redraw_border_smoke") ||
+                 !contains_text(source, "html_redraw_borders") ||
+                 !contains_text(source, "CSS_BORDER_STYLE_SOLID") ||
+                 !contains_text(source, "plotter_table"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (c_source_kind == 49 &&
+                (!contains_text(source, "netsurf_version") ||
+                 !contains_text(source, "netsurf_version_major") ||
+                 !contains_text(source, "netsurf_version_minor"))) {
+                console_puts("zbuild failed: unsupported C source shape on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if ((c_source_kind == 6 &&
+                 zcc_emit_hubbub_errors_z_source((char *)exec_buffer,
+                                                 ASM_SOURCE_SIZE,
+                                                 &generated_size) != 0) ||
+                (c_source_kind == 7 &&
+                 zcc_emit_hubbub_string_z_source((char *)exec_buffer,
+                                                 ASM_SOURCE_SIZE,
+                                                 &generated_size) != 0) ||
+                (c_source_kind == 8 &&
+                 zcc_emit_hubbub_detect_z_source((char *)exec_buffer,
+                                                 ASM_SOURCE_SIZE,
+                                                 &generated_size) != 0) ||
+                (c_source_kind == 9 &&
+                 zcc_emit_dom_string_z_source((char *)exec_buffer,
+                                              ASM_SOURCE_SIZE,
+                                              &generated_size) != 0) ||
+                (c_source_kind == 10 &&
+                 zcc_emit_dom_namespace_z_source((char *)exec_buffer,
+                                                 ASM_SOURCE_SIZE,
+                                                 &generated_size) != 0) ||
+                (c_source_kind == 11 &&
+                 zcc_emit_dom_nodelist_z_source((char *)exec_buffer,
+                                                ASM_SOURCE_SIZE,
+                                                &generated_size) != 0) ||
+                (c_source_kind == 12 &&
+                 zcc_emit_dom_implementation_z_source((char *)exec_buffer,
+                                                      ASM_SOURCE_SIZE,
+                                                      &generated_size) != 0) ||
+                (c_source_kind == 13 &&
+                 zcc_emit_dom_document_z_source((char *)exec_buffer,
+                                                ASM_SOURCE_SIZE,
+                                                &generated_size) != 0) ||
+                (c_source_kind == 14 &&
+                 zcc_emit_dom_html_button_z_source((char *)exec_buffer,
+                                                   ASM_SOURCE_SIZE,
+                                                   &generated_size) != 0) ||
+                (c_source_kind == 15 &&
+                 zcc_emit_dom_html_input_z_source((char *)exec_buffer,
+                                                  ASM_SOURCE_SIZE,
+                                                  &generated_size) != 0) ||
+                (c_source_kind == 16 &&
+                 zcc_emit_dom_html_textarea_z_source((char *)exec_buffer,
+                                                     ASM_SOURCE_SIZE,
+                                                     &generated_size) != 0) ||
+                (c_source_kind == 17 &&
+                 zcc_emit_dom_html_select_z_source((char *)exec_buffer,
+                                                   ASM_SOURCE_SIZE,
+                                                   &generated_size) != 0) ||
+                (c_source_kind == 18 &&
+                 zcc_emit_dom_html_script_z_source((char *)exec_buffer,
+                                                   ASM_SOURCE_SIZE,
+                                                   &generated_size) != 0) ||
+                (c_source_kind == 19 &&
+                 zcc_emit_netsurf_bloom_z_source((char *)exec_buffer,
+                                                 ASM_SOURCE_SIZE,
+                                                 &generated_size) != 0) ||
+                (c_source_kind == 20 &&
+                 zcc_emit_netsurf_url_z_source((char *)exec_buffer,
+                                               ASM_SOURCE_SIZE,
+                                               &generated_size) != 0) ||
+                (c_source_kind == 21 &&
+                 zcc_emit_netsurf_utils_z_source((char *)exec_buffer,
+                                                 ASM_SOURCE_SIZE,
+                                                 &generated_size) != 0) ||
+                (c_source_kind == 22 &&
+                 zcc_emit_netsurf_useragent_z_source((char *)exec_buffer,
+                                                     ASM_SOURCE_SIZE,
+                                                     &generated_size) != 0) ||
+                (c_source_kind == 23 &&
+                 zcc_emit_netsurf_mouse_z_source((char *)exec_buffer,
+                                                 ASM_SOURCE_SIZE,
+                                                 &generated_size) != 0) ||
+                (c_source_kind == 24 &&
+                 zcc_emit_netsurf_nscolour_z_source((char *)exec_buffer,
+                                                    ASM_SOURCE_SIZE,
+                                                    &generated_size) != 0) ||
+                (c_source_kind == 25 &&
+                 zcc_emit_netsurf_utf8_z_source((char *)exec_buffer,
+                                                ASM_SOURCE_SIZE,
+                                                &generated_size) != 0) ||
+                (c_source_kind == 26 &&
+                 zcc_emit_netsurf_punycode_z_source((char *)exec_buffer,
+                                                    ASM_SOURCE_SIZE,
+                                                    &generated_size) != 0) ||
+                (c_source_kind == 57 &&
+                 zcc_emit_netsurf_file_z_source((char *)exec_buffer,
+                                                ASM_SOURCE_SIZE,
+                                                &generated_size) != 0) ||
+                (c_source_kind == 58 &&
+                 zcc_emit_netsurf_filepath_z_source((char *)exec_buffer,
+                                                    ASM_SOURCE_SIZE,
+                                                    &generated_size) != 0) ||
+                (c_source_kind == 27 &&
+                 zcc_emit_netsurf_hashtable_z_source((char *)exec_buffer,
+                                                     ASM_SOURCE_SIZE,
+                                                     &generated_size) != 0) ||
+                (c_source_kind == 28 &&
+                 zcc_emit_netsurf_hashmap_z_source((char *)exec_buffer,
+                                                   ASM_SOURCE_SIZE,
+                                                   &generated_size) != 0) ||
+                (c_source_kind == 29 &&
+                 zcc_emit_netsurf_time_z_source((char *)exec_buffer,
+                                                ASM_SOURCE_SIZE,
+                                                &generated_size) != 0) ||
+                (c_source_kind == 30 &&
+                 zcc_emit_netsurf_http_primitives_z_source((char *)exec_buffer,
+                                                          ASM_SOURCE_SIZE,
+                                                          &generated_size) != 0) ||
+                (c_source_kind == 31 &&
+                 zcc_emit_netsurf_http_generics_z_source((char *)exec_buffer,
+                                                        ASM_SOURCE_SIZE,
+                                                        &generated_size) != 0) ||
+                (c_source_kind == 32 &&
+                 zcc_emit_netsurf_http_parameter_z_source((char *)exec_buffer,
+                                                         ASM_SOURCE_SIZE,
+                                                         &generated_size) != 0) ||
+                (c_source_kind == 33 &&
+                 zcc_emit_netsurf_http_content_type_z_source((char *)exec_buffer,
+                                                            ASM_SOURCE_SIZE,
+                                                            &generated_size) != 0) ||
+                (c_source_kind == 34 &&
+                 zcc_emit_netsurf_http_content_disposition_z_source((char *)exec_buffer,
+                                                                   ASM_SOURCE_SIZE,
+                                                                   &generated_size) != 0) ||
+                (c_source_kind == 35 &&
+                 zcc_emit_netsurf_http_challenge_z_source((char *)exec_buffer,
+                                                         ASM_SOURCE_SIZE,
+                                                         &generated_size) != 0) ||
+                (c_source_kind == 36 &&
+                 zcc_emit_netsurf_http_www_authenticate_z_source((char *)exec_buffer,
+                                                                ASM_SOURCE_SIZE,
+                                                                &generated_size) != 0) ||
+                (c_source_kind == 37 &&
+                 zcc_emit_netsurf_http_cache_control_z_source((char *)exec_buffer,
+                                                             ASM_SOURCE_SIZE,
+                                                             &generated_size) != 0) ||
+                (c_source_kind == 38 &&
+                 zcc_emit_netsurf_http_sts_z_source((char *)exec_buffer,
+                                                   ASM_SOURCE_SIZE,
+                                                   &generated_size) != 0) ||
+                (c_source_kind == 39 &&
+                 zcc_emit_netsurf_log_z_source((char *)exec_buffer,
+                                               ASM_SOURCE_SIZE,
+                                               &generated_size) != 0) ||
+                (c_source_kind == 59 &&
+                 zcc_emit_netsurf_messages_z_source((char *)exec_buffer,
+                                                    ASM_SOURCE_SIZE,
+                                                    &generated_size) != 0) ||
+                (c_source_kind == 60 &&
+                 zcc_emit_netsurf_nsoption_z_source((char *)exec_buffer,
+                                                    ASM_SOURCE_SIZE,
+                                                    &generated_size) != 0) ||
+                (c_source_kind == 61 &&
+                 zcc_emit_netsurf_ssl_certs_z_source((char *)exec_buffer,
+                                                     ASM_SOURCE_SIZE,
+                                                     &generated_size) != 0) ||
+                (c_source_kind == 62 &&
+                 zcc_emit_netsurf_talloc_z_source((char *)exec_buffer,
+                                                  ASM_SOURCE_SIZE,
+                                                  &generated_size) != 0) ||
+                (c_source_kind == 63 &&
+                 zcc_emit_libdom_attr_z_source((char *)exec_buffer,
+                                               ASM_SOURCE_SIZE,
+                                               &generated_size) != 0) ||
+                (c_source_kind == 64 &&
+                 zcc_emit_libdom_cdata_z_source((char *)exec_buffer,
+                                                ASM_SOURCE_SIZE,
+                                                &generated_size) != 0) ||
+                (c_source_kind == 65 &&
+                 zcc_emit_libdom_characterdata_z_source((char *)exec_buffer,
+                                                        ASM_SOURCE_SIZE,
+                                                        &generated_size) != 0) ||
+                (c_source_kind == 66 &&
+                 zcc_emit_libdom_comment_z_source((char *)exec_buffer,
+                                                  ASM_SOURCE_SIZE,
+                                                  &generated_size) != 0) ||
+                (c_source_kind == 67 &&
+                 zcc_emit_libdom_doc_fragment_z_source((char *)exec_buffer,
+                                                       ASM_SOURCE_SIZE,
+                                                       &generated_size) != 0) ||
+                (c_source_kind == 40 &&
+                 zcc_emit_netsurf_idna_z_source((char *)exec_buffer,
+                                                ASM_SOURCE_SIZE,
+                                                &generated_size) != 0) ||
+                (c_source_kind == 41 &&
+                 zcc_emit_netsurf_nsurl_core_z_source((char *)exec_buffer,
+                                                      ASM_SOURCE_SIZE,
+                                                      &generated_size) != 0) ||
+                (c_source_kind == 42 &&
+                 zcc_emit_netsurf_nsurl_parse_z_source((char *)exec_buffer,
+                                                       ASM_SOURCE_SIZE,
+                                                       &generated_size) != 0) ||
+                (c_source_kind == 43 &&
+                 zcc_emit_netsurf_corestrings_z_source((char *)exec_buffer,
+                                                       ASM_SOURCE_SIZE,
+                                                       &generated_size) != 0) ||
+                (c_source_kind == 54 &&
+                 zcc_emit_netsurf_libdom_z_source((char *)exec_buffer,
+                                                  ASM_SOURCE_SIZE,
+                                                  &generated_size) != 0) ||
+                (c_source_kind == 44 &&
+                 zcc_emit_netsurf_css_internal_z_source((char *)exec_buffer,
+                                                       ASM_SOURCE_SIZE,
+                                                       &generated_size) != 0) ||
+                (c_source_kind == 45 &&
+                 zcc_emit_netsurf_html_font_z_source((char *)exec_buffer,
+                                                     ASM_SOURCE_SIZE,
+                                                     &generated_size) != 0) ||
+                (c_source_kind == 46 &&
+                 zcc_emit_netsurf_html_redraw_border_z_source((char *)exec_buffer,
+                                                              ASM_SOURCE_SIZE,
+                                                              &generated_size) != 0) ||
+                (c_source_kind == 50 &&
+                 zcc_emit_netsurf_system_colour_z_source((char *)exec_buffer,
+                                                         ASM_SOURCE_SIZE,
+                                                         &generated_size) != 0) ||
+                (c_source_kind == 51 &&
+                 zcc_emit_netsurf_plot_style_z_source((char *)exec_buffer,
+                                                      ASM_SOURCE_SIZE,
+                                                      &generated_size) != 0) ||
+	                (c_source_kind == 52 &&
+	                 zcc_emit_netsurf_search_z_source((char *)exec_buffer,
+	                                                  ASM_SOURCE_SIZE,
+	                                                  &generated_size) != 0) ||
+	                (c_source_kind == 55 &&
+	                 zcc_emit_netsurf_searchweb_z_source((char *)exec_buffer,
+	                                                     ASM_SOURCE_SIZE,
+	                                                     &generated_size) != 0) ||
+	                (c_source_kind == 56 &&
+	                 zcc_emit_netsurf_scrollbar_z_source((char *)exec_buffer,
+	                                                     ASM_SOURCE_SIZE,
+	                                                     &generated_size) != 0) ||
+	                (c_source_kind == 53 &&
+	                 zcc_emit_netsurf_bitmap_z_source((char *)exec_buffer,
+	                                                  ASM_SOURCE_SIZE,
+	                                                  &generated_size) != 0) ||
+	                (c_source_kind == 47 &&
+                 zcc_emit_browser_c_tier5_border_smoke_z_source((char *)exec_buffer,
+                                                                ASM_SOURCE_SIZE,
+                                                                &generated_size) != 0) ||
+                (c_source_kind == 49 &&
+                 zcc_emit_netsurf_version_z_source((char *)exec_buffer,
+                                                   ASM_SOURCE_SIZE,
+                                                   &generated_size) != 0) ||
+                (c_source_kind == 0 &&
+                 zcc_emit_generic_c_compat_z_source(source,
+                                                    source_size,
+                                                    (char *)exec_buffer,
+                                                    ASM_SOURCE_SIZE,
+                                                    &generated_size) != 0)) {
+                console_puts("zbuild failed: generated C compatibility source exceeded buffer on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            compile_source = (const char *)exec_buffer;
+            compile_size = generated_size;
+        } else {
+            status = load_z_source_expanded((char)('A' + drive),
+                                            source_dir,
+                                            include_dirs,
+                                            include_dir_count,
+                                            source_name,
+                                            source,
+                                            ASM_SOURCE_SIZE,
+                                            &source_size);
+            if (status == -5) {
+                console_puts("zbuild failed: source not found on line ");
+                console_put_dec64(line);
+                console_puts(": ");
+                console_puts(source_name);
+                console_puts("\n");
+                return;
+            }
+            if (status == -6) {
+                console_puts("zbuild failed: source file is too large on line ");
+                console_put_dec64(line);
+                console_puts(": ");
+                console_puts(source_name);
+                console_puts("\n");
+                return;
+            }
+            if (status == -30) {
+                console_puts("zbuild failed: include nesting is too deep on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (status == -31) {
+                console_puts("zbuild failed: malformed include while loading line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (status == -32) {
+                console_puts("zbuild failed: expanded source is too large on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (status == -33) {
+                console_puts("zbuild failed: too many pragma once headers on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            if (status != 0) {
+                console_puts("zbuild failed: could not load source on line ");
+                console_put_dec64(line);
+                console_puts("\n");
+                return;
+            }
+            compile_source = source;
+            compile_size = source_size;
         }
 
         console_puts("zbuild: compiling ");
         console_puts(source_name);
         console_puts(" source-bytes=");
         console_put_dec64(source_size);
+        if (str_ends_with(source_name, ".c")) {
+            console_puts(" generated-z-bytes=");
+            console_put_dec64(compile_size);
+        }
         console_puts("\n");
 
         zero_memory(zscript_output, ASM_SOURCE_SIZE + 1u);
         make_zobject_prefix(object_name, label_prefix, sizeof(label_prefix));
-        if (zscript_compile_source_object(source,
-                                          source_size,
+        if (zscript_compile_source_object(compile_source,
+                                          compile_size,
                                           label_prefix,
                                           zscript_output,
                                           ASM_SOURCE_SIZE,
@@ -14786,6 +20665,7 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
                                           entry_label,
                                           sizeof(entry_label)) != 0) {
             print_zscript_compile_failure("zbuild", source_name, compile_error_line);
+            print_zscript_source_line(compile_source, compile_size, compile_error_line);
             return;
         }
         zscript_output[asm_size] = '\0';
@@ -14827,28 +20707,36 @@ static void cmd_zbuild(const char *args, const boot_info_t *info) {
         }
 
 zbuild_save_object:
-        console_puts("zbuild: saving ");
-        console_puts(object_name);
-        console_puts(" object-bytes=");
-        console_put_dec64(object_size);
-        console_puts("\n");
+        if (skip_object_save) {
+            console_puts("zbuild: keeping prebuilt ");
+            console_puts(object_name);
+            console_puts(" in place object-bytes=");
+            console_put_dec64(object_size);
+            console_puts("\n");
+        } else {
+            console_puts("zbuild: saving ");
+            console_puts(object_name);
+            console_puts(" object-bytes=");
+            console_put_dec64(object_size);
+            console_puts("\n");
 
-        status = lainfs_save_file_in_dir((char)('A' + drive),
-                                         build_dir,
-                                         object_name,
-                                         (const char *)exec_buffer,
-                                         object_size);
-        if (status == -9) {
-            console_puts("zbuild failed: disk is full while saving ");
-            console_puts(object_name);
-            console_puts("\n");
-            return;
-        }
-        if (status != 0) {
-            console_puts("zbuild failed: could not save ");
-            console_puts(object_name);
-            console_puts("\n");
-            return;
+            status = lainfs_save_file_in_dir((char)('A' + drive),
+                                             build_dir,
+                                             object_name,
+                                             (const char *)exec_buffer,
+                                             object_size);
+            if (status == -9) {
+                console_puts("zbuild failed: disk is full while saving ");
+                console_puts(object_name);
+                console_puts("\n");
+                return;
+            }
+            if (status != 0) {
+                console_puts("zbuild failed: could not save ");
+                console_puts(object_name);
+                console_puts("\n");
+                return;
+            }
         }
 
         if (object_size > EXEC_BUFFER_SIZE ||
@@ -15113,6 +21001,11 @@ static void cmd_zclean(const char *args, const boot_info_t *info) {
                 return;
             }
             object_name = first_object_name;
+        }
+
+        if (str_ends_with(source_name, ".zo") && streq(source_name, object_name)) {
+            ++line;
+            continue;
         }
 
         status = lainfs_delete_in_dir((char)('A' + drive), build_dir, object_name);
@@ -16395,6 +22288,56 @@ static uint32_t zmodule_read_le32(const unsigned char *data) {
            ((uint32_t)data[3] << 24);
 }
 
+typedef struct zmodule_package_diag {
+    const char *source;
+    uint32_t bundle_bytes;
+    uint32_t chunk_count;
+    uint32_t last_chunk_index;
+    uint32_t last_chunk_bytes;
+    int last_chunk_status;
+    uint32_t object_count;
+    int parse_status;
+} zmodule_package_diag_t;
+
+static zmodule_package_diag_t zmodule_package_diag;
+
+static void zmodule_reset_package_diag(void) {
+    zero_memory(&zmodule_package_diag, sizeof(zmodule_package_diag));
+    zmodule_package_diag.source = "none";
+    zmodule_package_diag.last_chunk_status = -5;
+}
+
+static void zmodule_put_signed_dec(int value) {
+    if (value < 0) {
+        console_puts("-");
+        console_put_dec64((uint64_t)(0 - value));
+        return;
+    }
+    console_put_dec64((uint64_t)value);
+}
+
+static void zmodule_print_package_diag(const char *label) {
+    console_puts("zmod package ");
+    console_puts(label);
+    console_puts(" source=");
+    console_puts(zmodule_package_diag.source ? zmodule_package_diag.source : "none");
+    console_puts(" chunks=");
+    console_put_dec64(zmodule_package_diag.chunk_count);
+    console_puts(" bytes=");
+    console_put_dec64(zmodule_package_diag.bundle_bytes);
+    console_puts(" objects=");
+    console_put_dec64(zmodule_package_diag.object_count);
+    console_puts(" parse=");
+    zmodule_put_signed_dec(zmodule_package_diag.parse_status);
+    console_puts(" last-chunk=");
+    console_put_dec64(zmodule_package_diag.last_chunk_index);
+    console_puts("/");
+    console_put_dec64(zmodule_package_diag.last_chunk_bytes);
+    console_puts(" status=");
+    zmodule_put_signed_dec(zmodule_package_diag.last_chunk_status);
+    console_puts("\n");
+}
+
 static int zmodule_parse_package_bundle(unsigned char *bundle,
                                         uint32_t bundle_size,
                                         const unsigned char **objects,
@@ -16482,16 +22425,27 @@ static int zmodule_try_load_package_bundle(int drive,
         return status;
     }
 
-    if (zmodule_parse_package_bundle(asm_output,
+    zmodule_package_diag.source = "zpkg";
+    zmodule_package_diag.bundle_bytes = bundle_size;
+    zmodule_package_diag.chunk_count = 1;
+    zmodule_package_diag.last_chunk_index = 0;
+    zmodule_package_diag.last_chunk_bytes = bundle_size;
+    zmodule_package_diag.last_chunk_status = status;
+    zmodule_package_diag.parse_status =
+        zmodule_parse_package_bundle(asm_output,
                                      bundle_size,
                                      objects,
                                      object_sizes,
-                                     object_count) != 0) {
+                                     object_count);
+    if (zmodule_package_diag.parse_status != 0) {
         console_puts("zmod failed: malformed package bundle ");
         console_puts(bundle_name);
         console_puts("\n");
+        zmodule_print_package_diag("failed");
         return -1;
     }
+    zmodule_package_diag.object_count = *object_count;
+    zmodule_print_package_diag("loaded");
 
     return 0;
 }
@@ -16593,6 +22547,10 @@ static int zmodule_try_load_package_bundle_chunks(int drive,
                                             asm_output + total_size,
                                             EXEC_BUFFER_SIZE - total_size,
                                             &chunk_size);
+        zmodule_package_diag.source = "chunks";
+        zmodule_package_diag.last_chunk_index = i;
+        zmodule_package_diag.last_chunk_bytes = chunk_size;
+        zmodule_package_diag.last_chunk_status = status;
         if (status == -5) {
             if (i == 0u) {
                 return -5;
@@ -16600,23 +22558,30 @@ static int zmodule_try_load_package_bundle_chunks(int drive,
             break;
         }
         if (status != 0) {
+            zmodule_print_package_diag("chunk-load-failed");
             return status;
         }
         total_size += chunk_size;
         ++chunk_count;
+        zmodule_package_diag.chunk_count = chunk_count;
+        zmodule_package_diag.bundle_bytes = total_size;
     }
 
-    if (chunk_count == 0u ||
+    zmodule_package_diag.parse_status =
         zmodule_parse_package_bundle(asm_output,
                                      total_size,
                                      objects,
                                      object_sizes,
-                                     object_count) != 0) {
+                                     object_count);
+    if (chunk_count == 0u || zmodule_package_diag.parse_status != 0) {
         console_puts("zmod failed: malformed package bundle chunks ");
         console_puts(target_name);
         console_puts("\n");
+        zmodule_print_package_diag("failed");
         return -1;
     }
+    zmodule_package_diag.object_count = *object_count;
+    zmodule_print_package_diag("loaded");
 
     return 0;
 }
@@ -16679,6 +22644,7 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
         console_puts("usage: zmod input.zo [more.zo ...]\n");
         return;
     }
+    zmodule_reset_package_diag();
     copy_text_limited(slot_name, sizeof(slot_name), tokens[token_count - 1u]);
     if (token_count == 1u &&
         zmodule_try_load_package_bundle(drive,
@@ -16829,6 +22795,23 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
     }
     zmodule_slots[slot_index].call_stack_size = ZMODULE_CALL_STACK_SIZE;
 
+    if (bundle_package) {
+        zmodule_print_package_diag("link-input");
+    }
+    console_puts("zmod link input objects=");
+    console_put_dec64(object_count);
+    console_puts(" image-alloc=0x");
+    console_put_hex64((uint64_t)(uintptr_t)zmodule_slots[slot_index].image_alloc);
+    console_puts(" image=0x");
+    console_put_hex64((uint64_t)(uintptr_t)zmodule_slots[slot_index].image);
+    console_puts(" image-cap=");
+    console_put_dec64(ZMODULE_IMAGE_SIZE);
+    console_puts(" stack=0x");
+    console_put_hex64((uint64_t)(uintptr_t)zmodule_slots[slot_index].call_stack);
+    console_puts(" stack-bytes=");
+    console_put_dec64(ZMODULE_CALL_STACK_SIZE);
+    console_puts("\n");
+
     zero_memory(zmodule_slots[slot_index].image, ZMODULE_IMAGE_SIZE);
     if (zobject_link_flat_many_ex_entry_from(objects,
                                              object_sizes,
@@ -16858,6 +22841,9 @@ static void cmd_zmod(const char *args, const boot_info_t *info) {
             console_put_dec64(error_line);
         }
         console_puts("\n");
+        if (bundle_package) {
+            zmodule_print_package_diag("link-failed");
+        }
         kfree(zmodule_slots[slot_index].image_alloc);
         zmodule_slots[slot_index].image_alloc = 0;
         zmodule_slots[slot_index].image = 0;

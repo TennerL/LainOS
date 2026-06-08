@@ -1,4 +1,5 @@
 include .
+include ..
 output browser_selfhost_driver.bin
 install-name browser_selfhost_driver.bin
 browser_selfhost_driver.Z browser_selfhost_driver.zo

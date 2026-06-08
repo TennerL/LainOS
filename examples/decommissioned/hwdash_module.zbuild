@@ -1,2 +1,3 @@
 include .
+include ..
 hwdash_module.Z hwdash_module.zo

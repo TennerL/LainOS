@@ -1,4 +1,3 @@
-include .
 module
+src src
 zbrowser_engine_module.c zbrowser_netsurf_engine.zo
-zbrowser_netsurf.Z zbrowser_netsurf.zo

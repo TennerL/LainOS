@@ -255,6 +255,12 @@ zbuild_host_parse_manifest() {
         if [[ "$source_name" == *.zo && ! -f "$source_path" && -f "$PWD/build/browser-c-engine/$(basename "$source_name")" ]]; then
           source_path="$PWD/build/browser-c-engine/$(basename "$source_name")"
         fi
+        if [[ "$source_name" == *.c && -f "$ZBUILD_MANIFEST_DIR/$object_name" ]]; then
+          source_path="$ZBUILD_MANIFEST_DIR/$object_name"
+        fi
+        if [[ "$source_name" == "zbrowser_engine_module.c" && -f "$PWD/build/browser-c-engine/zbrowser_engine_module.zo" ]]; then
+          source_path="$PWD/build/browser-c-engine/zbrowser_engine_module.zo"
+        fi
         object_path="$(zbuild_host_resolve_path "$ZBUILD_BUILD_DIR" "$object_name")"
         mkdir -p "$(dirname "$object_path")"
         ZBUILD_LINK_ARGS+=("$source_path" "$object_path")

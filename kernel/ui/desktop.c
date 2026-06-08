@@ -14,19 +14,26 @@
 #define CURSOR_W 14u
 #define CURSOR_H 20u
 #define DESKTOP_LINE_MAX 128u
-#define WINDOW_TITLE_H 30u
+#define WINDOW_TITLE_H 22u
+#define WINDOW_TITLE_BAR_H 18u
+#define WINDOW_TITLE_ACCENT_H 2u
+#define WINDOW_FRAME_PAD 4u
 #define WINDOW_RESIZE_GRIP 18u
 #define WINDOW_MIN_W 240u
 #define WINDOW_MIN_H 140u
-#define WINDOW_CONTROL_SIZE 14u
-#define WINDOW_CONTROL_GAP 5u
+#define WINDOW_CONTROL_SIZE 16u
+#define WINDOW_CONTROL_GAP 2u
+#define WINDOW_CONTROL_MARGIN 4u
 #define TERMINAL_BUFFER_ROWS 160u
 #define TERMINAL_BUFFER_COLS 160u
 #define WINDOW_PREVIEW_MAX_PIXELS 8192u
 #define FILE_BROWSER_MAX_ITEMS 48u
 #define FILE_BROWSER_PATH_SIZE 128u
-#define START_MENU_W 220u
-#define START_MENU_ITEM_H 24u
+#define START_MENU_W 244u
+#define START_MENU_ITEM_H 26u
+#define START_MENU_RAIL_W 34u
+#define START_MENU_PAD 10u
+#define START_MENU_HEADER_H 34u
 #define DESKTOP_MODULE_INDEX_NONE 0xffffffffu
 #define DESKTOP_MODULE_NAME_SIZE 64u
 #define DESKTOP_MODS_DIR "/mods"
@@ -49,6 +56,12 @@
 #define TERMINAL_CARET_BLINK_HZ 2u
 #define DESKTOP_CLOCK_TEXT_W 152u
 #define DESKTOP_CLOCK_PANEL_W 168u
+#define TASKBAR_START_X 10u
+#define TASKBAR_START_W 58u
+#define TASKBAR_BUTTON_X 82u
+#define TASKBAR_BUTTON_W 94u
+#define TASKBAR_BUTTON_STEP 102u
+#define TASKBAR_BUTTON_PAD_Y 7u
 
 typedef enum {
     FILE_KIND_OTHER = 0,
@@ -364,6 +377,8 @@ typedef struct {
     uint32_t button;
     uint32_t task_active;
     uint32_t task_inactive;
+    uint32_t title_left;
+    uint32_t title_right;
 } desktop_theme_t;
 
 static uint32_t *desktop_background_cache;
@@ -389,6 +404,8 @@ static desktop_theme_t desktop_theme(void) {
     (void)registry_get_u32("desktop.button", 0x8f3f62u, &theme.button);
     (void)registry_get_u32("desktop.task.active", 0x4b2347u, &theme.task_active);
     (void)registry_get_u32("desktop.task.inactive", 0x2d2038u, &theme.task_inactive);
+    (void)registry_get_u32("desktop.title.left", 0x7c3a78u, &theme.title_left);
+    (void)registry_get_u32("desktop.title.right", 0xe05f4fu, &theme.title_right);
     return theme;
 }
 
@@ -405,7 +422,9 @@ static int desktop_theme_equals(const desktop_theme_t *a, const desktop_theme_t 
            a->text == b->text &&
            a->button == b->button &&
            a->task_active == b->task_active &&
-           a->task_inactive == b->task_inactive;
+           a->task_inactive == b->task_inactive &&
+           a->title_left == b->title_left &&
+           a->title_right == b->title_right;
 }
 
 static int desktop_background_cache_ready(uint32_t width,
@@ -527,18 +546,29 @@ static uint32_t desktop_draw_task_button(uint32_t x, const char *label, int acti
     uint32_t task_h = desktop_taskbar_height();
     desktop_theme_t theme = desktop_theme();
     uint32_t fill = active ? theme.task_active : theme.task_inactive;
+    uint32_t y;
+    uint32_t h;
+    uint32_t edge;
 
-    graphics_fill_rect(x, height - task_h + 10u, 88u, task_h - 20u, fill);
-    graphics_draw_rect(x, height - task_h + 10u, 88u, task_h - 20u, active ? theme.accent : theme.panel_inner);
-    console_draw_text_at_pixel(x + 8u, height - task_h + 14u, label, theme.text, fill);
-    return x + 96u;
+    y = height - task_h + TASKBAR_BUTTON_PAD_Y;
+    h = task_h > TASKBAR_BUTTON_PAD_Y * 2u ? task_h - TASKBAR_BUTTON_PAD_Y * 2u : task_h;
+    edge = active ? theme.accent : theme.panel_inner;
+
+    graphics_fill_rect(x, y, TASKBAR_BUTTON_W, h, fill);
+    graphics_fill_rect(x, y, 4u, h, active ? theme.accent : theme.accent_soft);
+    graphics_draw_rect(x, y, TASKBAR_BUTTON_W, h, edge);
+    if (h > 4u) {
+        graphics_fill_rect(x + 1u, y + 1u, TASKBAR_BUTTON_W - 2u, 1u, active ? theme.accent_soft : theme.panel_inner);
+    }
+    console_draw_text_at_pixel(x + 12u, y + 5u, label, theme.text, fill);
+    return x + TASKBAR_BUTTON_STEP;
 }
 
 static uint32_t desktop_taskbar_button_limit(void) {
     uint32_t width = graphics_width();
 
     if (width > DESKTOP_CLOCK_PANEL_W + 24u) {
-        return width - DESKTOP_CLOCK_PANEL_W - 16u;
+        return width - DESKTOP_CLOCK_PANEL_W - 18u;
     }
     return width;
 }
@@ -546,11 +576,11 @@ static uint32_t desktop_taskbar_button_limit(void) {
 static int desktop_taskbar_button_visible(uint32_t x) {
     uint32_t limit = desktop_taskbar_button_limit();
 
-    return x + 88u <= limit;
+    return x + TASKBAR_BUTTON_W <= limit;
 }
 
 static void desktop_draw_task_buttons(void) {
-    uint32_t x = 76u;
+    uint32_t x = TASKBAR_BUTTON_X;
 
     if ((terminal_open || terminal_minimized) && desktop_taskbar_button_visible(x)) {
         x = desktop_draw_task_button(x, "Terminal", terminal_open);
@@ -571,36 +601,38 @@ static void desktop_draw_task_buttons(void) {
 }
 
 static desktop_app_t desktop_task_button_at(uint32_t px, uint32_t py) {
-    uint32_t x = 76u;
+    uint32_t x = TASKBAR_BUTTON_X;
     uint32_t height = graphics_height();
     uint32_t task_h = desktop_taskbar_height();
+    uint32_t button_y = height - task_h + TASKBAR_BUTTON_PAD_Y;
+    uint32_t button_h = task_h > TASKBAR_BUTTON_PAD_Y * 2u ? task_h - TASKBAR_BUTTON_PAD_Y * 2u : task_h;
 
-    if (py < height - task_h + 10u || py >= height - task_h + 10u + task_h - 20u) {
+    if (py < button_y || py >= button_y + button_h) {
         return DESKTOP_APP_NONE;
     }
     if (terminal_open || terminal_minimized) {
         if (!desktop_taskbar_button_visible(x)) return DESKTOP_APP_NONE;
-        if (point_in_rect(px, py, x, height - task_h + 10u, 88u, task_h - 20u)) return DESKTOP_APP_TERMINAL;
-        x += 96u;
+        if (point_in_rect(px, py, x, button_y, TASKBAR_BUTTON_W, button_h)) return DESKTOP_APP_TERMINAL;
+        x += TASKBAR_BUTTON_STEP;
     }
     if (files_open || files_minimized) {
         if (!desktop_taskbar_button_visible(x)) return DESKTOP_APP_NONE;
-        if (point_in_rect(px, py, x, height - task_h + 10u, 88u, task_h - 20u)) return DESKTOP_APP_BROWSER;
-        x += 96u;
+        if (point_in_rect(px, py, x, button_y, TASKBAR_BUTTON_W, button_h)) return DESKTOP_APP_BROWSER;
+        x += TASKBAR_BUTTON_STEP;
     }
     if (modules_open || modules_minimized) {
         if (!desktop_taskbar_button_visible(x)) return DESKTOP_APP_NONE;
-        if (point_in_rect(px, py, x, height - task_h + 10u, 88u, task_h - 20u)) return DESKTOP_APP_MODULES;
-        x += 96u;
+        if (point_in_rect(px, py, x, button_y, TASKBAR_BUTTON_W, button_h)) return DESKTOP_APP_MODULES;
+        x += TASKBAR_BUTTON_STEP;
     }
     if (desktop_any_module_app_open() || desktop_any_module_app_minimized()) {
         if (!desktop_taskbar_button_visible(x)) return DESKTOP_APP_NONE;
-        if (point_in_rect(px, py, x, height - task_h + 10u, 88u, task_h - 20u)) return DESKTOP_APP_MODULE_APP;
-        x += 96u;
+        if (point_in_rect(px, py, x, button_y, TASKBAR_BUTTON_W, button_h)) return DESKTOP_APP_MODULE_APP;
+        x += TASKBAR_BUTTON_STEP;
     }
     if (editor_open || editor_minimized) {
         if (!desktop_taskbar_button_visible(x)) return DESKTOP_APP_NONE;
-        if (point_in_rect(px, py, x, height - task_h + 10u, 88u, task_h - 20u)) return DESKTOP_APP_EDITOR;
+        if (point_in_rect(px, py, x, button_y, TASKBAR_BUTTON_W, button_h)) return DESKTOP_APP_EDITOR;
     }
 
     return DESKTOP_APP_NONE;
@@ -647,7 +679,7 @@ static int desktop_taskbar_clock_rect(uint32_t *out_x, uint32_t *out_y, uint32_t
     uint32_t rect_y;
     uint32_t rect_h;
 
-    if (width < DESKTOP_CLOCK_PANEL_W + 96u || height < task_h) {
+    if (width < DESKTOP_CLOCK_PANEL_W + TASKBAR_BUTTON_X + TASKBAR_BUTTON_W || height < task_h) {
         return 0;
     }
 
@@ -683,18 +715,22 @@ static void desktop_draw_taskbar_clock(void) {
     uint32_t panel_w;
     uint32_t panel_h;
     uint32_t text_y;
+    uint32_t fill;
 
     if (!desktop_taskbar_clock_rect(&panel_x, &panel_y, &panel_w, &panel_h) ||
         desktop_format_clock(text, sizeof(text)) != 0) {
         return;
     }
 
-    text_y = height - task_h + (task_h >= 30u ? 13u : 8u);
-    graphics_fill_rect(panel_x, panel_y, panel_w, panel_h, task_h >= 30u ? theme.task_inactive : theme.taskbar);
-    if (task_h >= 30u) {
-        graphics_draw_rect(panel_x, panel_y, panel_w, panel_h, theme.panel_inner);
+    fill = task_h >= 30u ? theme.task_inactive : theme.taskbar;
+    text_y = height - task_h + (task_h >= 30u ? 12u : 8u);
+    graphics_fill_rect(panel_x, panel_y, panel_w, panel_h, fill);
+    graphics_fill_rect(panel_x, panel_y, 3u, panel_h, theme.accent_soft);
+    if (panel_h > 4u) {
+        graphics_fill_rect(panel_x + 1u, panel_y + 1u, panel_w - 2u, 1u, theme.panel_inner);
     }
-    console_draw_text_at_pixel(panel_x + 8u, text_y, text, theme.text, task_h >= 30u ? theme.task_inactive : theme.taskbar);
+    graphics_draw_rect(panel_x, panel_y, panel_w, panel_h, theme.panel_inner);
+    console_draw_text_at_pixel(panel_x + 12u, text_y, text, theme.text, fill);
 }
 
 static int desktop_taskbar_clock_tick_due(void) {
@@ -731,11 +767,21 @@ static void desktop_draw_taskbar(void) {
     }
 
     graphics_fill_rect(0, height - task_h, width, task_h, theme.taskbar);
-    graphics_fill_rect(0, height - task_h, width, 1, theme.accent_soft);
+    if (task_h > 2u) {
+        graphics_fill_rect(0, height - task_h, width, 1u, theme.accent_soft);
+        graphics_fill_rect(0, height - task_h + 1u, width, 1u, theme.panel_inner);
+        graphics_fill_rect(0, height - task_h + task_h - 1u, width, 1u, theme.bg_bottom);
+    }
     if (width > 120u) {
-        graphics_fill_rect(12u, height - task_h + 8u, 48u, task_h - 16u, theme.button);
-        graphics_draw_rect(12u, height - task_h + 8u, 48u, task_h - 16u, theme.text);
-        console_draw_text_at_pixel(22u, height - task_h + 13u, "Apps", theme.text, theme.button);
+        uint32_t start_y = height - task_h + TASKBAR_BUTTON_PAD_Y;
+        uint32_t start_h = task_h > TASKBAR_BUTTON_PAD_Y * 2u ? task_h - TASKBAR_BUTTON_PAD_Y * 2u : task_h;
+        graphics_fill_rect(TASKBAR_START_X, start_y, TASKBAR_START_W, start_h, theme.button);
+        graphics_fill_rect(TASKBAR_START_X, start_y, 5u, start_h, theme.accent);
+        graphics_draw_rect(TASKBAR_START_X, start_y, TASKBAR_START_W, start_h, theme.text);
+        if (start_h > 4u) {
+            graphics_fill_rect(TASKBAR_START_X + 1u, start_y + 1u, TASKBAR_START_W - 2u, 1u, theme.accent_soft);
+        }
+        console_draw_text_at_pixel(TASKBAR_START_X + 14u, start_y + 5u, "Lain", theme.text, theme.button);
         desktop_draw_task_buttons();
     }
     desktop_draw_taskbar_clock();
@@ -804,10 +850,13 @@ static desktop_app_t launcher_at(uint32_t x, uint32_t y) {
 }
 
 static void desktop_update_window_content(desktop_window_t *win) {
-    win->content_x = win->x + 10u;
-    win->content_y = win->y + 34u;
-    win->content_w = win->w > 20u ? win->w - 20u : win->w;
-    win->content_h = win->h > 44u ? win->h - 44u : win->h;
+    uint32_t top = WINDOW_TITLE_H + 6u;
+    uint32_t side = 8u;
+
+    win->content_x = win->x + side;
+    win->content_y = win->y + top;
+    win->content_w = win->w > side * 2u ? win->w - side * 2u : win->w;
+    win->content_h = win->h > top + 8u ? win->h - top - 8u : win->h;
 }
 
 static void desktop_clamp_window(desktop_window_t *win) {
@@ -871,33 +920,114 @@ static void desktop_make_terminal_window(desktop_window_t *win) {
     desktop_clamp_window(win);
 }
 
+static void desktop_fill_horizontal_gradient(uint32_t x,
+                                             uint32_t y,
+                                             uint32_t w,
+                                             uint32_t h,
+                                             uint32_t left,
+                                             uint32_t right) {
+    uint32_t r1;
+    uint32_t g1;
+    uint32_t b1;
+    uint32_t r2;
+    uint32_t g2;
+    uint32_t b2;
+    uint32_t denom;
+
+    if (w == 0u || h == 0u) {
+        return;
+    }
+
+    r1 = (left >> 16) & 0xffu;
+    g1 = (left >> 8) & 0xffu;
+    b1 = left & 0xffu;
+    r2 = (right >> 16) & 0xffu;
+    g2 = (right >> 8) & 0xffu;
+    b2 = right & 0xffu;
+    denom = w > 1u ? w - 1u : 1u;
+
+    for (uint32_t i = 0; i < w; ++i) {
+        uint32_t r = ((r1 * (denom - i)) + (r2 * i)) / denom;
+        uint32_t g = ((g1 * (denom - i)) + (g2 * i)) / denom;
+        uint32_t b = ((b1 * (denom - i)) + (b2 * i)) / denom;
+        graphics_fill_rect(x + i, y, 1u, h, (r << 16) | (g << 8) | b);
+    }
+}
+
+static void desktop_draw_raised_box(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t fill) {
+    graphics_fill_rect(x, y, w, h, fill);
+    graphics_draw_line(x, y, x + w - 1u, y, 0xffffffu);
+    graphics_draw_line(x, y, x, y + h - 1u, 0xffffffu);
+    graphics_draw_line(x + 1u, y + 1u, x + w - 2u, y + 1u, 0xd7d7d7u);
+    graphics_draw_line(x + 1u, y + 1u, x + 1u, y + h - 2u, 0xd7d7d7u);
+    graphics_draw_line(x + w - 1u, y, x + w - 1u, y + h - 1u, 0x000000u);
+    graphics_draw_line(x, y + h - 1u, x + w - 1u, y + h - 1u, 0x000000u);
+    graphics_draw_line(x + w - 2u, y + 1u, x + w - 2u, y + h - 2u, 0x808080u);
+    graphics_draw_line(x + 1u, y + h - 2u, x + w - 2u, y + h - 2u, 0x808080u);
+}
+
+static void desktop_draw_title_button(uint32_t x, uint32_t y, uint32_t kind) {
+    uint32_t ink = 0x000000u;
+
+    desktop_draw_raised_box(x, y, WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE, 0xc0c0c0u);
+    if (kind == 0u) {
+        graphics_fill_rect(x + 4u, y + 11u, 8u, 2u, ink);
+    } else if (kind == 1u) {
+        graphics_draw_rect(x + 4u, y + 4u, 8u, 8u, ink);
+        graphics_fill_rect(x + 5u, y + 5u, 6u, 2u, ink);
+    } else {
+        graphics_draw_line(x + 4u, y + 4u, x + 11u, y + 11u, ink);
+        graphics_draw_line(x + 5u, y + 4u, x + 12u, y + 11u, ink);
+        graphics_draw_line(x + 11u, y + 4u, x + 4u, y + 11u, ink);
+        graphics_draw_line(x + 12u, y + 4u, x + 5u, y + 11u, ink);
+    }
+}
+
+static uint32_t desktop_window_close_x(const desktop_window_t *win) {
+    return win->x + win->w - WINDOW_CONTROL_MARGIN - WINDOW_CONTROL_SIZE;
+}
+
+static uint32_t desktop_window_control_y(const desktop_window_t *win) {
+    return win->y + 3u;
+}
+
 static void desktop_draw_window(const desktop_window_t *win, const char *title) {
-    uint32_t close_x = win->x + win->w - 23u;
+    uint32_t close_x = desktop_window_close_x(win);
     uint32_t max_x = close_x - WINDOW_CONTROL_SIZE - WINDOW_CONTROL_GAP;
     uint32_t min_x = max_x - WINDOW_CONTROL_SIZE - WINDOW_CONTROL_GAP;
+    uint32_t control_y = desktop_window_control_y(win);
+    desktop_theme_t theme = desktop_theme();
+    uint32_t title_w = win->w > 4u ? win->w - 4u : 0u;
 
     graphics_fill_rect(win->x + 4u, win->y + 5u, win->w, win->h, 0x08060du);
-    desktop_panel(win->x, win->y, win->w, win->h, 0x221a2du);
-    graphics_fill_rect(win->x + 2u, win->y + 2u, win->w - 4u, 26u, 0x5c2d5bu);
-    graphics_fill_rect(win->x + 2u, win->y + 24u, win->w - 4u, 4u, 0xe05f4fu);
-    graphics_draw_rect(min_x, win->y + 7u, WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE, 0xf6eadbu);
-    graphics_draw_rect(max_x, win->y + 7u, WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE, 0xf6eadbu);
-    graphics_draw_rect(close_x, win->y + 7u, WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE, 0xf6eadbu);
-    graphics_draw_line(min_x + 3u, win->y + 17u, min_x + 10u, win->y + 17u, 0xf6eadbu);
-    graphics_draw_rect(max_x + 3u, win->y + 10u, 8u, 8u, 0xf6eadbu);
-    graphics_draw_line(close_x + 3u, win->y + 10u, close_x + 10u, win->y + 17u, 0xf6eadbu);
-    graphics_draw_line(close_x + 10u, win->y + 10u, close_x + 3u, win->y + 17u, 0xf6eadbu);
+    desktop_panel(win->x, win->y, win->w, win->h, theme.panel);
+    if (title_w != 0u) {
+        desktop_fill_horizontal_gradient(win->x + 2u,
+                                         win->y + 2u,
+                                         title_w,
+                                         WINDOW_TITLE_BAR_H,
+                                         theme.title_left,
+                                         theme.title_right);
+        graphics_fill_rect(win->x + 2u,
+                           win->y + 2u + WINDOW_TITLE_BAR_H,
+                           title_w,
+                           WINDOW_TITLE_ACCENT_H,
+                           theme.accent);
+    }
+    desktop_draw_title_button(min_x, control_y, 0u);
+    desktop_draw_title_button(max_x, control_y, 1u);
+    desktop_draw_title_button(close_x, control_y, 2u);
     graphics_draw_line(win->x + win->w - WINDOW_RESIZE_GRIP,
                        win->y + win->h - 4u,
                        win->x + win->w - 4u,
                        win->y + win->h - WINDOW_RESIZE_GRIP,
-                       0xb98556u);
+                       theme.accent_soft);
     graphics_draw_line(win->x + win->w - 11u,
                        win->y + win->h - 4u,
                        win->x + win->w - 4u,
                        win->y + win->h - 11u,
-                       0xf6eadbu);
-    console_draw_text_at_pixel(win->x + 10u, win->y + 10u, title, 0xf6eadbu, 0x5c2d5bu);
+                       theme.text);
+    console_draw_text_at_pixel(win->x + 8u, win->y + 7u, title, theme.text, theme.title_left);
 }
 
 static void desktop_draw_button(uint32_t x, uint32_t y, uint32_t w, const char *label, int active) {
@@ -908,8 +1038,66 @@ static void desktop_draw_button(uint32_t x, uint32_t y, uint32_t w, const char *
     console_draw_text_at_pixel(x + 8u, y + 7u, label, theme.text, fill);
 }
 
+static uint32_t desktop_start_menu_item_x(uint32_t menu_x) {
+    return menu_x + START_MENU_RAIL_W + START_MENU_PAD;
+}
+
+static uint32_t desktop_start_menu_item_y(uint32_t menu_y, uint32_t index) {
+    return menu_y + START_MENU_HEADER_H + START_MENU_PAD + index * START_MENU_ITEM_H;
+}
+
+static uint32_t desktop_start_menu_item_w(uint32_t menu_w) {
+    return menu_w - START_MENU_RAIL_W - START_MENU_PAD * 2u;
+}
+
+static void desktop_draw_start_menu_icon(uint32_t x, uint32_t y, uint32_t kind, uint32_t bg, const desktop_theme_t *theme) {
+    uint32_t color;
+
+    color = theme->accent;
+    if (kind == 1u) {
+        color = theme->button;
+    } else if (kind == 2u) {
+        color = theme->accent_soft;
+    } else if (kind == 3u) {
+        color = theme->task_active;
+    }
+
+    graphics_fill_rect(x, y, 16u, 16u, color);
+    graphics_draw_rect(x, y, 16u, 16u, theme->text);
+    if (kind == 0u) {
+        graphics_fill_rect(x + 4u, y + 4u, 8u, 2u, theme->text);
+        graphics_fill_rect(x + 4u, y + 8u, 8u, 2u, theme->text);
+        graphics_fill_rect(x + 4u, y + 12u, 5u, 2u, theme->text);
+    } else if (kind == 1u) {
+        graphics_fill_rect(x + 3u, y + 4u, 10u, 8u, bg);
+        graphics_draw_rect(x + 3u, y + 4u, 10u, 8u, theme->text);
+    } else if (kind == 2u) {
+        graphics_fill_rect(x + 4u, y + 3u, 8u, 4u, bg);
+        graphics_fill_rect(x + 3u, y + 7u, 10u, 7u, bg);
+        graphics_draw_rect(x + 3u, y + 7u, 10u, 7u, theme->text);
+    } else {
+        graphics_draw_line(x + 3u, y + 12u, x + 8u, y + 3u, theme->text);
+        graphics_draw_line(x + 8u, y + 3u, x + 13u, y + 12u, theme->text);
+    }
+}
+
+static void desktop_draw_start_menu_item(uint32_t x,
+                                         uint32_t y,
+                                         uint32_t w,
+                                         const char *label,
+                                         uint32_t kind,
+                                         const desktop_theme_t *theme) {
+    uint32_t fill = theme->task_inactive;
+
+    graphics_fill_rect(x, y, w, START_MENU_ITEM_H - 2u, fill);
+    graphics_fill_rect(x, y, 3u, START_MENU_ITEM_H - 2u, theme->accent_soft);
+    graphics_draw_rect(x, y, w, START_MENU_ITEM_H - 2u, theme->panel_inner);
+    desktop_draw_start_menu_icon(x + 7u, y + 3u, kind, fill, theme);
+    console_draw_text_at_pixel(x + 30u, y + 7u, label, theme->text, fill);
+}
+
 static void desktop_start_menu_rect(uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h) {
-    uint32_t menu_h = 146u;
+    uint32_t menu_h = START_MENU_HEADER_H + START_MENU_PAD * 2u + START_MENU_ITEM_H * 4u + 6u;
     uint32_t menu_y = graphics_height() > desktop_taskbar_height() + menu_h ?
                       graphics_height() - desktop_taskbar_height() - menu_h :
                       28u;
@@ -933,6 +1121,8 @@ static void desktop_draw_start_menu(void) {
     uint32_t menu_y;
     uint32_t menu_w;
     uint32_t menu_h;
+    uint32_t item_x;
+    uint32_t item_w;
     desktop_theme_t theme = desktop_theme();
 
     if (!start_menu_open) {
@@ -945,11 +1135,24 @@ static void desktop_draw_start_menu(void) {
     }
 
     desktop_panel(menu_x, menu_y, menu_w, menu_h, theme.panel);
-    console_draw_text_at_pixel(menu_x + 12u, menu_y + 10u, "Start", theme.text, theme.panel);
-    desktop_draw_button(menu_x + 12u, menu_y + 32u, menu_w - 24u, "Terminal", 0);
-    desktop_draw_button(menu_x + 12u, menu_y + 56u, menu_w - 24u, "Files", 0);
-    desktop_draw_button(menu_x + 12u, menu_y + 80u, menu_w - 24u, "Modules", 0);
-    desktop_draw_button(menu_x + 12u, menu_y + 104u, menu_w - 24u, "NetSurf", 0);
+    desktop_fill_horizontal_gradient(menu_x + 2u,
+                                     menu_y + 2u,
+                                     menu_w - 4u,
+                                     START_MENU_HEADER_H,
+                                     theme.title_left,
+                                     theme.title_right);
+    graphics_fill_rect(menu_x + 2u, menu_y + START_MENU_HEADER_H, menu_w - 4u, 2u, theme.accent);
+    graphics_fill_rect(menu_x + 2u, menu_y + 2u, START_MENU_RAIL_W - 4u, menu_h - 4u, theme.taskbar);
+    graphics_fill_rect(menu_x + START_MENU_RAIL_W - 2u, menu_y + 2u, 2u, menu_h - 4u, theme.accent_soft);
+    console_draw_text_at_pixel(menu_x + START_MENU_RAIL_W + 10u, menu_y + 10u, "LainOS", theme.text, theme.title_left);
+    console_draw_text_at_pixel(menu_x + 10u, menu_y + menu_h - 18u, "Z", theme.text, theme.taskbar);
+
+    item_x = desktop_start_menu_item_x(menu_x);
+    item_w = desktop_start_menu_item_w(menu_w);
+    desktop_draw_start_menu_item(item_x, desktop_start_menu_item_y(menu_y, 0u), item_w, "Terminal", 0u, &theme);
+    desktop_draw_start_menu_item(item_x, desktop_start_menu_item_y(menu_y, 1u), item_w, "Files", 1u, &theme);
+    desktop_draw_start_menu_item(item_x, desktop_start_menu_item_y(menu_y, 2u), item_w, "Modules", 2u, &theme);
+    desktop_draw_start_menu_item(item_x, desktop_start_menu_item_y(menu_y, 3u), item_w, "NetSurf", 3u, &theme);
 }
 
 static desktop_app_t desktop_start_menu_hit(uint32_t x, uint32_t y, uint32_t *module_index) {
@@ -957,24 +1160,28 @@ static desktop_app_t desktop_start_menu_hit(uint32_t x, uint32_t y, uint32_t *mo
     uint32_t menu_y;
     uint32_t menu_w;
     uint32_t menu_h;
+    uint32_t item_x;
+    uint32_t item_w;
 
     desktop_start_menu_rect(&menu_x, &menu_y, &menu_w, &menu_h);
     if (!start_menu_open || !point_in_rect(x, y, menu_x, menu_y, menu_w, menu_h)) {
         return DESKTOP_APP_NONE;
     }
-    if (point_in_rect(x, y, menu_x + 12u, menu_y + 32u, menu_w - 24u, START_MENU_ITEM_H)) {
+    item_x = desktop_start_menu_item_x(menu_x);
+    item_w = desktop_start_menu_item_w(menu_w);
+    if (point_in_rect(x, y, item_x, desktop_start_menu_item_y(menu_y, 0u), item_w, START_MENU_ITEM_H - 2u)) {
         return DESKTOP_APP_TERMINAL;
     }
-    if (point_in_rect(x, y, menu_x + 12u, menu_y + 56u, menu_w - 24u, START_MENU_ITEM_H)) {
+    if (point_in_rect(x, y, item_x, desktop_start_menu_item_y(menu_y, 1u), item_w, START_MENU_ITEM_H - 2u)) {
         return DESKTOP_APP_BROWSER;
     }
-    if (point_in_rect(x, y, menu_x + 12u, menu_y + 80u, menu_w - 24u, START_MENU_ITEM_H)) {
+    if (point_in_rect(x, y, item_x, desktop_start_menu_item_y(menu_y, 2u), item_w, START_MENU_ITEM_H - 2u)) {
         if (module_index != 0) {
             *module_index = DESKTOP_MODULE_INDEX_NONE;
         }
         return DESKTOP_APP_MODULES;
     }
-    if (point_in_rect(x, y, menu_x + 12u, menu_y + 104u, menu_w - 24u, START_MENU_ITEM_H)) {
+    if (point_in_rect(x, y, item_x, desktop_start_menu_item_y(menu_y, 3u), item_w, START_MENU_ITEM_H - 2u)) {
         return DESKTOP_APP_NETSURF;
     }
 
@@ -982,22 +1189,27 @@ static desktop_app_t desktop_start_menu_hit(uint32_t x, uint32_t y, uint32_t *mo
 }
 
 static int desktop_window_close_hit(const desktop_window_t *win, uint32_t x, uint32_t y) {
-    if (win->w < 25u) {
+    if (win->w < WINDOW_CONTROL_MARGIN + WINDOW_CONTROL_SIZE + 4u) {
         return 0;
     }
-    return point_in_rect(x, y, win->x + win->w - 23u, win->y + 7u, WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE);
+    return point_in_rect(x,
+                         y,
+                         desktop_window_close_x(win),
+                         desktop_window_control_y(win),
+                         WINDOW_CONTROL_SIZE,
+                         WINDOW_CONTROL_SIZE);
 }
 
 static int desktop_window_maximize_hit(const desktop_window_t *win, uint32_t x, uint32_t y) {
     uint32_t close_x;
     uint32_t max_x;
 
-    if (win->w < 64u) {
+    if (win->w < WINDOW_CONTROL_MARGIN + WINDOW_CONTROL_SIZE * 2u + WINDOW_CONTROL_GAP + 4u) {
         return 0;
     }
-    close_x = win->x + win->w - 23u;
+    close_x = desktop_window_close_x(win);
     max_x = close_x - WINDOW_CONTROL_SIZE - WINDOW_CONTROL_GAP;
-    return point_in_rect(x, y, max_x, win->y + 7u, WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE);
+    return point_in_rect(x, y, max_x, desktop_window_control_y(win), WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE);
 }
 
 static int desktop_window_minimize_hit(const desktop_window_t *win, uint32_t x, uint32_t y) {
@@ -1005,13 +1217,13 @@ static int desktop_window_minimize_hit(const desktop_window_t *win, uint32_t x, 
     uint32_t max_x;
     uint32_t min_x;
 
-    if (win->w < 83u) {
+    if (win->w < WINDOW_CONTROL_MARGIN + WINDOW_CONTROL_SIZE * 3u + WINDOW_CONTROL_GAP * 2u + 4u) {
         return 0;
     }
-    close_x = win->x + win->w - 23u;
+    close_x = desktop_window_close_x(win);
     max_x = close_x - WINDOW_CONTROL_SIZE - WINDOW_CONTROL_GAP;
     min_x = max_x - WINDOW_CONTROL_SIZE - WINDOW_CONTROL_GAP;
-    return point_in_rect(x, y, min_x, win->y + 7u, WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE);
+    return point_in_rect(x, y, min_x, desktop_window_control_y(win), WINDOW_CONTROL_SIZE, WINDOW_CONTROL_SIZE);
 }
 
 static int desktop_window_title_hit(const desktop_window_t *win, uint32_t x, uint32_t y) {
@@ -4382,7 +4594,14 @@ void desktop_run(const boot_info_t *info) {
                 continue;
             }
 
-            if (point_in_rect(x, y, 12u, graphics_height() - desktop_taskbar_height() + 8u, 48u, desktop_taskbar_height() - 16u)) {
+            if (point_in_rect(x,
+                              y,
+                              TASKBAR_START_X,
+                              graphics_height() - desktop_taskbar_height() + TASKBAR_BUTTON_PAD_Y,
+                              TASKBAR_START_W,
+                              desktop_taskbar_height() > TASKBAR_BUTTON_PAD_Y * 2u ?
+                                  desktop_taskbar_height() - TASKBAR_BUTTON_PAD_Y * 2u :
+                                  desktop_taskbar_height())) {
                 cursor_restore();
                 start_menu_open = !start_menu_open;
                 desktop_damage_full();

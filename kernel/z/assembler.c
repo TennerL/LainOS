@@ -277,6 +277,12 @@ static int asm_external_symbol_value(const assembler_context_t *ctx, const char 
     return -1;
 }
 
+static const char *asm_external_reloc_name(const assembler_context_t *ctx, const char *name) {
+    uint64_t value = 0;
+
+    return asm_external_symbol_value(ctx, name, &value) == 0 ? name : 0;
+}
+
 static int asm_add_relocation(const assembler_context_t *ctx,
                               uint32_t offset,
                               uint32_t type,
@@ -409,16 +415,17 @@ static int asm_emit_modrm_reg(const assembler_context_t *ctx,
     return asm_emit_byte(ctx, offset, emit, (uint8_t)(0xC0 | ((reg & 7) << 3) | (rm & 7)));
 }
 
-static int asm_emit_modrm_rip_relative(const assembler_context_t *ctx,
-                                        uint32_t *offset,
-                                        int emit,
-                                        int reg,
-                                        uint32_t displacement) {
-    if (asm_emit_byte(ctx, offset, emit, (uint8_t)(((reg & 7) << 3) | 0x05)) != 0 ||
-        (emit && asm_add_relocation(ctx, *offset, ASSEMBLER_RELOC_RIP32, 0) != 0) ||
-        asm_emit_u32(ctx, offset, emit, displacement) != 0) {
-        return -1;
-    }
+	static int asm_emit_modrm_rip_relative(const assembler_context_t *ctx,
+	                                        uint32_t *offset,
+	                                        int emit,
+	                                        int reg,
+	                                        uint32_t displacement,
+	                                        const char *reloc_name) {
+	    if (asm_emit_byte(ctx, offset, emit, (uint8_t)(((reg & 7) << 3) | 0x05)) != 0 ||
+	        (emit && asm_add_relocation(ctx, *offset, ASSEMBLER_RELOC_RIP32, reloc_name) != 0) ||
+	        asm_emit_u32(ctx, offset, emit, displacement) != 0) {
+	        return -1;
+	    }
 
     return 0;
 }
@@ -723,22 +730,28 @@ static int asm_parse_memory_operand(const char *text, asm_mem_t *out) {
 
 static int asm_rip_relative_disp32(const assembler_context_t *ctx,
                                    uint32_t next_offset,
-                                   const asm_label_t *labels,
-                                   uint32_t label_count,
-                                   const char *target,
-                                   uint32_t *out) {
-    uint32_t label_offset = 0;
-    int64_t diff;
-
-    if (asm_find_label(labels, label_count, target, &label_offset) != 0) {
-        return -1;
-    }
-
-    diff = (int64_t)(ctx->base_address + label_offset) -
-           (int64_t)(ctx->base_address + next_offset);
-    if (diff < -2147483648ll || diff > 2147483647ll) {
-        return -1;
-    }
+	                                   const asm_label_t *labels,
+	                                   uint32_t label_count,
+	                                   const char *target,
+	                                   uint32_t *out) {
+	    uint32_t label_offset = 0;
+	    uint64_t symbol_value = 0;
+	    int64_t diff;
+	
+	    if (asm_find_label(labels, label_count, target, &label_offset) == 0) {
+	        diff = (int64_t)(ctx->base_address + label_offset) -
+	               (int64_t)(ctx->base_address + next_offset);
+	    } else if (asm_external_symbol_value(ctx, target, &symbol_value) == 0) {
+	        diff = -4;
+	    } else if (assembler_symbol_value(target, &symbol_value) == 0) {
+	        diff = (int64_t)symbol_value - (int64_t)(ctx->base_address + next_offset);
+	    } else {
+	        return -1;
+	    }
+	
+	    if (diff < -2147483648ll || diff > 2147483647ll) {
+	        return -1;
+	    }
 
     *out = (uint32_t)diff;
     return 0;
@@ -767,12 +780,17 @@ static int asm_emit_mov_reg_mem_label(const assembler_context_t *ctx,
         return -1;
     }
 
-    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
-        asm_emit_rex(ctx, offset, emit, bits == 64, dst.code, 0) != 0 ||
-        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
-        asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
-        return -1;
-    }
+	    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+	        asm_emit_rex(ctx, offset, emit, bits == 64, dst.code, 0) != 0 ||
+	        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
+	        asm_emit_modrm_rip_relative(ctx,
+	                                    offset,
+	                                    emit,
+	                                    dst.code,
+	                                    displacement,
+	                                    asm_external_reloc_name(ctx, label)) != 0) {
+	        return -1;
+	    }
 
     return 0;
 }
@@ -822,12 +840,17 @@ static int asm_emit_mov_mem_label_reg(const assembler_context_t *ctx,
         return -1;
     }
 
-    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
-        asm_emit_rex(ctx, offset, emit, bits == 64, src.code, 0) != 0 ||
-        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
-        asm_emit_modrm_rip_relative(ctx, offset, emit, src.code, displacement) != 0) {
-        return -1;
-    }
+	    if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
+	        asm_emit_rex(ctx, offset, emit, bits == 64, src.code, 0) != 0 ||
+	        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
+	        asm_emit_modrm_rip_relative(ctx,
+	                                    offset,
+	                                    emit,
+	                                    src.code,
+	                                    displacement,
+	                                    asm_external_reloc_name(ctx, label)) != 0) {
+	        return -1;
+	    }
 
     return 0;
 }
@@ -883,9 +906,14 @@ static int asm_emit_mov_mem_label_imm(const assembler_context_t *ctx,
     if ((bits == 16 && asm_emit_byte(ctx, offset, emit, 0x66) != 0) ||
         asm_emit_rex(ctx, offset, emit, bits == 64, 0, 0) != 0 ||
         asm_emit_byte(ctx, offset, emit, (bits == 8) ? 0xC6 : 0xC7) != 0 ||
-        asm_emit_modrm_rip_relative(ctx, offset, emit, 0, displacement) != 0) {
-        return -1;
-    }
+	        asm_emit_modrm_rip_relative(ctx,
+	                                    offset,
+	                                    emit,
+	                                    0,
+	                                    displacement,
+	                                    asm_external_reloc_name(ctx, label)) != 0) {
+	        return -1;
+	    }
 
     if (bits == 8) {
         return asm_emit_byte(ctx, offset, emit, (uint8_t)value);
@@ -957,11 +985,16 @@ static int asm_emit_reg_mem_label_op(const assembler_context_t *ctx,
         return -1;
     }
 
-    if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
-        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
-        asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
-        return -1;
-    }
+	    if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
+	        asm_emit_byte(ctx, offset, emit, opcode) != 0 ||
+	        asm_emit_modrm_rip_relative(ctx,
+	                                    offset,
+	                                    emit,
+	                                    dst.code,
+	                                    displacement,
+	                                    asm_external_reloc_name(ctx, label)) != 0) {
+	        return -1;
+	    }
 
     return 0;
 }
@@ -1417,12 +1450,17 @@ static int asm_assemble_instruction(char *line,
                     return -1;
                 }
 
-                if (asm_emit_rex(ctx, offset, emit, 0, dst.code, 0) != 0 ||
-                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
-                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
-                    asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
-                    return -1;
-                }
+	                if (asm_emit_rex(ctx, offset, emit, 0, dst.code, 0) != 0 ||
+	                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
+	                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
+	                    asm_emit_modrm_rip_relative(ctx,
+	                                                offset,
+	                                                emit,
+	                                                dst.code,
+	                                                displacement,
+	                                                asm_external_reloc_name(ctx, src_mem.label)) != 0) {
+	                    return -1;
+	                }
             } else {
                 if (asm_emit_rex(ctx, offset, emit, 0, dst.code, src_mem.base.code) != 0 ||
                     asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
@@ -1449,12 +1487,17 @@ static int asm_assemble_instruction(char *line,
                     return -1;
                 }
 
-                if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
-                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
-                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
-                    asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
-                    return -1;
-                }
+	                if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
+	                    asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
+	                    asm_emit_byte(ctx, offset, emit, opcode2) != 0 ||
+	                    asm_emit_modrm_rip_relative(ctx,
+	                                                offset,
+	                                                emit,
+	                                                dst.code,
+	                                                displacement,
+	                                                asm_external_reloc_name(ctx, src_mem.label)) != 0) {
+	                    return -1;
+	                }
             } else {
                 if (asm_emit_rex(ctx, offset, emit, 1, dst.code, src_mem.base.code) != 0 ||
                     asm_emit_byte(ctx, offset, emit, 0x0F) != 0 ||
@@ -1480,11 +1523,16 @@ static int asm_assemble_instruction(char *line,
                 return -1;
             }
 
-            if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
-                asm_emit_byte(ctx, offset, emit, 0x63) != 0 ||
-                asm_emit_modrm_rip_relative(ctx, offset, emit, dst.code, displacement) != 0) {
-                return -1;
-            }
+	            if (asm_emit_rex(ctx, offset, emit, 1, dst.code, 0) != 0 ||
+	                asm_emit_byte(ctx, offset, emit, 0x63) != 0 ||
+	                asm_emit_modrm_rip_relative(ctx,
+	                                            offset,
+	                                            emit,
+	                                            dst.code,
+	                                            displacement,
+	                                            asm_external_reloc_name(ctx, src_mem.label)) != 0) {
+	                return -1;
+	            }
         } else {
             if (asm_emit_rex(ctx, offset, emit, 1, dst.code, src_mem.base.code) != 0 ||
                 asm_emit_byte(ctx, offset, emit, 0x63) != 0 ||

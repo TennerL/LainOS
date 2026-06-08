@@ -1,0 +1,6 @@
+output browser_c_ccompat.bin
+test-return 0
+src src
+c_compat_smoke.c selfhost_c_compat.zo
+c_compat_constructs.c selfhost_c_constructs.zo
+c_compat_test.Z c_compat_test.zo

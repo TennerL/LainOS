@@ -59,8 +59,8 @@ ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/libc_smoke_module.zbui
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/filemgr_module.zbuild build/zbrowser-smoke/filemgr_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/taskmgr_module.zbuild build/zbrowser-smoke/taskmgr_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/personalize_module.zbuild build/zbrowser-smoke/personalize_module
-scripts/zbuild-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/jpg_decode_demo
-scripts/zbuild-host.sh examples/jpg_decoder.zbuild build/zbrowser-smoke/jpg_decoder
+scripts/zbuild-host.sh examples/decommissioned/jpg_decode_demo.zbuild build/zbrowser-smoke/jpg_decode_demo
+scripts/zbuild-host.sh examples/decommissioned/jpg_decoder.zbuild build/zbrowser-smoke/jpg_decoder
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh kernel/z/kernel_z_selfhost.zbuild build/zbrowser-smoke/kernel_z_selfhost
 scripts/zbuild-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/install_dir_project
 scripts/zbuild-host.sh examples/zlang/selfhost_project/kernel.zbuild build/zbrowser-smoke/selfhost_project
@@ -76,7 +76,7 @@ ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/libc_smoke_module.zb
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/filemgr_module.zbuild build/zbrowser-smoke/install/filemgr_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/taskmgr_module.zbuild build/zbrowser-smoke/install/taskmgr_module
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh examples/personalize_module.zbuild build/zbrowser-smoke/install/personalize_module
-scripts/zinstall-host.sh examples/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
+scripts/zinstall-host.sh examples/decommissioned/jpg_decode_demo.zbuild build/zbrowser-smoke/install/jpg_decode_demo
 ZBUILD_HOST_MODULE_LINK=1 scripts/zinstall-host.sh kernel/z/kernel_z_selfhost.zbuild build/zbrowser-smoke/install/kernel_z_selfhost
 scripts/zinstall-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/install/install_dir_project
 scripts/zbuild-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-linked
@@ -85,6 +85,8 @@ scripts/zclean-host.sh examples/zbcss_async.zbuild build/zbrowser-smoke/zclean-l
 ZBUILD_HOST_MODULE_LINK=1 scripts/zbuild-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zclean-module
 printf 'status ok\n' > build/zbrowser-smoke/zclean-module/zbrowser_module.testlog
 scripts/zclean-host.sh examples/zbrowser_module.zbuild build/zbrowser-smoke/zclean-module
+mkdir -p build/zbrowser-smoke/zclean-ztest
+cp examples/html2test/zbrowser_smoke.html build/zbrowser-smoke/zclean-ztest/zbrowser_smoke.html
 scripts/ztest-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zclean-ztest
 scripts/zclean-host.sh examples/zbrowser_css_repro.zbuild build/zbrowser-smoke/zclean-ztest
 ZBUILD_HOST_FORCE_BUILD_ROOT=1 scripts/ztest-host.sh examples/zlang/install_dir_project/kernel.zbuild build/zbrowser-smoke/zclean-wrapper-ztest
@@ -308,7 +310,7 @@ manifest_skips_module_validation() {
   local manifest="$1"
 
   case "$manifest" in
-    examples/jpg_decoder.zbuild)
+    examples/decommissioned/jpg_decoder.zbuild)
       return 0
       ;;
   esac
@@ -320,7 +322,7 @@ manifest_skips_broad_ztest() {
   local manifest="$1"
 
   case "$manifest" in
-    examples/browser_c_probe/kernel.zbuild|examples/browser_c_probe/first_unit.zbuild|examples/browser_c_probe/tier1.zbuild|examples/browser_c_probe/tier2.zbuild|examples/browser_c_probe/tier3.zbuild|examples/browser_c_probe/tier4.zbuild|examples/browser_c_probe/tier5.zbuild|examples/browser_c_probe/http_chal.zbuild|examples/browser_c_probe/http_wa.zbuild|examples/browser_c_probe/http_cc.zbuild|examples/browser_c_probe/http_sts.zbuild|examples/browser_c_probe/log.zbuild)
+    examples/browser_c_probe/kernel.zbuild|examples/browser_c_probe/c_compat.zbuild|examples/browser_c_probe/first_unit.zbuild|examples/browser_c_probe/tier1.zbuild|examples/browser_c_probe/tier2.zbuild|examples/browser_c_probe/tier3.zbuild|examples/browser_c_probe/tier4.zbuild|examples/browser_c_probe/tier5.zbuild|examples/browser_c_probe/http_chal.zbuild|examples/browser_c_probe/http_wa.zbuild|examples/browser_c_probe/http_cc.zbuild|examples/browser_c_probe/http_sts.zbuild|examples/browser_c_probe/log.zbuild)
       return 0
       ;;
   esac
@@ -383,6 +385,11 @@ run_manifest_ztest_probe() {
   probe_rel="${manifest#examples/}"
   probe_dir="build/zbrowser-smoke/all-ztests/${probe_rel%.zbuild}"
   mkdir -p "$probe_dir"
+  case "$manifest" in
+    examples/zbcss_async.zbuild|examples/zbrowser_css_repro.zbuild)
+      cp examples/html2test/zbrowser_smoke.html "$probe_dir/zbrowser_smoke.html"
+      ;;
+  esac
   if ! scripts/ztest-host.sh "$manifest" "$probe_dir" >"$probe_dir/probe.log" 2>&1; then
     printf 'zbrowser-compile-smoke: broad ztest probe failed for %s\n' "$manifest" >&2
     cat "$probe_dir/probe.log" >&2
@@ -513,6 +520,7 @@ if [[ -e build/zbrowser-smoke/zclean-module/zbrowser_html.zo ||
   exit 1
 fi
 if [[ -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.bin ||
+      -e build/zbrowser-smoke/zclean-ztest/browser_compat_stub.zo ||
       -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.zo ||
       -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.buildlog ||
       -e build/zbrowser-smoke/zclean-ztest/zbrowser_css_repro.testlog ||

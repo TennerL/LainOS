@@ -1,9 +1,10 @@
 output browser_c_tier2.bin
 test-return 0
 src src
-selfhost_base64.zo selfhost_base64.zo
-selfhost_time.zo selfhost_time.zo
-selfhost_unistd.zo selfhost_unistd.zo
-selfhost_utf8.zo selfhost_utf8.zo
-selfhost_lwc.zo selfhost_lwc.zo
+build src
+../../browser_c/third_party/netsurf/src/libnsutils/src/base64.c selfhost_base64.zo
+../../browser_c/third_party/netsurf/src/libnsutils/src/time.c selfhost_time.zo
+../../browser_c/third_party/netsurf/src/libnsutils/src/unistd.c selfhost_unistd.zo
+../../browser_c/third_party/netsurf/src/libparserutils/src/charset/encodings/utf8.c selfhost_utf8.zo
+../../browser_c/third_party/netsurf/src/libwapcaplet/src/libwapcaplet.c selfhost_lwc.zo
 browser_c_tier2_test.Z browser_c_tier2_test.zo

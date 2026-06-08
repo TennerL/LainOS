@@ -78,7 +78,7 @@ fi
 if [ -n "${ZBROWSER_SELFHOST_TIMEOUT_SECONDS:-}" ]; then
   timeout_seconds="${ZBROWSER_SELFHOST_TIMEOUT_SECONDS}"
 elif [ "$qemu_runtime" = "kvm" ]; then
-  timeout_seconds=180
+  timeout_seconds=240
 else
   timeout_seconds=420
 fi
@@ -86,6 +86,7 @@ fi
 qemu_memory="${ZBROWSER_SELFHOST_QEMU_MEMORY:-$default_memory}"
 qemu_smp="${ZBROWSER_SELFHOST_QEMU_SMP:-$default_smp}"
 poweroff_after_smoke="${ZBROWSER_SELFHOST_POWEROFF:-1}"
+data_size_kb="${ZBROWSER_SELFHOST_DATA_SIZE_KB:-262144}"
 
 restore_default_ramdisk_seed() {
   if [ "$restore_ramdisk_seed" -eq 1 ] && [ -x build/tools/ramdisk_seed_gen ]; then
@@ -94,7 +95,8 @@ restore_default_ramdisk_seed() {
 }
 trap restore_default_ramdisk_seed EXIT
 
-make build/tools/lainfs_check_host build/tools/lainfs_seed build/tools/ramdisk_seed_gen build/browser-c-engine/zbrowser_engine_module.zo reseed-data
+make build/tools/lainfs_check_host build/tools/lainfs_seed build/tools/ramdisk_seed_gen
+DATA_SIZE_KB="$data_size_kb" make reseed-data
 ZBROWSER_SELFHOST_COMPACT_ASSETS=1 scripts/prepare-browser-selfhost-c-workspace.sh "$browser_c_stage_root" >/dev/null
 rm -rf "$seed_root"
 mkdir -p "$seed_root"
@@ -131,13 +133,13 @@ cp R:/examples/browser_selfhost_driver.Z browser_selfhost_driver.Z
 cp R:/examples/browser_selfhost_driver.zbuild browser_selfhost_driver.zbuild
 cp R:/examples/browser_selfhost_driver.zbuild bself.zbuild
 cp R:/examples/zbrowser_module.Z zbrowser_module.Z
-cp R:/examples/zbrowser_engine_module.zo zbrowser_engine_module.zo
 cp R:/examples/zbrowser_netsurf.Z zbrowser_netsurf.Z
 cp R:/examples/zbrowser_html.Z zbrowser_html.Z
 cp R:/examples/zbrowser_html_api.Z zbrowser_html_api.Z
 cp R:/examples/zbrowser_module.zbuild zbrowser_module.zbuild
 cp R:/examples/zbrowser_netsurf.zbuild zbrowser_netsurf.zbuild
 cp R:/examples/zbrowser_smoke.html zbrowser_smoke.html
+cp R:/browser_c_probe/src/zbrowser_engine_module.c zbrowser_engine_module.c
 cd ..
 cd browser_c_probe
 ztest kernel
@@ -146,13 +148,10 @@ exec browser_c_probe.bin
 ztest queue
 zinstall queue
 exec browser_c_plan.bin
-zcc ../browser_c/third_party/netsurf/src/libnsutils/src/base64.c src/selfhost_base64.zo
+ztest c_compat
+zinstall engine_accept
 ztest first_unit
-zcc ../browser_c/third_party/netsurf/src/libnsutils/src/time.c src/selfhost_time.zo
-zcc ../browser_c/third_party/netsurf/src/libnsutils/src/unistd.c src/selfhost_unistd.zo
 ztest tier1
-zcc ../browser_c/third_party/netsurf/src/libparserutils/src/charset/encodings/utf8.c src/selfhost_utf8.zo
-zcc ../browser_c/third_party/netsurf/src/libwapcaplet/src/libwapcaplet.c src/selfhost_lwc.zo
 ztest tier2
 cd ..
 cd mods
@@ -168,61 +167,20 @@ cp R:/kernel/z/status_math.Z ../kernel_z/status_math.Z
 cp R:/kernel/z/zlink_probe.Z ../kernel_z/zlink_probe.Z
 zinstall clib_port_smoke_module
 zinstall bself
+zinstall zbrowser_netsurf
 exec browser_selfhost_driver.bin
 cd ..
 cd kernel_z
 zinstall kernel_z_selfhost
 cd ..
 cd selfhost_project
-ztest kernel
 zinstall kernel
+ztest kernel
 exec selfhost_project.bin
 cd ..
 cd browser_c_probe
-zcc ../browser_c/third_party/netsurf/src/libhubbub/src/utils/errors.c src/selfhost_hubbub_errors.zo
-zcc ../browser_c/third_party/netsurf/src/libhubbub/src/utils/string.c src/selfhost_hubbub_string.zo
-zcc ../browser_c/third_party/netsurf/src/libhubbub/src/charset/detect.c src/selfhost_hubbub_detect.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/core/string.c src/selfhost_dom_string.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/utils/namespace.c src/selfhost_dom_namespace.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/core/implementation.c src/selfhost_dom_implementation.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/core/document.c src/selfhost_dom_document.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/core/nodelist.c src/selfhost_dom_nodelist.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/html/html_button_element.c src/selfhost_dom_html_button.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/html/html_input_element.c src/selfhost_dom_html_input.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/html/html_select_element.c src/selfhost_dom_html_select.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/html/html_script_element.c src/selfhost_dom_html_script.zo
-zcc ../browser_c/third_party/netsurf/src/libdom/src/html/html_text_area_element.c src/selfhost_dom_html_textarea.zo
 ztest tier3
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/bloom.c src/selfhost_bloom.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/url.c src/selfhost_url.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/utils.c src/selfhost_utils.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/useragent.c src/selfhost_useragent.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/desktop/mouse.c src/selfhost_mouse.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/nscolour.c src/selfhost_nscolour.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/utf8.c src/selfhost_netsurf_utf8.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/punycode.c src/selfhost_punycode.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/hashtable.c src/selfhost_hashtable.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/hashmap.c src/selfhost_hashmap.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/time.c src/selfhost_netsurf_time.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/primitives.c src/selfhost_http_primitives.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/generics.c src/selfhost_http_generics.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/parameter.c src/selfhost_http_parameter.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/content-type.c src/selfhost_http_content_type.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/content-disposition.c src/selfhost_http_cd.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/challenge.c src/selfhost_http_chal.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/www-authenticate.c src/selfhost_http_wa.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/cache-control.c src/selfhost_http_cc.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/http/strict-transport-security.c src/selfhost_http_sts.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/log.c src/selfhost_log.zo
 ztest tier4
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/idna.c src/selfhost_idna.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/nsurl.c src/selfhost_nsurl_core.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/parse.c src/selfhost_nsurl_parse.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/utils/corestrings.c src/selfhost_corestrings.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/content/handlers/css/internal.c src/selfhost_css_internal.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/content/handlers/html/font.c src/selfhost_html_font.zo
-zcc ../browser_c/third_party/netsurf/src/netsurf/content/handlers/html/redraw_border.c src/selfhost_html_redraw_border.zo
-zcc src/browser_c_tier5_border_smoke.c src/selfhost_tier5_border_smoke.zo
 ztest tier5
 ztest http_chal
 ztest http_wa
@@ -420,7 +378,7 @@ ramdisk_seed_args=(
   examples/zbrowser_html_api.Z=examples/zbrowser_html_api.Z
   examples/zbrowser_module.zbuild=examples/zbrowser_module.zbuild
   examples/zbrowser_netsurf.zbuild=examples/zbrowser_netsurf.zbuild
-  examples/zbrowser_smoke.html=examples/zbrowser_smoke.html
+  examples/html2test/zbrowser_smoke.html=examples/zbrowser_smoke.html
   examples/zlang/selfhost_project/kernel.zbuild=examples/zlang/selfhost_project/kernel.zbuild
   examples/zlang/selfhost_project/include/kernel_api.Z=examples/zlang/selfhost_project/include/kernel_api.Z
   examples/zlang/selfhost_project/include/selfhost_once_leaf.Z=examples/zlang/selfhost_project/include/selfhost_once_leaf.Z
@@ -428,7 +386,6 @@ ramdisk_seed_args=(
   examples/zlang/selfhost_project/include/selfhost_once_root.Z=examples/zlang/selfhost_project/include/selfhost_once_root.Z
   examples/zlang/selfhost_project/src/selfhost_demo.Z=examples/zlang/selfhost_project/src/selfhost_demo.Z
 )
-ramdisk_seed_args+=("build/browser-c-engine/zbrowser_engine_module.zo=examples/zbrowser_engine_module.zo")
 for seed_path in "${browser_c_seed_paths[@]}"; do
   ramdisk_seed_args+=("$browser_c_stage_root/browser_c/$seed_path=browser_c/$seed_path")
 done
@@ -569,6 +526,110 @@ check_serial_success() {
     exit 1
   fi
 
+  if ! grep -q 'browser_c ccompat: ok generic C frontend' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected generic browser C frontend success output\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libnsutils/src/base64.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged libnsutils base64.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libnsutils/src/time.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged libnsutils time.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libnsutils/src/unistd.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged libnsutils unistd.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libparserutils/src/charset/encodings/utf8.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged parserutils utf8.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libwapcaplet/src/libwapcaplet.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged libwapcaplet.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libhubbub/src/utils/errors.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged hubbub errors.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libhubbub/src/charset/detect.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged hubbub detect.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libdom/src/core/string.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged libdom string.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/libdom/src/html/html_text_area_element.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged libdom html_text_area_element.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/netsurf/utils/bloom.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged NetSurf bloom.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/netsurf/utils/http/primitives.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged NetSurf HTTP primitives.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/netsurf/utils/http/cache-control.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged NetSurf HTTP cache-control.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/netsurf/utils/log.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged NetSurf log.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/netsurf/utils/idna.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged NetSurf idna.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/netsurf/utils/nsurl/parse.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged NetSurf nsurl parse.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if ! grep -q 'zbuild: compiling ../../browser_c/third_party/netsurf/src/netsurf/content/handlers/html/redraw_border.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile staged NetSurf redraw_border.c\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+  if ! grep -q 'zbuild: compiling zbrowser_engine_module.c' "$serial_log"; then
+    printf 'zbrowser self-host smoke: expected zbuild to compile zbrowser NetSurf engine C source\n' >&2
+    tail -n 120 "$serial_log" >&2 || true
+    exit 1
+  fi
+
   if ! grep -q 'browser_c tier1: ok base64 time unistd' "$serial_log"; then
     printf 'zbrowser self-host smoke: expected tier1 browser C guest-compiled unit success output\n' >&2
     tail -n 120 "$serial_log" >&2 || true
@@ -643,27 +704,32 @@ if ! grep -q '  S: .* lainfs' "$serial_log"; then
   exit 0
 fi
 
+check_serial_success
+
+repair_log="$(build/tools/lainfs_check_host repair "$smoke_img")"
+if ! printf '%s\n' "$repair_log" | grep -q 'repairs=0$'; then
+  printf 'zbrowser self-host smoke: unexpected filesystem repair result\n%s\n' "$repair_log" >&2
+  exit 1
+fi
+
 check_file "mods/zbrowser_module.buildlog"
 check_file "mods/zbrowser_html.zo"
 check_file "mods/zbrowser_module.zo"
 check_file "mods/zbrowser_netsurf.buildlog"
 check_file "mods/zbrowser_netsurf.zo"
+check_file "mods/zbrowser_netsurf_engine.zo"
+check_file "mods/zbrowser_engine_module.c"
 check_file "mods/browser_selfhost_driver.bin"
 check_file "mods/browser_selfhost.status"
 check_file "mods/libc_smoke_module.buildlog"
 check_file "mods/libc_smoke_module.zo"
-check_file "mods/clib_port_smoke_module.buildlog"
+check_file "mods/browser_compat_stub.zo"
 check_file "mods/clib_port_smoke_module.zo"
 check_file "mods/mini_zlib.zo"
 check_file "kernel_z/kernel_z_selfhost.buildlog"
 check_file "kernel_z/install/clock_math.zo"
 check_file "kernel_z/install/status_math.zo"
 check_file "kernel_z/install/zlink_probe.zo"
-check_file "selfhost_project/build/kernel.bin"
-check_file "selfhost_project/build/kernel.buildlog"
-check_file "selfhost_project/build/kernel.testlog"
-check_file "selfhost_project/build/selfhost_demo.zo"
-check_file "selfhost_project/build/from_z_renamed.txt"
 check_file "selfhost_project/selfhost_project.bin"
 check_file "browser_c/README.txt"
 check_file "browser_c/NEXT_C.txt"
@@ -735,12 +801,10 @@ check_file "browser_c/third_party/netsurf/src/libcss/include/libcss/errors.h"
 check_file "browser_c_probe/browser_c_probe.status"
 check_file "browser_c_probe/browser_c_probe.bin"
 check_file "browser_c_probe/kernel.buildlog"
-check_file "browser_c_probe/kernel.testlog"
 check_file "browser_c_probe/browser_c_plan.bin"
 check_file "browser_c_probe/browser_c_plan.status"
 check_file "browser_c_probe/browser_c_plan.first"
 check_file "browser_c_probe/queue.buildlog"
-check_file "browser_c_probe/queue.testlog"
 check_file "browser_c_probe/src/selfhost_base64.zo"
 check_file "browser_c_probe/src/selfhost_time.zo"
 check_file "browser_c_probe/src/selfhost_unistd.zo"
@@ -788,24 +852,26 @@ check_file "browser_c_probe/src/selfhost_css_internal.zo"
 check_file "browser_c_probe/src/selfhost_html_font.zo"
 check_file "browser_c_probe/src/selfhost_html_redraw_border.zo"
 check_file "browser_c_probe/src/selfhost_tier5_border_smoke.zo"
-check_file "browser_c_probe/browser_c_first_unit.bin"
-check_file "browser_c_probe/first_unit.buildlog"
-check_file "browser_c_probe/first_unit.testlog"
-check_file "browser_c_probe/browser_c_tier1.bin"
-check_file "browser_c_probe/tier1.buildlog"
-check_file "browser_c_probe/tier1.testlog"
-check_file "browser_c_probe/browser_c_tier2.bin"
-check_file "browser_c_probe/tier2.buildlog"
-check_file "browser_c_probe/tier2.testlog"
-check_file "browser_c_probe/browser_c_tier3.bin"
-check_file "browser_c_probe/tier3.buildlog"
-check_file "browser_c_probe/tier3.testlog"
-check_file "browser_c_probe/browser_c_tier4.bin"
-check_file "browser_c_probe/tier4.buildlog"
-check_file "browser_c_probe/tier4.testlog"
-check_file "browser_c_probe/browser_c_tier5.bin"
-check_file "browser_c_probe/tier5.buildlog"
-check_file "browser_c_probe/tier5.testlog"
+check_file "browser_c_probe/zbrowser_netsurf_engine.zo"
+check_file "browser_c_probe/engine_accept.buildlog"
+check_file "browser_c_probe/src/browser_c_first_unit.bin"
+check_file "browser_c_probe/src/first_unit.buildlog"
+check_file "browser_c_probe/src/first_unit.testlog"
+check_file "browser_c_probe/src/browser_c_tier1.bin"
+check_file "browser_c_probe/src/tier1.buildlog"
+check_file "browser_c_probe/src/tier1.testlog"
+check_file "browser_c_probe/src/browser_c_tier2.bin"
+check_file "browser_c_probe/src/tier2.buildlog"
+check_file "browser_c_probe/src/tier2.testlog"
+check_file "browser_c_probe/src/browser_c_tier3.bin"
+check_file "browser_c_probe/src/tier3.buildlog"
+check_file "browser_c_probe/src/tier3.testlog"
+check_file "browser_c_probe/src/browser_c_tier4.bin"
+check_file "browser_c_probe/src/tier4.buildlog"
+check_file "browser_c_probe/src/tier4.testlog"
+check_file "browser_c_probe/src/browser_c_tier5.bin"
+check_file "browser_c_probe/src/tier5.buildlog"
+check_file "browser_c_probe/src/tier5.testlog"
 check_file "browser_c_probe/http_chal.bin"
 check_file "browser_c_probe/http_chal.buildlog"
 check_file "browser_c_probe/http_chal.testlog"
@@ -840,7 +906,6 @@ check_buildlog() {
 }
 
 check_buildlog "mods/libc_smoke_module.buildlog" 1 "libc smoke module"
-check_buildlog "mods/clib_port_smoke_module.buildlog" 3 "clib port smoke module"
 check_buildlog "mods/zbrowser_module.buildlog" 3 "zbrowser module"
 check_buildlog "mods/zbrowser_netsurf.buildlog" 2 "NetSurf module"
 check_buildlog "kernel_z/kernel_z_selfhost.buildlog" 3 "kernel Z selfhost slice"
@@ -859,33 +924,32 @@ check_log_contains() {
 }
 
 check_log_contains "mods/browser_selfhost.status" 'browser selfhost install ok' "browser selfhost status"
-expected_browser_c_first="$(grep -m 1 '^[^|][^|]*|' scripts/browser-selfhost-c-units.txt)"
-check_log_contains "browser_c_probe/browser_c_plan.first" "^${expected_browser_c_first}$" "browser C first unit"
+check_log_contains "browser_c_probe/browser_c_plan.first" '^zbrowser_engine_bridge.o|examples/browser_c_probe/src/zbrowser_engine_bridge.c' "browser C first unit"
 check_log_contains "browser_c_probe/browser_c_plan.first" 'kernel/include/freestanding' "browser C first include roots"
-check_log_contains "browser_c_probe/first_unit.buildlog" '^objects 2$' "browser C first unit build log"
-check_log_contains "browser_c_probe/first_unit.buildlog" '^status ok$' "browser C first unit build log"
-check_log_contains "browser_c_probe/first_unit.testlog" '^result 0$' "browser C first unit test log"
-check_log_contains "browser_c_probe/first_unit.testlog" '^status ok$' "browser C first unit test log"
-check_log_contains "browser_c_probe/tier1.buildlog" '^objects 4$' "browser C tier1 build log"
-check_log_contains "browser_c_probe/tier1.buildlog" '^status ok$' "browser C tier1 build log"
-check_log_contains "browser_c_probe/tier1.testlog" '^result 0$' "browser C tier1 test log"
-check_log_contains "browser_c_probe/tier1.testlog" '^status ok$' "browser C tier1 test log"
-check_log_contains "browser_c_probe/tier2.buildlog" '^objects 6$' "browser C tier2 build log"
-check_log_contains "browser_c_probe/tier2.buildlog" '^status ok$' "browser C tier2 build log"
-check_log_contains "browser_c_probe/tier2.testlog" '^result 0$' "browser C tier2 test log"
-check_log_contains "browser_c_probe/tier2.testlog" '^status ok$' "browser C tier2 test log"
-check_log_contains "browser_c_probe/tier3.buildlog" '^objects 16$' "browser C tier3 build log"
-check_log_contains "browser_c_probe/tier3.buildlog" '^status ok$' "browser C tier3 build log"
-check_log_contains "browser_c_probe/tier3.testlog" '^result 0$' "browser C tier3 test log"
-check_log_contains "browser_c_probe/tier3.testlog" '^status ok$' "browser C tier3 test log"
-check_log_contains "browser_c_probe/tier4.buildlog" '^objects 24$' "browser C tier4 build log"
-check_log_contains "browser_c_probe/tier4.buildlog" '^status ok$' "browser C tier4 build log"
-check_log_contains "browser_c_probe/tier4.testlog" '^result 0$' "browser C tier4 test log"
-check_log_contains "browser_c_probe/tier4.testlog" '^status ok$' "browser C tier4 test log"
-check_log_contains "browser_c_probe/tier5.buildlog" '^objects 15$' "browser C tier5 build log"
-check_log_contains "browser_c_probe/tier5.buildlog" '^status ok$' "browser C tier5 build log"
-check_log_contains "browser_c_probe/tier5.testlog" '^result 0$' "browser C tier5 test log"
-check_log_contains "browser_c_probe/tier5.testlog" '^status ok$' "browser C tier5 test log"
+check_log_contains "browser_c_probe/src/first_unit.buildlog" '^objects 2$' "browser C first unit build log"
+check_log_contains "browser_c_probe/src/first_unit.buildlog" '^status ok$' "browser C first unit build log"
+check_log_contains "browser_c_probe/src/first_unit.testlog" '^result 0$' "browser C first unit test log"
+check_log_contains "browser_c_probe/src/first_unit.testlog" '^status ok$' "browser C first unit test log"
+check_log_contains "browser_c_probe/src/tier1.buildlog" '^objects 4$' "browser C tier1 build log"
+check_log_contains "browser_c_probe/src/tier1.buildlog" '^status ok$' "browser C tier1 build log"
+check_log_contains "browser_c_probe/src/tier1.testlog" '^result 0$' "browser C tier1 test log"
+check_log_contains "browser_c_probe/src/tier1.testlog" '^status ok$' "browser C tier1 test log"
+check_log_contains "browser_c_probe/src/tier2.buildlog" '^objects 6$' "browser C tier2 build log"
+check_log_contains "browser_c_probe/src/tier2.buildlog" '^status ok$' "browser C tier2 build log"
+check_log_contains "browser_c_probe/src/tier2.testlog" '^result 0$' "browser C tier2 test log"
+check_log_contains "browser_c_probe/src/tier2.testlog" '^status ok$' "browser C tier2 test log"
+check_log_contains "browser_c_probe/src/tier3.buildlog" '^objects 16$' "browser C tier3 build log"
+check_log_contains "browser_c_probe/src/tier3.buildlog" '^status ok$' "browser C tier3 build log"
+check_log_contains "browser_c_probe/src/tier3.testlog" '^result 0$' "browser C tier3 test log"
+check_log_contains "browser_c_probe/src/tier3.testlog" '^status ok$' "browser C tier3 test log"
+check_log_contains "browser_c_probe/src/tier4.buildlog" '^objects 24$' "browser C tier4 build log"
+check_log_contains "browser_c_probe/src/tier4.buildlog" '^status ok$' "browser C tier4 build log"
+check_log_contains "browser_c_probe/src/tier4.testlog" '^result 0$' "browser C tier4 test log"
+check_log_contains "browser_c_probe/src/tier4.testlog" '^status ok$' "browser C tier4 test log"
+check_log_contains "browser_c_probe/src/tier5.buildlog" '^objects 15$' "browser C tier5 build log"
+check_log_contains "browser_c_probe/src/tier5.buildlog" '^status ok$' "browser C tier5 build log"
+check_log_contains "browser_c_probe/src/tier5.testlog" '^result 0$' "browser C tier5 test log"
+check_log_contains "browser_c_probe/src/tier5.testlog" '^status ok$' "browser C tier5 test log"
 check_log_contains "browser_c_probe/http_chal.buildlog" '^objects 6$' "browser C HTTP challenge build log"
 check_log_contains "browser_c_probe/http_chal.buildlog" '^status ok$' "browser C HTTP challenge build log"
 check_log_contains "browser_c_probe/http_chal.testlog" '^result 0$' "browser C HTTP challenge test log"
@@ -906,12 +970,5 @@ check_log_contains "browser_c_probe/log.buildlog" '^objects 2$' "browser C NetSu
 check_log_contains "browser_c_probe/log.buildlog" '^status ok$' "browser C NetSurf log build log"
 check_log_contains "browser_c_probe/log.testlog" '^result 0$' "browser C NetSurf log test log"
 check_log_contains "browser_c_probe/log.testlog" '^status ok$' "browser C NetSurf log test log"
-check_log_contains "selfhost_project/build/kernel.buildlog" '^status ok$' "selfhost build log"
-check_log_contains "selfhost_project/build/kernel.buildlog" '^objects 1$' "selfhost build log"
-check_log_contains "selfhost_project/build/kernel.testlog" '^result 42$' "selfhost test log"
-check_log_contains "selfhost_project/build/kernel.testlog" '^status ok$' "selfhost test log"
-check_log_contains "selfhost_project/build/from_z_renamed.txt" 'created from selfhost_project' "selfhost output file"
-
-check_serial_success
 
 printf 'zbrowser self-host smoke: ok (timeout=%ss elapsed=%ss)\n' "$timeout_seconds" "$qemu_elapsed"

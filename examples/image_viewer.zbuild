@@ -1,3 +1,4 @@
 include .
+include decommissioned
 module
 image_viewer_module.Z image_viewer.zo

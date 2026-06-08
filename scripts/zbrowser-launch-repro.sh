@@ -59,7 +59,10 @@ capture_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_CAPTURE_TRIGGER_PATTERN:-phase 
 idle_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_IDLE_TRIGGER_PATTERN:-zbrowser redraw-summary page}"
 send_keys_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_SENDKEYS_TRIGGER_PATTERN:-zbrowser renderer-status}"
 browser_mode="${ZBROWSER_LAUNCH_REPRO_BROWSER:-netsurf}"
+launch_action="${ZBROWSER_LAUNCH_REPRO_ACTION:-desktop}"
 require_html_redraw="${ZBROWSER_LAUNCH_REPRO_REQUIRE_HTML_REDRAW:-1}"
+require_renderer_path="${ZBROWSER_LAUNCH_REPRO_REQUIRE_RENDERER_PATH:-}"
+require_package_diag="${ZBROWSER_LAUNCH_REPRO_REQUIRE_PACKAGE_DIAG:-}"
 require_frontend_smoke="${ZBROWSER_LAUNCH_REPRO_REQUIRE_FRONTEND_SMOKE:-}"
 auto_quit="${ZBROWSER_LAUNCH_REPRO_AUTO_QUIT:-1}"
 auto_quit_delay="${ZBROWSER_LAUNCH_REPRO_AUTO_QUIT_DELAY_SECONDS:-7}"
@@ -134,11 +137,27 @@ if [ "$google_search_smoke" = "1" ]; then
   require_pending_url_fragment="${ZBROWSER_LAUNCH_REPRO_REQUIRE_PENDING_URL_FRAGMENT:-q=${google_search_query}}"
   replay_input=1
 fi
+if [ "$launch_action" = "zmod" ]; then
+  require_html_redraw="${ZBROWSER_LAUNCH_REPRO_REQUIRE_HTML_REDRAW:-0}"
+  require_renderer_path="${ZBROWSER_LAUNCH_REPRO_REQUIRE_RENDERER_PATH:-}"
+  capture_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_CAPTURE_TRIGGER_PATTERN:-module resident}"
+  idle_trigger_pattern="${ZBROWSER_LAUNCH_REPRO_IDLE_TRIGGER_PATTERN:-module resident}"
+fi
 if [ -z "$require_frontend_smoke" ]; then
   if [ "$browser_mode" = "netsurf" ]; then
     require_frontend_smoke=1
   else
     require_frontend_smoke=0
+  fi
+fi
+if [ -z "$require_renderer_path" ] && [ "$browser_mode" = "netsurf" ] && [ "$require_html_redraw" = "1" ]; then
+  require_renderer_path=content
+fi
+if [ -z "$require_package_diag" ]; then
+  if [ "$browser_mode" = "netsurf" ]; then
+    require_package_diag=1
+  else
+    require_package_diag=0
   fi
 fi
 if [ -z "$require_style_sample" ]; then
@@ -324,6 +343,10 @@ fi
 if [ -z "${ZBROWSER_LAUNCH_REPRO_SMP:-}" ] && [ "$qemu_accel" = "tcg" ]; then
   qemu_smp="1"
 fi
+repro_data_size_kb="${ZBROWSER_LAUNCH_REPRO_DATA_SIZE_KB:-}"
+if [ -z "$repro_data_size_kb" ] && [ "$launch_action" = "zinstall" ]; then
+  repro_data_size_kb=262144
+fi
 smoke_img="build/zbrowser-launch-repro.data.img"
 smoke_vars="build/OVMF_VARS.zbrowser-launch-repro.fd"
 serial_log="build/zbrowser-launch-repro.serial.log"
@@ -333,6 +356,9 @@ screenshot_2="build/zbrowser-launch-repro-2.ppm"
 seed_root="build/zbrowser-launch-repro.seed"
 host_build_root="build/zbrowser-launch-repro"
 page_source="examples/${launch_page}"
+if [ ! -f "$page_source" ] && [ -f "examples/html2test/${launch_page}" ]; then
+  page_source="examples/html2test/${launch_page}"
+fi
 http_root="build/zbrowser-launch-repro.http-root"
 http_server_pid=
 monitor_client=
@@ -361,10 +387,6 @@ mkdir -p "$host_build_root"
 make build/tools/lainfs_check_host build/tools/lainfs_seed build/tools/ramdisk_seed_gen build/tools/zmod_link_host build/zbrowser-netsurf-full/.stamp
 
 if [ "$browser_mode" = "netsurf" ]; then
-  if [ ! -f build/zbrowser-netsurf-full/zbrowser_netsurf.zo ]; then
-    printf 'zbrowser launch repro: missing build/zbrowser-netsurf-full/zbrowser_netsurf.zo; rebuild build/zbrowser-netsurf-full/.stamp.\n' >&2
-    exit 1
-  fi
   if ! ls build/zbrowser-netsurf-full/zbrowser_netsurf.zp[0-9][0-9] >/dev/null 2>&1; then
     printf 'zbrowser launch repro: missing zbrowser_netsurf.zp chunks; rebuild build/zbrowser-netsurf-full/.stamp.\n' >&2
     exit 1
@@ -391,7 +413,12 @@ if [ "$browser_mode" = "legacy" ]; then
     examples/zbrowser_module.Z "$host_build_root/zbrowser_module.zo"
 fi
 
-cp build/data.img "$smoke_img"
+if [ -n "$repro_data_size_kb" ]; then
+  dd if=/dev/zero of="$smoke_img" bs=1024 count="$repro_data_size_kb" >/dev/null 2>&1
+  build/tools/lainfs_seed "$smoke_img" >/dev/null
+else
+  cp build/data.img "$smoke_img"
+fi
 cp "$ovmf_vars" "$smoke_vars"
 rm -rf "$seed_root"
 mkdir -p "$seed_root/mods"
@@ -399,14 +426,14 @@ if [ "$browser_mode" = "legacy" ]; then
   cp "$host_build_root/zbrowser_html.zo" "$seed_root/mods/zbrowser_html.zo"
   cp "$host_build_root/zbrowser_module.zo" "$seed_root/mods/zbrowser_module.zo"
 fi
-find build/zbrowser-netsurf-full -maxdepth 1 \( -name '*.zo' -o -name '*.Z' -o -name '*.zbuild' -o -name '*.zp[0-9][0-9]' \) \
+find build/zbrowser-netsurf-full -maxdepth 1 \( -name 'zc*.zo' -o -name '*.c' -o -name '*.Z' -o -name '*.zbuild' -o -name '*.zp[0-9][0-9]' \) \
   -exec cp {} "$seed_root/mods/" \;
 mkdir -p "$(dirname "$seed_root/mods/$launch_page")"
 cp "$page_source" "$seed_root/mods/$launch_page"
 if [ "$launch_page" = "zbrowser_form_smoke.html" ] ||
    [ "$launch_page" = "zbrowser_form_empty.html" ] ||
    [ "$launch_page" = "zbrowser_google_lite.html" ]; then
-  cp examples/zbrowser_form_*.html "$seed_root/mods/"
+  cp examples/html2test/zbrowser_form_*.html "$seed_root/mods/"
 fi
 if [ -d examples/styles ]; then
   cp -R examples/styles "$seed_root/mods/styles"
@@ -422,7 +449,7 @@ if [ "$serve_http" = "1" ]; then
   if [ "$launch_page" = "zbrowser_form_smoke.html" ] ||
      [ "$launch_page" = "zbrowser_form_empty.html" ] ||
      [ "$launch_page" = "zbrowser_google_lite.html" ]; then
-    cp examples/zbrowser_form_*.html "$http_root/"
+    cp examples/html2test/zbrowser_form_*.html "$http_root/"
   fi
   if [ -d examples/styles ]; then
     cp -R examples/styles "$http_root/styles"
@@ -449,13 +476,30 @@ fi
 if [ -n "$mouse_clicks" ]; then
   printf '%s\n' "$mouse_clicks" >"$seed_root/mods/browser.clicks"
 fi
-cat >"$seed_root/autoexec" <<'EOF'
+if [ "$launch_action" = "zmod" ]; then
+  cat >"$seed_root/autoexec" <<'EOF'
+mkdir mods
+cd mods
+cat zbrowser.autostart
+zmod zbrowser_netsurf
+EOF
+elif [ "$launch_action" = "zinstall" ]; then
+  cat >"$seed_root/autoexec" <<'EOF'
+mkdir mods
+cd mods
+cat zbrowser.autostart
+zinstall zbrowser_netsurf
+poweroff
+EOF
+else
+  cat >"$seed_root/autoexec" <<'EOF'
 mkdir mods
 cd mods
 cat zbrowser.autostart
 cat browser.url
 desktop
 EOF
+fi
 
 ramdisk_seed_args=(
   "$seed_root/autoexec=examples/autoexec"
@@ -735,16 +779,41 @@ if grep -q 'zbrowser renderer-status' "$serial_log"; then
   printf 'zbrowser launch repro: renderer status lines follow\n'
   grep -A10 'zbrowser renderer-status' "$serial_log" | tail -n 80 || true
 else
-  if grep -q 'zbrowser_netsurf module loaded' "$serial_log"; then
+  if [ "$launch_action" = "zmod" ] && grep -q 'module resident' "$serial_log"; then
+    printf 'zbrowser launch repro: package-only zmod completed without renderer status\n'
+  elif [ "$launch_action" = "zinstall" ]; then
+    :
+  elif grep -q 'zbrowser_netsurf module loaded' "$serial_log"; then
     printf 'zbrowser launch repro: module loaded but renderer status did not arrive before timeout\n' >&2
   elif grep -q 'desktop: zbrowser autostart requested' "$serial_log"; then
     printf 'zbrowser launch repro: autostart requested but module did not finish loading before timeout\n' >&2
   else
     printf 'zbrowser launch repro: missing renderer status marker\n' >&2
   fi
+  if [ "$launch_action" != "zmod" ] && [ "$launch_action" != "zinstall" ]; then
+    printf 'zbrowser launch repro: serial log follows\n'
+    tail -n 220 "$serial_log" || true
+    exit 1
+  fi
+fi
+
+if [ "$launch_action" = "zinstall" ]; then
+  for source_name in base64.c nsutils_time.c nsutils_unistd.c parserutils_utf8_core.c lwc_core.c dom_string_core.c dom_namespace_core.c dom_nodelist_core.c dom_implementation_core.c dom_document_core.c hubbub_errors_core.c hubbub_string_core.c hubbub_detect_core.c dom_html_button_core.c dom_html_input_core.c dom_html_select_core.c dom_html_script_core.c dom_html_textarea_core.c ns_css_internal.c ns_html_font.c ns_html_redraw_border.c bloom.c corestrings.c libdom.c bitmap.c mouse.c plot_style.c search.c searchweb.c scrollbar.c system_colour.c version.c hashmap.c hashtable.c punycode.c file.c filepath.c http_generics.c http_primitives.c http_parameter.c http_content_disposition.c http_content_type.c http_cache_control.c http_challenge.c http_sts.c http_www_authenticate.c idna.c log.c messages.c nscolour.c nsoption.c ssl_certs.c talloc.c netsurf_time.c netsurf_url.c useragent.c netsurf_utf8.c netsurf_utils.c nsurl_core.c nsurl_parse.c dom_attr_core.c dom_cdata_core.c dom_characterdata_core.c dom_comment_core.c dom_doc_fragment_core.c; do
+    if ! grep -q "zbuild: compiling ${source_name}" "$serial_log"; then
+      printf 'zbrowser launch repro: zinstall did not compile full-package %s source\n' "$source_name" >&2
+      tail -n 220 "$serial_log" || true
+      exit 1
+    fi
+  done
+  if ! grep -q 'zinstall: installed 525 module object(s)' "$serial_log"; then
+    printf 'zbrowser launch repro: zinstall did not install full zbrowser_netsurf module object set\n' >&2
+    tail -n 220 "$serial_log" || true
+    exit 1
+  fi
+  printf 'zbrowser launch repro: zinstall compiled full-package C sources successfully\n'
   printf 'zbrowser launch repro: serial log follows\n'
   tail -n 220 "$serial_log" || true
-  exit 1
+  exit 0
 fi
 
 if grep -q 'zbrowser frontend-status' "$serial_log"; then
@@ -760,6 +829,33 @@ if [ "$require_frontend_smoke" = "1" ] &&
   printf 'zbrowser launch repro: frontend smoke did not prove bitmap render: expected smoke127\n' >&2
   tail -n 220 "$serial_log" || true
   exit 1
+fi
+
+if grep -q 'zmod package ' "$serial_log"; then
+  printf 'zbrowser launch repro: package diagnostics follow\n'
+  grep 'zmod package ' "$serial_log" | tail -n 12 || true
+elif [ "$require_package_diag" = "1" ]; then
+  printf 'zbrowser launch repro: missing package diagnostics marker\n' >&2
+  tail -n 220 "$serial_log" || true
+  exit 1
+fi
+if [ "$require_package_diag" = "1" ] &&
+   ! grep -q 'zmod package loaded source=chunks' "$serial_log"; then
+  printf 'zbrowser launch repro: NetSurf did not load through chunked package path\n' >&2
+  tail -n 220 "$serial_log" || true
+  exit 1
+fi
+if [ "$launch_action" = "zmod" ]; then
+  if ! grep -q 'zbrowser_netsurf module loaded' "$serial_log" ||
+     ! grep -q 'module resident' "$serial_log"; then
+    printf 'zbrowser launch repro: package-only zmod did not finish module load\n' >&2
+    tail -n 220 "$serial_log" || true
+    exit 1
+  fi
+  printf 'zbrowser launch repro: package-only zmod loaded module successfully\n'
+  printf 'zbrowser launch repro: serial log follows\n'
+  tail -n 220 "$serial_log" || true
+  exit 0
 fi
 
 if grep -q 'zbrowser visual-sample' "$serial_log"; then
@@ -817,8 +913,13 @@ elif grep -q 'NS dom fallback\|DOM painter fallback\|dom-fallback' "$serial_log"
 elif grep -q 'NS html redraw failed\|NetSurf HTML layout failed\|html-redraw-failed' "$serial_log"; then
   renderer_path=html-redraw-failed
   renderer_failed=1
-elif grep -q 'status NS rendered\|NS html redraw' "$serial_log"; then
-  renderer_path=html-redraw
+elif grep -q 'status NS blank path content' "$serial_log"; then
+  renderer_path=content-blank
+  renderer_failed=1
+elif grep -q 'status NS rendered path content' "$serial_log"; then
+  renderer_path=content
+elif grep -q 'NS html redraw path html-fallback\|NS html redraw' "$serial_log"; then
+  renderer_path=html-fallback
 fi
 
 if [ "$renderer_failed" -ne 0 ]; then
@@ -826,7 +927,12 @@ if [ "$renderer_failed" -ne 0 ]; then
   tail -n 220 "$serial_log" || true
   exit 1
 fi
-if [ "$renderer_path" = "html-redraw" ]; then
+if [ -n "$require_renderer_path" ] && [ "$renderer_path" != "$require_renderer_path" ]; then
+  printf 'zbrowser launch repro: renderer path=%s; expected %s\n' "$renderer_path" "$require_renderer_path" >&2
+  tail -n 220 "$serial_log" || true
+  exit 1
+fi
+if [ "$renderer_path" = "content" ]; then
   if ! grep -q 'zbrowser visual-sample' "$serial_log"; then
     printf 'zbrowser launch repro: missing visual sample after html-redraw\n' >&2
     tail -n 220 "$serial_log" || true
@@ -1094,7 +1200,7 @@ if [ -n "$require_pending_url_fragment" ] &&
 fi
 printf 'zbrowser launch repro: renderer path=%s\n' "$renderer_path"
 elif [ "$require_html_redraw" = "1" ]; then
-  printf 'zbrowser launch repro: renderer path=%s; expected html-redraw\n' "$renderer_path" >&2
+  printf 'zbrowser launch repro: renderer path=%s; expected %s\n' "$renderer_path" "${require_renderer_path:-content}" >&2
   tail -n 220 "$serial_log" || true
   exit 1
 else
