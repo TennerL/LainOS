@@ -1,1 +1,2 @@
-git.nihonsaba.net/nsdev/LainOS
+
+[GitLab](https://git.nihonsaba.net/nsdev/LainOS)
